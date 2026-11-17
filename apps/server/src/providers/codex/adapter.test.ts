@@ -367,6 +367,174 @@ describe("createCodexAdapter", () => {
     });
   });
 
+  it("answers a pending approval with exactly one decline when the turn is interrupted mid-approval", async () => {
+    const logFile = join(workDir, "abort-approval.jsonl");
+    const controller = new AbortController();
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--log-file", logFile],
+    });
+
+    let approvalCount = 0;
+    const received: ProviderEvent[] = [];
+    for await (const event of adapter.runTurn(
+      baseInput({
+        signal: controller.signal,
+        // Interrupt while the approval is still pending; never resolve it ourselves.
+        requestApproval: () => {
+          approvalCount += 1;
+          controller.abort();
+          return new Promise<"allow" | "deny">(() => {});
+        },
+      }),
+    )) {
+      ProviderEvent.parse(event);
+      received.push(event);
+    }
+
+    expect(approvalCount).toBe(1);
+
+    const doneEvents = received.filter((ev) => ev.type === "done");
+    expect(doneEvents).toEqual([{ type: "done", status: "interrupted", error: null }]);
+    expect(received.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
+
+    const approvalReplies = readLoggedFrames(logFile).filter(
+      (f) => f.id === 500 && !("method" in f),
+    );
+    expect(approvalReplies).toHaveLength(1);
+    expect(approvalReplies[0]?.result).toEqual({ decision: "decline" });
+  });
+
+  it("reports per-turn token usage as the delta over the prior turn's cumulative total", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "cumulative-usage"],
+    });
+
+    const firstEvents = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: null })),
+    );
+    expect(firstEvents[0]).toEqual({ type: "session", sessionId: "thr_started_1" });
+    const firstUsage = firstEvents.find((ev) => ev.type === "usage");
+    if (firstUsage?.type !== "usage") throw new Error("expected a usage event in turn 1");
+    expect(firstUsage.usage).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+
+    const secondEvents = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_started_1" })),
+    );
+    const secondUsage = secondEvents.find((ev) => ev.type === "usage");
+    if (secondUsage?.type !== "usage") throw new Error("expected a usage event in turn 2");
+    // Cumulative totals: turn 1 = 100/50, turn 2 = 250/120 -> turn 2 delta = 150/70.
+    expect(secondUsage.usage).toMatchObject({
+      inputTokens: 150,
+      outputTokens: 70,
+      cachedInputTokens: 15,
+    });
+  });
+
+  function usageEvents(events: ProviderEvent[]) {
+    return events.flatMap((ev) => (ev.type === "usage" ? [ev.usage] : []));
+  }
+
+  it("reports only the resumed turn's own tokens when the server restarted and no baseline is in memory", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "cumulative-usage"],
+    });
+
+    // A fresh adapter has never seen this thread: its cumulative total is 250/120
+    // but this turn only added 150/70.
+    const events = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_before_restart" })),
+    );
+    expect(usageEvents(events)).toEqual([
+      { inputTokens: 150, outputTokens: 70, cachedInputTokens: 15 },
+    ]);
+  });
+
+  it("does not report usage that arrives during thread/resume as the turn's usage", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "usage-during-resume"],
+    });
+
+    const events = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_before_restart" })),
+    );
+    // The resume-time 100/50 total seeds the baseline; only 250/120 - 100/50 is this turn's.
+    expect(usageEvents(events)).toEqual([
+      { inputTokens: 150, outputTokens: 70, cachedInputTokens: 15 },
+    ]);
+  });
+
+  it("re-baselines when thread/resume returns a different thread id with a lower total", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "resume-new-thread"],
+    });
+
+    const first = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: null })),
+    );
+    expect(first[0]).toEqual({ type: "session", sessionId: "thr_started_1" });
+    expect(usageEvents(first)).toEqual([
+      { inputTokens: 100, outputTokens: 50, cachedInputTokens: 25 },
+    ]);
+
+    // The old thread's 100/50 baseline must not be applied to the forked thread's 30/10.
+    const second = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_started_1" })),
+    );
+    expect(second[0]).toEqual({ type: "session", sessionId: "thr_forked_1" });
+    expect(usageEvents(second)).toEqual([
+      { inputTokens: 30, outputTokens: 10, cachedInputTokens: 5 },
+    ]);
+  });
+
+  it("fails the turn with the protocol error when the thread/resume response is dropped as oversized", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "oversized-resume-response"],
+    });
+
+    const events = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_existing_42" })),
+    );
+    const done = events.filter((ev) => ev.type === "done");
+    expect(done).toHaveLength(1);
+    const last = events.at(-1);
+    if (last?.type !== "done") throw new Error("Expected final event to be done");
+    expect(last.status).toBe("failed");
+    expect(last.error).toMatch(/oversized line/i);
+  }, 30_000);
+
+  it("kills the whole process group so a grandchild does not outlive stop", async () => {
+    const gcPidFile = join(workDir, "grandchild.pid");
+    const controller = new AbortController();
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [
+        fakeServerPath,
+        "--scenario",
+        "spawn-grandchild",
+        "--grandchild-pid-file",
+        gcPidFile,
+      ],
+    });
+
+    for await (const event of adapter.runTurn(baseInput({ signal: controller.signal }))) {
+      ProviderEvent.parse(event);
+      if (event.type === "item" && event.item.kind === "reasoning" && event.item.text.length > 0) {
+        controller.abort();
+      }
+    }
+
+    const gcPid = Number(readFileSync(gcPidFile, "utf8").trim());
+    expect(Number.isInteger(gcPid)).toBe(true);
+    // The turn's final event is pushed only after the client has torn the group down.
+    expect(isPidAlive(gcPid)).toBe(false);
+  });
+
   it("emits done failed with the last 4 KB stderr tail when the app-server crashes mid-turn", async () => {
     const adapter = createCodexAdapter({
       codexBin: process.execPath,

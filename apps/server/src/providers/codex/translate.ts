@@ -62,6 +62,67 @@ export function truncateOutputPreview(raw: string): string {
   return prefix + chars.slice(startIndex).join("");
 }
 
+function deltaUsage(
+  cumulative: UsageTotals,
+  baseline: UsageTotals | null,
+): { inputTokens: number; outputTokens: number; cachedInputTokens?: number } {
+  const base = baseline ?? { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
+  const inputTokens = Math.max(0, cumulative.inputTokens - base.inputTokens);
+  const outputTokens = Math.max(0, cumulative.outputTokens - base.outputTokens);
+  if (typeof cumulative.cachedInputTokens === "number") {
+    const cachedInputTokens = Math.max(
+      0,
+      cumulative.cachedInputTokens - (base.cachedInputTokens ?? 0),
+    );
+    return { inputTokens, outputTokens, cachedInputTokens };
+  }
+  return { inputTokens, outputTokens };
+}
+
+function sanitizeUsage(raw: UsageTotals): UsageTotals {
+  return {
+    inputTokens: Math.max(0, Math.trunc(raw.inputTokens)),
+    outputTokens: Math.max(0, Math.trunc(raw.outputTokens)),
+    ...(typeof raw.cachedInputTokens === "number" && raw.cachedInputTokens >= 0
+      ? { cachedInputTokens: Math.trunc(raw.cachedInputTokens) }
+      : {}),
+  };
+}
+
+/** `total - last`, clamped at zero per field: the cumulative total before `last` was added. */
+function subtractUsage(total: UsageTotals, last: UsageTotals): UsageTotals {
+  return {
+    inputTokens: Math.max(0, total.inputTokens - last.inputTokens),
+    outputTokens: Math.max(0, total.outputTokens - last.outputTokens),
+    ...(typeof total.cachedInputTokens === "number"
+      ? { cachedInputTokens: Math.max(0, total.cachedInputTokens - (last.cachedInputTokens ?? 0)) }
+      : {}),
+  };
+}
+
+function addUsage(a: UsageTotals, b: UsageTotals): UsageTotals {
+  const cached =
+    typeof a.cachedInputTokens === "number" || typeof b.cachedInputTokens === "number"
+      ? (a.cachedInputTokens ?? 0) + (b.cachedInputTokens ?? 0)
+      : undefined;
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    ...(cached === undefined ? {} : { cachedInputTokens: cached }),
+  };
+}
+
+/** True when a counter went backwards, which means it was reset (compaction, a new thread). */
+function isBelowBaseline(total: UsageTotals, baseline: UsageTotals): boolean {
+  if (total.inputTokens < baseline.inputTokens) return true;
+  if (total.outputTokens < baseline.outputTokens) return true;
+  return (
+    typeof total.cachedInputTokens === "number" &&
+    typeof baseline.cachedInputTokens === "number" &&
+    total.cachedInputTokens < baseline.cachedInputTokens
+  );
+}
+
 function formatTurnError(err: CodexTurnError | null | undefined): string | null {
   if (!err) return null;
   const message = err.message.trim();
@@ -171,6 +232,24 @@ export interface FileChangePreview {
   diff: string;
 }
 
+/** Cumulative thread token totals, as reported by the app-server. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+}
+
+export interface CodexTranslatorOptions {
+  /** Cumulative thread usage carried over from prior turns, subtracted so AGE sees per-turn deltas. */
+  usageBaseline?: UsageTotals | null;
+  /**
+   * The turn continues an existing thread. With no baseline the thread's history
+   * is unknown, so the first usage report seeds one instead of counting the whole
+   * running total as this turn.
+   */
+  resumed?: boolean;
+}
+
 export interface CodexTranslator {
   bindSession(sessionId: string): ProviderEvent[];
   translateNotification(method: string, params: unknown): ProviderEvent[];
@@ -179,6 +258,15 @@ export interface CodexTranslator {
   getLastError(): string | null;
   getCommandForItem(itemId: string): string | undefined;
   getFileChangeForItem(itemId: string): FileChangePreview | undefined;
+  /** Latest cumulative thread total seen this turn, for carrying over as the next baseline. */
+  getCumulativeUsage(): UsageTotals | null;
+  /** Marks turn/start as sent. Usage seen before it only seeds the baseline. */
+  beginTurn(): void;
+  /**
+   * Replaces the baseline when thread/resume answers with a different thread id.
+   * Ignored once a usage report has already seeded the baseline from the server.
+   */
+  rebaseline(baseline: UsageTotals | null): void;
 }
 
 interface CommandState {
@@ -192,10 +280,21 @@ interface FileChangeState {
   output: string;
 }
 
-export function createCodexTranslator(): CodexTranslator {
+export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTranslator {
   let emittedSessionId: string | null = null;
   let doneEmitted = false;
   let lastError: string | null = null;
+
+  let usageBaseline = options?.usageBaseline ?? null;
+  let usageNeedsSeed = options?.resumed === true && usageBaseline === null;
+  let usageSeededByServer = false;
+  let turnStarted = false;
+  let latestCumulativeUsage: UsageTotals | null = null;
+  let accumulatedLastUsage: UsageTotals | null = null;
+  // Usage already emitted for this turn from counters that have since been reset. The
+  // runner keeps only the latest usage event, so it must carry the whole turn.
+  let carriedUsage: UsageTotals | null = null;
+  let lastEmittedUsage: UsageTotals | null = null;
 
   const seenMessageIds = new Set<string>();
   const messageTexts = new Map<string, string>();
@@ -553,21 +652,53 @@ export function createCodexTranslator(): CodexTranslator {
       case "thread/tokenUsage/updated": {
         const parsed = ThreadTokenUsageUpdatedNotificationSchema.safeParse(params);
         if (!parsed.success) return [];
-        const breakdown = parsed.data.tokenUsage.total ?? parsed.data.tokenUsage.last;
-        if (!breakdown) return [];
-        return [
-          {
-            type: "usage",
-            usage: {
-              inputTokens: Math.max(0, Math.trunc(breakdown.inputTokens)),
-              outputTokens: Math.max(0, Math.trunc(breakdown.outputTokens)),
-              ...(typeof breakdown.cachedInputTokens === "number" &&
-              breakdown.cachedInputTokens >= 0
-                ? { cachedInputTokens: Math.trunc(breakdown.cachedInputTokens) }
-                : {}),
-            },
-          },
-        ];
+        const { total: rawTotal, last: rawLast } = parsed.data.tokenUsage;
+        const total = rawTotal ? sanitizeUsage(rawTotal) : null;
+        const last = rawLast ? sanitizeUsage(rawLast) : null;
+
+        if (!turnStarted) {
+          // Reported while the thread loads (thread/resume): the thread's running
+          // total before this turn. It becomes the baseline and is not usage.
+          if (total) {
+            usageBaseline = total;
+            usageNeedsSeed = false;
+            usageSeededByServer = true;
+            latestCumulativeUsage = total;
+          }
+          return [];
+        }
+
+        if (total) {
+          const previous = latestCumulativeUsage ?? usageBaseline;
+          if (usageNeedsSeed) {
+            usageBaseline = last ? subtractUsage(total, last) : total;
+            usageNeedsSeed = false;
+          } else if (previous && isBelowBaseline(total, previous)) {
+            // The counter restarted mid-turn (below the last total seen, or the
+            // baseline before any): keep what this turn already reported.
+            carriedUsage = lastEmittedUsage;
+            usageBaseline = last ? subtractUsage(total, last) : null;
+          }
+          latestCumulativeUsage = total;
+          const delta = deltaUsage(total, usageBaseline);
+          const emitted = carriedUsage ? addUsage(carriedUsage, delta) : delta;
+          lastEmittedUsage = emitted;
+          return [{ type: "usage", usage: emitted }];
+        }
+
+        if (last) {
+          // `last` is one step's usage: sum the steps for the turn, and rebuild the
+          // thread total from the baseline when there is one to build on.
+          accumulatedLastUsage = accumulatedLastUsage ? addUsage(accumulatedLastUsage, last) : last;
+          if (!usageNeedsSeed) {
+            latestCumulativeUsage = addUsage(
+              usageBaseline ?? { inputTokens: 0, outputTokens: 0 },
+              accumulatedLastUsage,
+            );
+          }
+          return [{ type: "usage", usage: accumulatedLastUsage }];
+        }
+        return [];
       }
 
       case "error": {
@@ -605,6 +736,15 @@ export function createCodexTranslator(): CodexTranslator {
     getFileChangeForItem: (itemId) => {
       const entry = fileChangeStates.get(normalizeId(itemId));
       return entry ? { files: entry.files, diff: entry.diff } : undefined;
+    },
+    getCumulativeUsage: () => latestCumulativeUsage,
+    beginTurn: () => {
+      turnStarted = true;
+    },
+    rebaseline: (baseline) => {
+      if (usageSeededByServer) return;
+      usageBaseline = baseline;
+      usageNeedsSeed = baseline === null;
     },
   };
 }

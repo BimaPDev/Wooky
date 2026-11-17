@@ -23,6 +23,7 @@ import {
   normalizeId,
   truncateTitle,
 } from "./translate.ts";
+import { createUsageBaselineStore } from "./usage-baselines.ts";
 
 const PROBE_TIMEOUT_MS = 5_000;
 const NOT_FOUND_PROBLEM = "Codex CLI was not found on PATH. Install it and sign in, then refresh.";
@@ -106,33 +107,38 @@ function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<Provide
       });
       return;
     }
-    execFile(command, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true }, (err, stdout, stderr) => {
-      if (err) {
-        const notFound = isErrnoCode(err, "ENOENT");
+    execFile(
+      command,
+      args,
+      { timeout: PROBE_TIMEOUT_MS, windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err) {
+          const notFound = isErrnoCode(err, "ENOENT");
+          resolve({
+            kind: "codex",
+            label: "Codex",
+            installed: false,
+            authenticated: null,
+            version: null,
+            models: [...CODEX_MODELS],
+            problem: notFound
+              ? NOT_FOUND_PROBLEM
+              : `Codex CLI check failed: ${err.message.split(/\r?\n/)[0] ?? "unknown error"}.`,
+          });
+          return;
+        }
+
         resolve({
           kind: "codex",
           label: "Codex",
-          installed: false,
+          installed: true,
           authenticated: null,
-          version: null,
+          version: parseVersionOutput(stdout, stderr),
           models: [...CODEX_MODELS],
-          problem: notFound
-            ? NOT_FOUND_PROBLEM
-            : `Codex CLI check failed: ${err.message.split(/\r?\n/)[0] ?? "unknown error"}.`,
+          problem: null,
         });
-        return;
-      }
-
-      resolve({
-        kind: "codex",
-        label: "Codex",
-        installed: true,
-        authenticated: null,
-        version: parseVersionOutput(stdout, stderr),
-        models: [...CODEX_MODELS],
-        problem: null,
-      });
-    });
+      },
+    );
   });
 }
 
@@ -239,6 +245,12 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
   const configuredBin = options?.codexBin ?? (envBin && envBin.length > 0 ? envBin : "codex");
   const configuredArgs = options?.codexArgs;
 
+  // Cumulative thread token totals seen at the end of each turn, keyed by native
+  // thread id. The next turn on that thread subtracts this baseline so AGE sees
+  // the per-turn delta rather than the app-server's running total. It is memory
+  // only, so the translator seeds a resumed turn that finds no entry here.
+  const cumulativeUsageByThread = createUsageBaselineStore();
+
   const launch = () => {
     const resolved = resolveCommand(configuredBin);
     if (!resolved) return { bin: configuredBin, args: configuredArgs };
@@ -261,7 +273,13 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
         return;
       }
 
-      const translator = createCodexTranslator();
+      const usageBaseline = input.resumeSessionId
+        ? cumulativeUsageByThread.get(input.resumeSessionId)
+        : null;
+      const translator = createCodexTranslator({
+        usageBaseline,
+        resumed: input.resumeSessionId !== null,
+      });
       const queue = new AsyncQueue<ProviderEvent>();
       let deferredDone: Extract<ProviderEvent, { type: "done" }> | null = null;
       let protocolFailure: Error | null = null;
@@ -300,9 +318,21 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
           pushEvents(translator.translateNotification(method, params));
         },
         onServerRequest: (request) => handleApprovalRequest(request, input, translator),
+        // Decline any approval still pending when the client is torn down (e.g. the
+        // turn was interrupted), so the app-server's JSON-RPC request never dangles.
+        // Only the two approval methods take a decision; anything else gets a
+        // JSON-RPC error reply from the client.
+        cancelServerRequest: (request) =>
+          request.method === "item/commandExecution/requestApproval" ||
+          request.method === "item/fileChange/requestApproval"
+            ? { decision: "decline" as CodexApprovalDecision }
+            : undefined,
         onProtocolError: (err) => {
           if (!protocolFailure) protocolFailure = err;
           resolveTurnWaiter?.();
+          // A dropped response leaves its request pending forever. Stopping the
+          // client rejects every pending request so the turn can fail.
+          void client.close();
         },
       });
 
@@ -357,9 +387,13 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
 
           const codexThreadId = threadResponse.thread.id;
           activeThreadId = codexThreadId;
+          if (input.resumeSessionId !== null && codexThreadId !== input.resumeSessionId) {
+            translator.rebaseline(cumulativeUsageByThread.get(codexThreadId));
+          }
           pushEvents(translator.bindSession(codexThreadId));
 
           const promptText = buildUserPrompt(input.prompt, input.handoffContext);
+          translator.beginTurn();
           const turnResponse = await client.request(
             "turn/start",
             {
@@ -400,8 +434,8 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
         } else if (!finalDone) {
           const stderr = client.getStderrTail();
           let message =
-            setupError?.message ??
             protocolFailure?.message ??
+            setupError?.message ??
             translator.getLastError() ??
             `Codex app-server exited unexpectedly (code ${exitInfo.code !== null ? String(exitInfo.code) : "unknown"})`;
           if (stderr && !message.includes(stderr)) {
@@ -411,6 +445,13 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
           if (fallback && fallback.type === "done") {
             finalDone = fallback;
           }
+        }
+
+        // Carry this turn's ending cumulative total forward so the next turn on
+        // this thread emits a per-turn delta.
+        const cumulativeUsage = translator.getCumulativeUsage();
+        if (cumulativeUsage && activeThreadId) {
+          cumulativeUsageByThread.set(activeThreadId, cumulativeUsage);
         }
 
         if (finalDone) {

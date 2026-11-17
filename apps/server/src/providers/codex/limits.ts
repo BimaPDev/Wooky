@@ -27,11 +27,7 @@ export type CodexLimitsProbeOptions = {
   cwd?: string;
   now?: () => Date;
   /** Inject a fake client factory in tests. */
-  openClient?: (opts: {
-    bin: string;
-    args?: readonly string[];
-    cwd: string;
-  }) => {
+  openClient?: (opts: { bin: string; args?: readonly string[]; cwd: string }) => {
     request: JsonRpcClient["request"];
     notify: JsonRpcClient["notify"];
     close: () => Promise<unknown>;
