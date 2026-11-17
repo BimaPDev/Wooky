@@ -4,27 +4,25 @@ const OUTPUT_PREVIEW_MAX = 4 * 1024;
 
 export type CursorStreamEvent = Record<string, unknown>;
 
-let nextItemId = 0;
-function newItemId(prefix: string): string {
-  nextItemId += 1;
-  return `${prefix}-${nextItemId}`;
-}
-
-/** Reset item-id counter between tests. */
-export function resetTranslateIds(): void {
-  nextItemId = 0;
-}
-
 export class CursorTranslator {
   private sessionEmitted = false;
-  private messageItemId: string | null = null;
-  private messageText = "";
-  private reasoningItemId: string | null = null;
-  private reasoningText = "";
-  private tools = new Map<string, string>();
   private doneEmitted = false;
 
-  /** Feed one parsed NDJSON object; returns zero or more provider events. */
+  private messageItemId: string | null = null;
+  private messageText = "";
+  private messageSeq = 0;
+
+  private reasoningItemId: string | null = null;
+  private reasoningText = "";
+  private reasoningSeq = 0;
+
+  private readonly tools = new Map<string, string>();
+
+  constructor(
+    private readonly turnId: string,
+    private readonly cwd: string,
+  ) {}
+
   translate(event: CursorStreamEvent): ProviderEvent[] {
     if (this.doneEmitted) return [];
 
@@ -74,35 +72,51 @@ export class CursorTranslator {
     return [{ type: "done", status: "completed", error: null }];
   }
 
+  private closeMessageSegment(): void {
+    this.messageItemId = null;
+    this.messageText = "";
+  }
+
+  private closeReasoningSegment(): void {
+    this.reasoningItemId = null;
+    this.reasoningText = "";
+  }
+
   private onThinking(event: CursorStreamEvent): ProviderEvent[] {
-    const subtype = event.subtype;
-    if (subtype === "delta" && typeof event.text === "string") {
-      const text = event.text;
-      if (!this.reasoningItemId) {
-        this.reasoningItemId = newItemId("reasoning");
-        this.reasoningText = "";
-        return [
-          {
-            type: "item",
-            item: { kind: "reasoning", id: this.reasoningItemId, text: "" },
-          },
-          { type: "delta", itemId: this.reasoningItemId, text },
-        ];
-      }
-      this.reasoningText += text;
-      return [{ type: "delta", itemId: this.reasoningItemId, text }];
+    if (event.subtype !== "delta" || typeof event.text !== "string") return [];
+    const text = event.text;
+
+    if (!this.reasoningItemId) {
+      this.reasoningSeq += 1;
+      this.reasoningItemId = `${this.turnId}:reason:${this.reasoningSeq}`;
+      this.reasoningText = text;
+      return [
+        {
+          type: "item",
+          item: { kind: "reasoning", id: this.reasoningItemId, text },
+        },
+      ];
     }
-    return [];
+
+    this.reasoningText += text;
+    return [{ type: "delta", itemId: this.reasoningItemId, text }];
   }
 
   private onAssistant(event: CursorStreamEvent): ProviderEvent[] {
     const text = extractAssistantText(event);
     if (text === null) return [];
 
-    if (text === this.messageText) return [];
+    const hasModelCallId = typeof event.model_call_id === "string";
+    const isFullSegment = hasModelCallId || typeof event.timestamp_ms !== "number";
 
-    if (!this.messageItemId) {
-      this.messageItemId = newItemId("message");
+    if (isFullSegment) {
+      if (text === this.messageText) return [];
+
+      if (!this.messageItemId) {
+        this.messageSeq += 1;
+        this.messageItemId = `${this.turnId}:msg:${this.messageSeq}`;
+      }
+
       this.messageText = text;
       return [
         {
@@ -117,11 +131,21 @@ export class CursorTranslator {
       ];
     }
 
-    if (text.startsWith(this.messageText)) {
-      const suffix = text.slice(this.messageText.length);
+    if (!this.messageItemId) {
+      this.messageSeq += 1;
+      this.messageItemId = `${this.turnId}:msg:${this.messageSeq}`;
       this.messageText = text;
-      if (suffix.length === 0) return [];
-      return [{ type: "delta", itemId: this.messageItemId, text: suffix }];
+      return [
+        {
+          type: "item",
+          item: {
+            kind: "message",
+            id: this.messageItemId,
+            role: "assistant",
+            text,
+          },
+        },
+      ];
     }
 
     this.messageText += text;
@@ -137,8 +161,11 @@ export class CursorTranslator {
     if (!toolCall) return [];
 
     if (subtype === "started") {
-      const info = classifyToolCall(toolCall);
-      const itemId = newItemId("tool");
+      this.closeMessageSegment();
+      this.closeReasoningSegment();
+
+      const info = classifyToolCall(toolCall, this.cwd);
+      const itemId = `${this.turnId}:tool:${sanitizeCallId(callId)}`;
       this.tools.set(callId, itemId);
       return [
         {
@@ -159,7 +186,7 @@ export class CursorTranslator {
     if (subtype === "completed") {
       const itemId = this.tools.get(callId);
       if (!itemId) return [];
-      const info = classifyToolCall(toolCall);
+      const info = classifyToolCall(toolCall, this.cwd);
       const { output, failed } = extractToolOutput(toolCall);
       return [
         {
@@ -209,19 +236,35 @@ function extractAssistantText(event: CursorStreamEvent): string | null {
   return parts.length > 0 ? parts.join("") : null;
 }
 
-function classifyToolCall(toolCall: Record<string, unknown>): {
+function sanitizeCallId(callId: string): string {
+  return callId.replace(/\s+/g, "_").slice(0, 120);
+}
+
+function pathRelativeToCwd(path: string, cwd: string): string {
+  const normalizedCwd = cwd.endsWith("/") ? cwd.slice(0, -1) : cwd;
+  if (path === normalizedCwd) return path.split("/").pop() ?? path;
+  const prefix = `${normalizedCwd}/`;
+  if (path.startsWith(prefix)) return path.slice(prefix.length);
+  const parts = path.split("/");
+  return parts[parts.length - 1] ?? path;
+}
+
+function classifyToolCall(
+  toolCall: Record<string, unknown>,
+  cwd: string,
+): {
   kind: ToolKind;
   name: string;
   title: string;
   files?: string[];
 } {
-  const keys = Object.keys(toolCall);
-  const name = keys[0] ?? "unknown";
+  const keys = Object.keys(toolCall).filter((k) => k.endsWith("ToolCall"));
+  const name = keys[0] ?? Object.keys(toolCall)[0] ?? "unknown";
   const inner = toolCall[name] as Record<string, unknown> | undefined;
   const args = inner?.args as Record<string, unknown> | undefined;
 
   if (name === "readToolCall") {
-    const path = typeof args?.path === "string" ? shortenPath(args.path) : "?";
+    const path = typeof args?.path === "string" ? pathRelativeToCwd(args.path, cwd) : "?";
     return { kind: "read", name, title: `Read ${path}` };
   }
   if (name === "shellToolCall") {
@@ -234,12 +277,13 @@ function classifyToolCall(toolCall: Record<string, unknown>): {
     name === "strReplaceToolCall" ||
     name === "applyPatchToolCall"
   ) {
-    const path =
+    const raw =
       typeof args?.path === "string"
-        ? shortenPath(args.path)
+        ? args.path
         : typeof args?.file_path === "string"
-          ? shortenPath(args.file_path)
+          ? args.file_path
           : "?";
+    const path = raw === "?" ? raw : pathRelativeToCwd(raw, cwd);
     return { kind: "edit", name, title: `Edit ${path}`, files: [path] };
   }
   if (name === "grepToolCall" || name === "searchToolCall" || name === "globToolCall") {
@@ -265,17 +309,36 @@ function extractToolOutput(toolCall: Record<string, unknown>): {
   output: string | undefined;
   failed: boolean;
 } {
-  const keys = Object.keys(toolCall);
-  const name = keys[0];
+  const keys = Object.keys(toolCall).filter((k) => k.endsWith("ToolCall"));
+  const name = keys[0] ?? Object.keys(toolCall)[0];
   if (!name) return { output: undefined, failed: false };
 
   const inner = toolCall[name] as Record<string, unknown> | undefined;
   const result = inner?.result as Record<string, unknown> | undefined;
   if (!result) return { output: undefined, failed: false };
 
-  if (result.rejected || result.error) return { output: previewJson(result), failed: true };
+  if (result.rejected || result.error) {
+    return { output: previewJson(result), failed: true };
+  }
+
   if (result.success) {
     const success = result.success as Record<string, unknown>;
+
+    if (name === "shellToolCall") {
+      const exitCode = success.exitCode;
+      const failed = typeof exitCode === "number" && exitCode !== 0;
+      let output: string | undefined;
+      if (typeof success.interleavedOutput === "string") {
+        output = truncate(success.interleavedOutput, OUTPUT_PREVIEW_MAX);
+      } else {
+        const stdout = typeof success.stdout === "string" ? success.stdout : "";
+        const stderr = typeof success.stderr === "string" ? success.stderr : "";
+        const combined = stdout + stderr;
+        output = combined.length > 0 ? truncate(combined, OUTPUT_PREVIEW_MAX) : undefined;
+      }
+      return { output, failed };
+    }
+
     if (typeof success.content === "string") {
       return { output: truncate(success.content, OUTPUT_PREVIEW_MAX), failed: false };
     }
@@ -304,14 +367,6 @@ function parseUsage(raw: unknown): Usage | null {
     usage.cachedInputTokens = u.cacheReadTokens;
   }
   return usage;
-}
-
-function shortenPath(path: string): string {
-  const workspace = "/workspace/";
-  const idx = path.indexOf(workspace);
-  if (idx !== -1) return path.slice(idx + workspace.length);
-  const parts = path.split("/");
-  return parts.slice(-2).join("/");
 }
 
 function truncate(s: string, max: number): string {

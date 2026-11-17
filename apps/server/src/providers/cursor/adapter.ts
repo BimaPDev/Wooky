@@ -192,7 +192,7 @@ async function* runCursorTurn(
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  const translator = new CursorTranslator();
+  const translator = new CursorTranslator(input.turnId, input.cwd);
   const splitter = createNdjsonSplitter();
   let stderr = "";
   let exitCode: number | null = null;
