@@ -1,0 +1,20 @@
+{
+  "name": "@age/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "pnpm run build && electron .",
+    "start": "electron .",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "tsx": "^4.23.15"
+  }
+}
