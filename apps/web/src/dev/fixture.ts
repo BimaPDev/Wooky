@@ -22,6 +22,7 @@ const thread = (fields: Partial<Thread> & Pick<Thread, "id" | "projectId" | "tit
   runtimeMode: "approve",
   worktree: null,
   providerSessionId: null,
+  queue: [],
   status: "idle",
   createdAt: ago(600),
   updatedAt: ago(60),

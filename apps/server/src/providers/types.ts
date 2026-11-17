@@ -1,9 +1,12 @@
 import type {
   ApprovalRequest,
+  InteractionMode,
   ProviderEvent,
   ProviderKind,
   ProviderStatus,
+  QuestionAnswers,
   RuntimeMode,
+  UserInputRequest,
 } from "@age/contracts";
 
 /**
@@ -27,11 +30,38 @@ export interface TurnInput {
   runtimeMode: RuntimeMode;
   /** Native session to resume, if the thread has one for this provider. */
   resumeSessionId: string | null;
+  /**
+   * Native message to resume the session at (the last kept turn's nativeRef).
+   * null means "continue at the end of the current session", not "start fresh".
+   * Only non-null for a provider that cannot rewind natively but can resume at a
+   * message (no `rewind`; e.g. Claude's resume + resumeSessionAt + forkSession).
+   */
+  resumeAt: string | null;
+  interactionMode: InteractionMode;
   /** Prior conversation as text when the thread was handed off from another provider. */
   handoffContext: string | null;
   signal: AbortSignal;
   /** Resolve an approval card. Only called when runtimeMode requires it. */
   requestApproval: (request: ApprovalRequest) => Promise<"allow" | "deny">;
+  /** Ask the user structured questions. Resolves to answers per question id, or null if dismissed. */
+  requestUserInput: (request: UserInputRequest) => Promise<QuestionAnswers | null>;
+}
+
+export interface RewindInput {
+  threadId: string;
+  /** The thread's current native session. */
+  sessionId: string;
+  /**
+   * Last native message to keep. null means "drop every turn and start fresh", unlike
+   * TurnInput.resumeAt, where null means "continue at the end of the session".
+   */
+  keepNativeRef: string | null;
+  /**
+   * How many turns the revert dropped (int, at least 1). Computed by decide at revert
+   * time: by the time the effect runs, those turns are already gone from the model.
+   */
+  dropTurns: number;
+  cwd: string;
 }
 
 export interface ProviderAdapter {
@@ -39,4 +69,11 @@ export interface ProviderAdapter {
   /** Cheap availability check. Must not start a model turn or spend quota. */
   probe(): Promise<ProviderStatus>;
   runTurn(input: TurnInput): AsyncIterable<ProviderEvent>;
+  /**
+   * Cut the native conversation back after a revert. Returns the session the next turn
+   * resumes, or null to start fresh. The runner binds it (turn.reverted.providerSessionId)
+   * and the next turn runs with `resumeAt: null` against it. Adapters without it resume
+   * at a message via TurnInput.resumeAt, or, if they cannot, get the handoff transcript.
+   */
+  rewind?(input: RewindInput): Promise<{ sessionId: string | null }>;
 }

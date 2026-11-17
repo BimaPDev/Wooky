@@ -1,6 +1,6 @@
 import { basename, isAbsolute, normalize, sep } from "node:path";
 import type { Command, CommandOf, PendingEvent, ReadModel, Thread } from "@age/contracts";
-import { activeTurn, pendingApprovals } from "@age/domain";
+import { activeTurn, pendingApprovals, pendingQuestions } from "@age/domain";
 import { checkpointRef, NO_CHECKPOINT_ITEM, type Effect } from "./effects.ts";
 
 export interface DecideContext {
@@ -96,12 +96,19 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
         [{ kind: "approval.resolve", ...ids, decision: command.decision }],
       );
     }
+    case "question.respond":
+      return respondToQuestion(model, command);
+    case "queue.remove":
+    case "queue.promote":
+      return reject("bad_request", `${command.type} is not supported yet.`);
     case "turn.revert": {
       const thread = model.threads[command.threadId];
       if (!thread) return notFound("thread", command.threadId);
       const turn = model.turns[thread.id]?.find((candidate) => candidate.id === command.turnId);
       if (!turn) return notFound("turn", command.turnId);
       if (isBusy(thread)) return reject("conflict", "Stop the running turn before reverting.");
+      if (command.restoreFiles === false)
+        return reject("bad_request", "conversation-only revert not supported yet");
       if (!turn.checkpointBefore || turn.items.some((item) => item.id === NO_CHECKPOINT_ITEM))
         return reject("conflict", "This turn has no checkpoint, so it cannot be reverted.");
       const cwd = workspaceOf(model, thread);
@@ -121,6 +128,26 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
       );
     }
   }
+}
+
+function respondToQuestion(model: ReadModel, command: CommandOf<"question.respond">): Decision {
+  const thread = model.threads[command.threadId];
+  if (!thread) return notFound("thread", command.threadId);
+  const asked = (model.turns[thread.id] ?? []).some((turn) =>
+    turn.items.some((item) => item.kind === "question" && item.requestId === command.requestId),
+  );
+  if (!asked) return notFound("question", command.requestId);
+  const turn = activeTurn(model, thread.id);
+  const open = pendingQuestions(model, thread.id).some(
+    (item) => item.requestId === command.requestId,
+  );
+  if (!turn || !open) return reject("conflict", "This question was already answered or dismissed.");
+  const ids = { threadId: thread.id, turnId: turn.id, requestId: command.requestId };
+  return accept(
+    command,
+    [{ type: "question.resolved", ...ids, answers: command.answers }],
+    [{ kind: "question.resolve", ...ids, answers: command.answers }],
+  );
 }
 
 function addProject(
@@ -189,6 +216,7 @@ function createThread(
           worktree: null,
           ...(command.isolate ? { isolate: true } : {}),
           providerSessionId: null,
+          queue: [],
           status: "idle",
           createdAt: now,
           updatedAt: now,

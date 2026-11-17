@@ -62,6 +62,7 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         model: event.model,
         runtimeMode: event.runtimeMode,
         ...(event.handoff ? { providerSessionId: null } : {}),
+        ...(event.interactionMode ? { interactionMode: event.interactionMode } : {}),
       });
 
     case "thread.sessionBound":
@@ -88,6 +89,7 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         changedFiles: [],
         usage: null,
         error: null,
+        ...(event.interactionMode ? { interactionMode: event.interactionMode } : {}),
       };
       const withTurn = {
         ...model,
@@ -96,11 +98,18 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       return patchThread(withTurn, event.threadId, event.at, { status: "running" });
     }
 
-    case "turn.itemUpserted":
-      return patchTurn(model, event.threadId, event.turnId, (turn) => ({
+    case "turn.itemUpserted": {
+      const isNewPlan =
+        event.item.kind === "plan" &&
+        !model.turns[event.threadId]?.some((turn) =>
+          turn.items.some((item) => item.id === event.item.id),
+        );
+      const base = isNewPlan ? supersedePlans(model, event.threadId) : model;
+      return patchTurn(base, event.threadId, event.turnId, (turn) => ({
         ...turn,
         items: upsertItem(turn.items, event.item),
       }));
+    }
 
     case "turn.itemDelta":
       return patchTurn(model, event.threadId, event.turnId, (turn) => {
@@ -116,6 +125,7 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       return patchThread(model, event.threadId, event.at, { status: "waiting" });
 
     case "approval.resolved": {
+      if (!openRequestOnRunningTurn(model, event)) return model;
       const resolved = patchTurn(model, event.threadId, event.turnId, (turn) => ({
         ...turn,
         items: turn.items.map((item) =>
@@ -124,11 +134,46 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
             : item,
         ),
       }));
-      const stillWaiting = (resolved.turns[event.threadId] ?? []).some((turn) =>
-        turn.items.some((item) => item.kind === "approval" && item.decision === null),
-      );
       return patchThread(resolved, event.threadId, event.at, {
-        status: stillWaiting ? "waiting" : "running",
+        status: hasOpenRequest(resolved, event.threadId) ? "waiting" : "running",
+      });
+    }
+
+    case "question.requested": {
+      const asked = patchTurn(model, event.threadId, event.turnId, (turn) =>
+        turn.items.some((item) => item.id === event.itemId)
+          ? turn
+          : {
+              ...turn,
+              items: [
+                ...turn.items,
+                {
+                  kind: "question",
+                  id: event.itemId,
+                  requestId: event.requestId,
+                  questions: event.questions,
+                  answers: null,
+                },
+              ],
+            },
+      );
+      return patchThread(asked, event.threadId, event.at, { status: "waiting" });
+    }
+
+    case "question.resolved": {
+      if (!openRequestOnRunningTurn(model, event)) return model;
+      const resolved = patchTurn(model, event.threadId, event.turnId, (turn) => ({
+        ...turn,
+        items: turn.items.map((item) =>
+          item.kind === "question" && item.requestId === event.requestId
+            ? event.answers === null
+              ? { ...item, answers: null, dismissed: true }
+              : { ...item, answers: event.answers }
+            : item,
+        ),
+      }));
+      return patchThread(resolved, event.threadId, event.at, {
+        status: hasOpenRequest(resolved, event.threadId) ? "waiting" : "running",
       });
     }
 
@@ -141,10 +186,13 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         changedFiles: event.changedFiles,
         usage: event.usage,
         error: event.error,
-        // Approvals left open when a turn ends can never be answered.
+        ...(event.nativeRef === undefined ? {} : { nativeRef: event.nativeRef }),
+        // Approvals and questions left open when a turn ends can never be answered.
         items: turn.items.map((item) =>
-          item.kind === "approval" && item.decision === null
-            ? { ...item, decision: "deny" as const }
+          isOpenRequest(item)
+            ? item.kind === "approval"
+              ? { ...item, decision: "deny" as const }
+              : { ...item, dismissed: true }
             : item,
         ),
       }));
@@ -162,9 +210,75 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       const last = remaining.at(-1)?.status;
       const status = last === "failed" ? "error" : last === "running" ? "running" : "idle";
       const reverted = { ...model, turns: { ...model.turns, [event.threadId]: remaining } };
-      return patchThread(reverted, event.threadId, event.at, { status });
+      return patchThread(reverted, event.threadId, event.at, {
+        status,
+        ...(event.providerSessionId === undefined
+          ? {}
+          : { providerSessionId: event.providerSessionId }),
+      });
+    }
+
+    case "queue.added": {
+      const thread = model.threads[event.threadId];
+      if (!thread) return model;
+      const queue = thread.queue ?? [];
+      if (queue.some((item) => item.id === event.item.id)) return model;
+      return patchThread(model, event.threadId, event.at, { queue: [...queue, event.item] });
+    }
+
+    case "queue.removed": {
+      const queue = model.threads[event.threadId]?.queue;
+      if (!queue?.some((item) => item.id === event.queueId)) return model;
+      return patchThread(model, event.threadId, event.at, {
+        queue: queue.filter((item) => item.id !== event.queueId),
+      });
     }
   }
+}
+
+function isOpenRequest(item: TimelineItem): boolean {
+  if (item.kind === "approval") return item.decision === null;
+  if (item.kind === "question") return item.answers === null && !item.dismissed;
+  return false;
+}
+
+/** A late or repeated resolve (turn ended, reverted, or already answered) changes nothing. */
+function openRequestOnRunningTurn(
+  model: ReadModel,
+  event: { threadId: string; turnId: string; requestId: string },
+): boolean {
+  const turn = model.turns[event.threadId]?.findLast((candidate) => candidate.id === event.turnId);
+  if (turn?.status !== "running") return false;
+  return turn.items.some(
+    (item) =>
+      (item.kind === "approval" || item.kind === "question") &&
+      item.requestId === event.requestId &&
+      isOpenRequest(item),
+  );
+}
+
+function hasOpenRequest(model: ReadModel, threadId: string): boolean {
+  return (model.turns[threadId] ?? []).some((turn) => turn.items.some(isOpenRequest));
+}
+
+/** A new plan replaces every plan still waiting for the user's review. */
+function supersedePlans(model: ReadModel, threadId: string): ReadModel {
+  const list = model.turns[threadId];
+  if (!list) return model;
+  let changed = false;
+  const turns = list.map((turn) => {
+    if (!turn.items.some((item) => item.kind === "plan" && item.status === "proposed")) return turn;
+    changed = true;
+    return {
+      ...turn,
+      items: turn.items.map((item) =>
+        item.kind === "plan" && item.status === "proposed"
+          ? { ...item, status: "superseded" as const }
+          : item,
+      ),
+    };
+  });
+  return changed ? { ...model, turns: { ...model.turns, [threadId]: turns } } : model;
 }
 
 function patchThread(

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Id, ProviderKind, RuntimeMode } from "./model.ts";
+import { Id, InteractionMode, ProviderKind, QuestionAnswers, RuntimeMode } from "./model.ts";
 
 /**
  * Commands are intents sent by clients. Every command carries a client-generated
@@ -36,8 +36,16 @@ export const Command = z.discriminatedUnion("type", [
     provider: ProviderKind.optional(),
     model: z.string().optional(),
     runtimeMode: RuntimeMode.optional(),
+    interactionMode: InteractionMode.optional(),
   }),
-  z.object({ ...base, type: z.literal("turn.start"), threadId: Id, prompt: z.string().min(1) }),
+  z.object({
+    ...base,
+    type: z.literal("turn.start"),
+    threadId: Id,
+    prompt: z.string().min(1),
+    /** What to do when a turn is already running. Absent means "reject". */
+    whenBusy: z.enum(["reject", "queue"]).optional(),
+  }),
   z.object({ ...base, type: z.literal("turn.interrupt"), threadId: Id }),
   z.object({
     ...base,
@@ -48,10 +56,26 @@ export const Command = z.discriminatedUnion("type", [
   }),
   z.object({
     ...base,
+    type: z.literal("question.respond"),
+    threadId: Id,
+    requestId: Id,
+    /** null dismisses the question. */
+    answers: QuestionAnswers.nullable(),
+  }),
+  z.object({ ...base, type: z.literal("queue.remove"), threadId: Id, queueId: Id }),
+  /**
+   * Start this queued prompt now, wherever it sits in the queue. Decided as
+   * `queue.removed {reason: "started"}` followed by `turn.started {fromQueueId}`.
+   */
+  z.object({ ...base, type: z.literal("queue.promote"), threadId: Id, queueId: Id }),
+  z.object({
+    ...base,
     type: z.literal("turn.revert"),
     threadId: Id,
     /** Restore the workspace to the checkpoint captured before this turn. */
     turnId: Id,
+    /** Absent means true. False rewinds the conversation only and leaves files as they are. */
+    restoreFiles: z.boolean().optional(),
   }),
 ]);
 export type Command = z.infer<typeof Command>;

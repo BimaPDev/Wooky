@@ -142,5 +142,7 @@ export const DeviceSettings = z.object({
   confirmArchive: z.boolean().default(true),
   /** Providers the user turned off in Settings → Providers. */
   disabledProviders: z.array(ProviderKind).default([]),
+  /** Sending while a turn runs: queue the prompt, or keep the composer blocked. */
+  followUp: z.enum(["queue", "off"]).default("queue"),
 });
 export type DeviceSettings = z.infer<typeof DeviceSettings>;

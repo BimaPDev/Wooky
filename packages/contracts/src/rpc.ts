@@ -23,6 +23,13 @@ export const ReadModel = z.object({
 });
 export type ReadModel = z.infer<typeof ReadModel>;
 
+export const WorkspaceEntry = z.object({
+  /** Relative to the thread's workspace, with forward slashes. */
+  path: z.string(),
+  kind: z.enum(["file", "dir"]),
+});
+export type WorkspaceEntry = z.infer<typeof WorkspaceEntry>;
+
 export const RpcMethods = {
   /** Record a command. Ack means the intent was saved, not that the work finished. */
   dispatch: {
@@ -46,6 +53,15 @@ export const RpcMethods = {
     /** Suggest directories for "add project" (home children, recent roots). */
     params: z.object({ query: z.string().optional() }),
     result: z.array(z.object({ path: z.string(), isGitRepo: z.boolean() })),
+  },
+  /** Files and directories in a thread's workspace matching query, best first. */
+  "fs.searchEntries": {
+    params: z.object({
+      threadId: Id,
+      query: z.string(),
+      limit: z.number().int().positive().max(200).optional(),
+    }),
+    result: z.array(WorkspaceEntry),
   },
   "settings.get": { params: z.object({}), result: DeviceSettings },
   "settings.put": {

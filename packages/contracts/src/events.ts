@@ -1,14 +1,18 @@
 import { z } from "zod";
 import {
   Id,
+  InteractionMode,
   IsoTime,
   Project,
   ProviderKind,
+  QuestionAnswers,
+  QueuedPrompt,
   RuntimeMode,
   Thread,
   TimelineItem,
   TurnStatus,
   Usage,
+  UserQuestion,
   Worktree,
 } from "./model.ts";
 
@@ -40,6 +44,7 @@ export const AgeEvent = z.discriminatedUnion("type", [
     runtimeMode: RuntimeMode,
     /** True when the provider changed and the next turn must hand off context. */
     handoff: z.boolean(),
+    interactionMode: InteractionMode.optional(),
   }),
   z.object({
     ...meta,
@@ -63,6 +68,9 @@ export const AgeEvent = z.discriminatedUnion("type", [
     provider: ProviderKind,
     model: z.string(),
     checkpointBefore: z.string().nullable(),
+    interactionMode: InteractionMode.optional(),
+    /** Set when the turn started from a queued prompt. */
+    fromQueueId: Id.optional(),
   }),
   /** Insert or replace an item by id. */
   z.object({
@@ -97,6 +105,25 @@ export const AgeEvent = z.discriminatedUnion("type", [
     requestId: Id,
     decision: z.enum(["allow", "deny"]),
   }),
+  /** The item is upserted from `questions` when the turn does not have it yet. */
+  z.object({
+    ...meta,
+    type: z.literal("question.requested"),
+    threadId: Id,
+    turnId: Id,
+    itemId: Id,
+    requestId: Id,
+    questions: z.array(UserQuestion).min(1),
+  }),
+  z.object({
+    ...meta,
+    type: z.literal("question.resolved"),
+    threadId: Id,
+    turnId: Id,
+    requestId: Id,
+    /** null means dismissed. */
+    answers: QuestionAnswers.nullable(),
+  }),
   z.object({
     ...meta,
     type: z.literal("turn.finished"),
@@ -107,12 +134,25 @@ export const AgeEvent = z.discriminatedUnion("type", [
     changedFiles: z.array(z.string()),
     usage: Usage.nullable(),
     error: z.string().nullable(),
+    nativeRef: z.string().nullable().optional(),
   }),
   z.object({
     ...meta,
     type: z.literal("turn.reverted"),
     threadId: Id,
     turnId: Id,
+    /** Absent means true (older logs always restored files). */
+    restoredFiles: z.boolean().optional(),
+    /** Replaces the thread's native session when present (rewound or reset to null). */
+    providerSessionId: z.string().nullable().optional(),
+  }),
+  z.object({ ...meta, type: z.literal("queue.added"), threadId: Id, item: QueuedPrompt }),
+  z.object({
+    ...meta,
+    type: z.literal("queue.removed"),
+    threadId: Id,
+    queueId: Id,
+    reason: z.enum(["started", "removed"]),
   }),
 ]);
 export type AgeEvent = z.infer<typeof AgeEvent>;
