@@ -1,6 +1,16 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -268,5 +278,329 @@ describe("concurrency", () => {
     for (const ref of refs) {
       expect((await raw(root, "rev-parse", ref)).trim()).toMatch(/^[0-9a-f]{40}$/);
     }
+  });
+});
+
+describe("restore best-effort over a nested repo (fix 1)", () => {
+  it("removes every deletable file and never descends into a nested repo", async () => {
+    const root = await makeRepo();
+    const ref = "refs/age/checkpoints/t/u/before";
+    await git.captureCheckpoint(root, ref);
+
+    await writeFile(join(root, "del1.txt"), "x\n");
+    await mkdir(join(root, "sub"));
+    await writeFile(join(root, "sub/del2.txt"), "y\n");
+    await mkdir(join(root, "nested"));
+    await raw(join(root, "nested"), "init", "-q");
+    await writeFile(join(root, "nested/inner.txt"), "keep\n");
+
+    await git.restoreCheckpoint(root, ref);
+
+    expect(existsSync(join(root, "del1.txt"))).toBe(false);
+    expect(existsSync(join(root, "sub/del2.txt"))).toBe(false);
+    expect(existsSync(join(root, "sub"))).toBe(false);
+    expect(existsSync(join(root, "nested/inner.txt"))).toBe(true);
+    expect(existsSync(join(root, "nested/.git"))).toBe(true);
+  });
+});
+
+describe("restore and the real index (fix 2)", () => {
+  it("drops deleted paths from the index but leaves a staged survivor untouched", async () => {
+    const root = await makeRepo();
+    const ref = "refs/age/checkpoints/t/u/before";
+    await git.captureCheckpoint(root, ref);
+
+    await writeFile(join(root, "agent-new.txt"), "new\n");
+    await writeFile(join(root, "seed.txt"), "seed staged edit\n");
+    await raw(root, "add", "-A");
+
+    await git.restoreCheckpoint(root, ref);
+
+    expect(existsSync(join(root, "agent-new.txt"))).toBe(false);
+    const status = await raw(root, "status", "--porcelain");
+    expect(status).not.toMatch(/agent-new\.txt/);
+
+    const cached = await raw(root, "diff", "--cached", "--name-only");
+    expect(cached).toMatch(/seed\.txt/);
+    expect(cached).not.toMatch(/agent-new\.txt/);
+  });
+});
+
+describe("env hygiene (fix 3)", () => {
+  it("ignores a hostile GIT_EXTERNAL_DIFF in the environment", async () => {
+    const root = await makeRepo();
+    const from = "refs/age/checkpoints/t/a/before";
+    await git.captureCheckpoint(root, from);
+    await writeFile(join(root, "hello.txt"), "hello\n");
+    const to = "refs/age/checkpoints/t/b/after";
+    await git.captureCheckpoint(root, to);
+
+    const base = await mkdtemp(join(tmpdir(), "age-git-ext-"));
+    bases.push(base);
+    const differ = join(base, "fail-differ.sh");
+    await writeFile(differ, "#!/bin/sh\nexit 1\n");
+    await chmod(differ, 0o755);
+
+    const prev = process.env.GIT_EXTERNAL_DIFF;
+    process.env.GIT_EXTERNAL_DIFF = differ;
+    try {
+      const diffs = await git.diff(root, from, to);
+      const hello = diffs.find((d) => d.path === "hello.txt");
+      expect(hello?.status).toBe("added");
+      expect(hello?.patch).toContain("+hello");
+    } finally {
+      if (prev === undefined) delete process.env.GIT_EXTERNAL_DIFF;
+      else process.env.GIT_EXTERNAL_DIFF = prev;
+    }
+  });
+});
+
+describe("worktree re-creation (fix 5)", () => {
+  it("re-adds a worktree on an existing branch after removal", async () => {
+    const root = await makeRepo();
+    const wt1 = await git.createWorktree(root, "re");
+    await git.removeWorktree(root, wt1);
+    expect(await raw(root, "branch", "--list", "age/re")).toContain("age/re");
+
+    const wt2 = await git.createWorktree(root, "re");
+    expect(existsSync(wt2.path)).toBe(true);
+    expect(wt2.branch).toBe("age/re");
+  });
+});
+
+describe("patch truncation on a code-point boundary (fix 7)", () => {
+  it("never emits U+FFFD when a multibyte char straddles the limit", async () => {
+    const root = await makeRepo();
+    const from = "refs/age/checkpoints/t/a/before";
+    await git.captureCheckpoint(root, from);
+
+    // The patch header length is constant for a single-line add of this filename, so measure
+    // where the content begins from a tiny probe and pad so the 200 KB cut lands mid-character.
+    await writeFile(join(root, "big.txt"), "中");
+    const probe = "refs/age/checkpoints/t/probe/after";
+    await git.captureCheckpoint(root, probe);
+    const full = await raw(
+      root,
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      "-M",
+      "--no-ext-diff",
+      "--no-textconv",
+      from,
+      probe,
+    );
+    const marker = Buffer.from("@@\n+", "utf8");
+    const contentStart = Buffer.from(full, "utf8").indexOf(marker) + marker.length;
+    const pad = (200 * 1024 - contentStart) % 3 === 0 ? 1 : 0;
+
+    await writeFile(join(root, "big.txt"), "a".repeat(pad) + "中".repeat(100_000));
+    const to = "refs/age/checkpoints/t/b/after";
+    await git.captureCheckpoint(root, to);
+
+    const diffs = await git.diff(root, from, to);
+    const patch = diffs.find((d) => d.path === "big.txt")?.patch ?? "";
+    expect(patch).not.toContain("\uFFFD");
+    expect(patch.endsWith("… diff truncated\n")).toBe(true);
+    expect(Buffer.byteLength(patch, "utf8")).toBeLessThanOrEqual(200 * 1024 + 64);
+  });
+});
+
+describe("patch parsing by position (fix 8)", () => {
+  it("produces a patch for a filename containing a newline", async () => {
+    const root = await makeRepo();
+    const from = "refs/age/checkpoints/t/a/before";
+    await git.captureCheckpoint(root, from);
+
+    const weird = "we\nird.txt";
+    await writeFile(join(root, weird), "weird content\n");
+    await writeFile(join(root, "plain.txt"), "plain content\n");
+    const to = "refs/age/checkpoints/t/b/after";
+    await git.captureCheckpoint(root, to);
+
+    const diffs = await git.diff(root, from, to);
+    const byPath = new Map(diffs.map((d) => [d.path, d]));
+    expect(byPath.get(weird)?.status).toBe("added");
+    expect(byPath.get(weird)?.patch).toContain("+weird content");
+    expect(byPath.get("plain.txt")?.patch).toContain("+plain content");
+  });
+});
+
+describe("ref safety, hardened (fix 10)", () => {
+  // git itself refuses most bad names at update-ref/read-tree; the guard must reject them up
+  // front, before any git mutation, which shows up as a GitError from the check-ref-format step.
+  it("rejects traversal, double-slash, trailing slash, .lock and dot-component refs early", async () => {
+    const root = await makeRepo();
+    const bad = [
+      "refs/age/../heads/main",
+      "refs/age/foo//bar",
+      "refs/age/foo.lock",
+      "refs/age/foo/",
+      "refs/age/.hidden/x",
+    ];
+    for (const ref of bad) {
+      await expect(git.captureCheckpoint(root, ref)).rejects.toMatchObject({
+        argv: ["check-ref-format", ref],
+      });
+    }
+    await expect(git.restoreCheckpoint(root, "refs/age/../heads/main")).rejects.toMatchObject({
+      argv: ["check-ref-format", "refs/age/../heads/main"],
+    });
+    await expect(git.captureCheckpoint(root, "refs/age/foo/")).rejects.toThrow(/refs\/age\//);
+  });
+});
+
+const FAKE_GIT = `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+let i = 0;
+while (args[i] === "-c") i += 2;
+const cmd = args[i];
+const sub = args.slice(i + 1);
+const SHA = "1111111111111111111111111111111111111111";
+const w = (s) => process.stdout.write(s);
+if (cmd === "check-ref-format") process.exit(0);
+if (cmd === "rev-parse") {
+  if (sub.includes("--show-toplevel")) { w(process.cwd() + "\\n"); process.exit(0); }
+  if (sub.includes("--git-common-dir")) {
+    if (path.basename(process.cwd()) === "wt") w(process.env.FAKE_MAINLINK + "/.git\\n");
+    else w(".git\\n");
+    process.exit(0);
+  }
+  if (sub.includes("--verify")) process.exit(0);
+  w(SHA + "\\n"); process.exit(0);
+}
+if (cmd === "write-tree") {
+  const start = Date.now();
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120);
+  fs.appendFileSync(process.env.FAKE_REC, start + " " + Date.now() + "\\n");
+  w(SHA + "\\n"); process.exit(0);
+}
+if (cmd === "commit-tree") { w(SHA + "\\n"); process.exit(0); }
+process.exit(0);
+`;
+
+async function setupFakeRepo(): Promise<{
+  base: string;
+  bin: string;
+  rec: string;
+  mainPath: string;
+  wtPath: string;
+}> {
+  const base = await realpath(await mkdtemp(join(tmpdir(), "age-git-fake-")));
+  bases.push(base);
+  await mkdir(join(base, "main", ".git"), { recursive: true });
+  await mkdir(join(base, "wt"), { recursive: true });
+  await symlink(join(base, "main"), join(base, "mainlink"));
+  const bin = join(base, "fakegit.cjs");
+  await writeFile(bin, FAKE_GIT);
+  await chmod(bin, 0o755);
+  return {
+    base,
+    bin,
+    rec: join(base, "rec.log"),
+    mainPath: join(base, "main"),
+    wtPath: join(base, "wt"),
+  };
+}
+
+async function readIntervals(file: string): Promise<{ start: number; end: number }[]> {
+  const text = await readFile(file, "utf8");
+  return text
+    .trim()
+    .split("\n")
+    .filter((l) => l.length > 0)
+    .map((l) => {
+      const [s, e] = l.split(" ").map(Number);
+      return { start: s ?? 0, end: e ?? 0 };
+    });
+}
+
+function expectNoOverlap(intervals: { start: number; end: number }[]): void {
+  const sorted = [...intervals].sort((a, b) => a.start - b.start);
+  const overlaps = sorted.filter(
+    (cur, i) => i > 0 && cur.start < (sorted[i - 1]?.end ?? -Infinity),
+  );
+  expect(overlaps).toEqual([]);
+}
+
+describe("serialization under the repo lock (fix 9)", () => {
+  it("never overlaps two mutating operations on one repo", async () => {
+    const { bin, rec, mainPath } = await setupFakeRepo();
+    const fake = createGitService({ gitBin: bin });
+    const prev = process.env.FAKE_REC;
+    process.env.FAKE_REC = rec;
+    try {
+      await Promise.all(
+        Array.from({ length: 5 }, (_, i) => fake.captureCheckpoint(mainPath, `refs/age/c/${i}`)),
+      );
+      const intervals = await readIntervals(rec);
+      expect(intervals.length).toBe(5);
+      expectNoOverlap(intervals);
+    } finally {
+      if (prev === undefined) delete process.env.FAKE_REC;
+      else process.env.FAKE_REC = prev;
+    }
+  });
+});
+
+describe("one lock key through symlinked paths (fix 4)", () => {
+  it("serializes main-repo and linked-worktree operations that realpath to one common dir", async () => {
+    const { base, bin, rec, mainPath, wtPath } = await setupFakeRepo();
+    const fake = createGitService({ gitBin: bin });
+    const prevRec = process.env.FAKE_REC;
+    const prevLink = process.env.FAKE_MAINLINK;
+    process.env.FAKE_REC = rec;
+    process.env.FAKE_MAINLINK = join(base, "mainlink");
+    try {
+      await Promise.all([
+        fake.captureCheckpoint(mainPath, "refs/age/m/0"),
+        fake.captureCheckpoint(wtPath, "refs/age/w/0"),
+        fake.captureCheckpoint(mainPath, "refs/age/m/1"),
+        fake.captureCheckpoint(wtPath, "refs/age/w/1"),
+        fake.captureCheckpoint(mainPath, "refs/age/m/2"),
+        fake.captureCheckpoint(wtPath, "refs/age/w/2"),
+      ]);
+      const intervals = await readIntervals(rec);
+      expect(intervals.length).toBe(6);
+      expectNoOverlap(intervals);
+    } finally {
+      if (prevRec === undefined) delete process.env.FAKE_REC;
+      else process.env.FAKE_REC = prevRec;
+      if (prevLink === undefined) delete process.env.FAKE_MAINLINK;
+      else process.env.FAKE_MAINLINK = prevLink;
+    }
+  });
+});
+
+const SLOW_GIT = `#!/usr/bin/env node
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);
+process.exit(0);
+`;
+
+const HUGE_GIT = `#!/usr/bin/env node
+process.stdout.write(Buffer.alloc(256 * 1024, 65));
+`;
+
+describe("bounded run (fix 6)", () => {
+  it("kills a git that exceeds the spawn timeout", async () => {
+    const base = await mkdtemp(join(tmpdir(), "age-git-slow-"));
+    bases.push(base);
+    const bin = join(base, "slow.cjs");
+    await writeFile(bin, SLOW_GIT);
+    await chmod(bin, 0o755);
+    const fake = createGitService({ gitBin: bin, timeoutMs: 150 });
+    await expect(fake.captureCheckpoint(base, "refs/age/x/y")).rejects.toThrow(/timed out/);
+  });
+
+  it("kills a git that floods stdout past the cap", async () => {
+    const base = await mkdtemp(join(tmpdir(), "age-git-huge-"));
+    bases.push(base);
+    const bin = join(base, "huge.cjs");
+    await writeFile(bin, HUGE_GIT);
+    await chmod(bin, 0o755);
+    const fake = createGitService({ gitBin: bin, maxStdoutBytes: 1024 });
+    await expect(fake.captureCheckpoint(base, "refs/age/x/y")).rejects.toThrow(/exceeded cap/);
   });
 });
