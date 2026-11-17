@@ -1,0 +1,145 @@
+/* The only place colours are defined. Components reference these variables. */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --leading: 1.55;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  --duration-fast: 120ms;
+  --duration: 160ms;
+  --duration-slow: 200ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  --sidebar-width: 260px;
+  --panel-width: min(46vw, 640px);
+  --content-width: 760px;
+}
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-0: #0d0d0c;
+  --bg-1: #141413;
+  --bg-2: #1b1b19;
+  --bg-3: #242421;
+  --bg-hover: #2a2a27;
+  --bg-active: #31312d;
+  --line: #2b2a27;
+  --line-strong: #3a3935;
+  --text: #ecebe6;
+  --text-2: #b4b2aa;
+  --text-3: #85837b;
+  --text-4: #5f5d57;
+  --accent: #d7c9a7;
+  --accent-ink: #1a1813;
+  --focus: #c9b98f;
+  --amber: #e2a54a;
+  --amber-bg: #2a2114;
+  --red: #e5675d;
+  --red-bg: #2c1716;
+  --green: #7cbf86;
+  --add-bg: #15261a;
+  --add-ink: #a9d8b0;
+  --del-bg: #2c1716;
+  --del-ink: #eba49d;
+  --scrim: #00000099;
+  --shadow: 0 12px 32px -8px #000000b3, 0 0 0 1px #3a3935;
+  --provider-claude: #d98b63;
+  --provider-cursor: #b9b8b3;
+  --provider-codex: #8fb3e6;
+  --provider-demo: #a7c79a;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-0: #f4f3ef;
+  --bg-1: #faf9f6;
+  --bg-2: #ffffff;
+  --bg-3: #efede7;
+  --bg-hover: #ebe9e2;
+  --bg-active: #e2e0d8;
+  --line: #e3e1da;
+  --line-strong: #cfccc3;
+  --text: #1d1c1a;
+  --text-2: #4a4843;
+  --text-3: #75726b;
+  --text-4: #a19e96;
+  --accent: #3b3528;
+  --accent-ink: #faf9f6;
+  --focus: #8a7444;
+  --amber: #b97813;
+  --amber-bg: #fbf1df;
+  --red: #c2392f;
+  --red-bg: #fbe9e7;
+  --green: #2f7d3b;
+  --add-bg: #e7f4e8;
+  --add-ink: #1f5e2a;
+  --del-bg: #fbe9e7;
+  --del-ink: #8f2a22;
+  --scrim: #1d1c1a4d;
+  --shadow: 0 12px 32px -10px #1d1c1a40, 0 0 0 1px #cfccc3;
+  --provider-claude: #b8653d;
+  --provider-cursor: #55534e;
+  --provider-codex: #3d6fb3;
+  --provider-demo: #4f7c43;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg-0: #f4f3ef;
+    --bg-1: #faf9f6;
+    --bg-2: #ffffff;
+    --bg-3: #efede7;
+    --bg-hover: #ebe9e2;
+    --bg-active: #e2e0d8;
+    --line: #e3e1da;
+    --line-strong: #cfccc3;
+    --text: #1d1c1a;
+    --text-2: #4a4843;
+    --text-3: #75726b;
+    --text-4: #a19e96;
+    --accent: #3b3528;
+    --accent-ink: #faf9f6;
+    --focus: #8a7444;
+    --amber: #b97813;
+    --amber-bg: #fbf1df;
+    --red: #c2392f;
+    --red-bg: #fbe9e7;
+    --green: #2f7d3b;
+    --add-bg: #e7f4e8;
+    --add-ink: #1f5e2a;
+    --del-bg: #fbe9e7;
+    --del-ink: #8f2a22;
+    --scrim: #1d1c1a4d;
+    --shadow: 0 12px 32px -10px #1d1c1a40, 0 0 0 1px #cfccc3;
+    --provider-claude: #b8653d;
+    --provider-cursor: #55534e;
+    --provider-codex: #3d6fb3;
+    --provider-demo: #4f7c43;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration: 0ms;
+    --duration-slow: 0ms;
+  }
+}
