@@ -1,4 +1,12 @@
-import type { Command, FileDiff, RuntimeMode, ProviderKind } from "@age/contracts";
+import type {
+  Command,
+  FileDiff,
+  InteractionMode,
+  ProviderKind,
+  QuestionAnswers,
+  RuntimeMode,
+} from "@age/contracts";
+import { threadsSharingWorkspace } from "@age/domain";
 import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
 import { useStore, type Dialog, type SettingsPage } from "./store.ts";
@@ -163,11 +171,21 @@ export function removeThread(threadId: string) {
 
 export const configureThread = (
   threadId: string,
-  patch: { provider?: ProviderKind; model?: string; runtimeMode?: RuntimeMode },
+  patch: {
+    provider?: ProviderKind;
+    model?: string;
+    runtimeMode?: RuntimeMode;
+    interactionMode?: InteractionMode;
+  },
 ) => dispatch({ type: "thread.configure", threadId, ...patch });
 
-export const startTurn = (threadId: string, prompt: string) =>
-  dispatch({ type: "turn.start", threadId, prompt });
+export const startTurn = (threadId: string, prompt: string, whenBusy?: "reject" | "queue") =>
+  dispatch({
+    type: "turn.start",
+    threadId,
+    prompt,
+    ...(whenBusy ? { whenBusy } : {}),
+  });
 
 export const interruptTurn = (threadId: string) => dispatch({ type: "turn.interrupt", threadId });
 
@@ -175,10 +193,21 @@ export const respondApproval = (threadId: string, requestId: string, decision: "
   dispatch({ type: "approval.respond", threadId, requestId, decision });
 
 export function revertTurn(threadId: string, turnId: string) {
-  confirm({
-    title: "Revert to before this turn",
-    body: "Files go back to how they were before this turn, and this turn and later ones are removed.",
-    confirmLabel: "Revert",
-    onConfirm: () => void dispatch({ type: "turn.revert", threadId, turnId }),
-  });
+  openDialog({ kind: "revert", threadId, turnId });
+}
+
+export const respondQuestion = (threadId: string, requestId: string, answers: QuestionAnswers) =>
+  dispatch({ type: "question.respond", threadId, requestId, answers });
+
+export const dismissQuestion = (threadId: string, requestId: string) =>
+  dispatch({ type: "question.respond", threadId, requestId, answers: null });
+
+export const removeQueuedPrompt = (threadId: string, queueId: string) =>
+  dispatch({ type: "queue.remove", threadId, queueId });
+
+export const promoteQueuedPrompt = (threadId: string, queueId: string) =>
+  dispatch({ type: "queue.promote", threadId, queueId });
+
+export function sharingThreadsForRevert(threadId: string) {
+  return threadsSharingWorkspace(useStore.getState().model, threadId);
 }

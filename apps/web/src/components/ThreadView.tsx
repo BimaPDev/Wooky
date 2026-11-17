@@ -103,6 +103,8 @@ function LiveTurn({ turn }: { turn: Turn }) {
 export function currentStep(items: readonly TimelineItem[]): string {
   if (items.some((item) => item.kind === "approval" && item.decision === null))
     return "Waiting for your approval";
+  if (items.some((item) => item.kind === "question" && item.answers === null && !item.dismissed))
+    return "Waiting for your answer";
   const last = items.at(-1);
   if (!last) return "Starting";
   if (last.kind === "tool") return last.status === "running" ? last.title : "Thinking";

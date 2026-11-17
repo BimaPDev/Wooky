@@ -1,6 +1,13 @@
 import type { ProviderKind, RuntimeMode } from "@age/contracts";
 import { useEffect, useId, useMemo, useState } from "react";
-import { addProject, closeDialog, createThread, suggestPaths } from "../state/actions.ts";
+import {
+  addProject,
+  closeDialog,
+  createThread,
+  dispatch,
+  sharingThreadsForRevert,
+  suggestPaths,
+} from "../state/actions.ts";
 import { useStore, type Dialog } from "../state/store.ts";
 import { isAvailable, runtimeModes } from "./labels.ts";
 import { Modal } from "./Modal.tsx";
@@ -15,7 +22,83 @@ export function Dialogs() {
       return <AddProjectDialog />;
     case "confirm":
       return <ConfirmDialog dialog={dialog} />;
+    case "revert":
+      return <RevertDialog dialog={dialog} />;
   }
+}
+
+function RevertDialog({ dialog }: { dialog: Extract<Dialog, { kind: "revert" }> }) {
+  const sharing = sharingThreadsForRevert(dialog.threadId);
+  const [restoreFiles, setRestoreFiles] = useState(() => sharing.length === 0);
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Modal label="Revert to before this turn" onClose={closeDialog} className="modal small">
+      <form
+        method="dialog"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (busy) return;
+          setBusy(true);
+          const ack = await dispatch({
+            type: "turn.revert",
+            threadId: dialog.threadId,
+            turnId: dialog.turnId,
+            restoreFiles,
+          });
+          setBusy(false);
+          if (ack) closeDialog();
+        }}
+      >
+        <h2 className="modal-title">Revert to before this turn</h2>
+        <p className="modal-body">
+          This turn and later ones leave the conversation. Choose whether to restore files from the
+          checkpoint.
+        </p>
+        {sharing.length > 0 ? (
+          <p className="modal-body warn">
+            {sharing.length} other {sharing.length === 1 ? "thread shares" : "threads share"} this
+            workspace. Restoring files could overwrite their work.
+          </p>
+        ) : null}
+        <fieldset className="revert-choices">
+          <legend className="sr-only">Revert scope</legend>
+          <label className="option card">
+            <input
+              type="radio"
+              name="revert-scope"
+              checked={restoreFiles}
+              onChange={() => setRestoreFiles(true)}
+            />
+            <span>
+              <strong>Files and conversation</strong>
+              <span className="muted"> · restore the workspace to before this turn</span>
+            </span>
+          </label>
+          <label className="option card">
+            <input
+              type="radio"
+              name="revert-scope"
+              checked={!restoreFiles}
+              onChange={() => setRestoreFiles(false)}
+            />
+            <span>
+              <strong>Conversation only</strong>
+              <span className="muted"> · keep files as they are now</span>
+            </span>
+          </label>
+        </fieldset>
+        <div className="modal-actions">
+          <button type="button" className="button" onClick={closeDialog}>
+            Cancel
+          </button>
+          <button type="submit" className="button danger" disabled={busy}>
+            Revert
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
 function ConfirmDialog({ dialog }: { dialog: Extract<Dialog, { kind: "confirm" }> }) {

@@ -13,6 +13,7 @@ import {
   type Turn,
 } from "@age/contracts";
 import type { Backend } from "../state/backend.ts";
+import { RpcCallError } from "../rpc/client.ts";
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -148,6 +149,26 @@ export const fixtureModel: ReadModel = {
       updatedAt: ago(45),
     }),
     t5: thread({ id: "t5", projectId: "p2", title: "New thread", updatedAt: ago(120) }),
+    t6: thread({
+      id: "t6",
+      projectId: "p1",
+      title: "P0 UI fixture",
+      provider: "claude",
+      model: "claude-opus-5-5",
+      interactionMode: "plan",
+      status: "waiting",
+      updatedAt: ago(0.05),
+      queue: [
+        { id: "q1", prompt: "Also update the README", queuedAt: ago(0.2) },
+        { id: "q2", prompt: "Add a migration note", queuedAt: ago(0.1) },
+      ],
+    }),
+    t7: thread({
+      id: "t7",
+      projectId: "p1",
+      title: "Shared workspace peer",
+      updatedAt: ago(5),
+    }),
   },
   turns: {
     t1: [
@@ -359,6 +380,88 @@ export const fixtureModel: ReadModel = {
       }),
     ],
     t5: [],
+    t6: [
+      turn({
+        id: "u6a",
+        threadId: "t6",
+        prompt: "Answer a question and approve the plan",
+        status: "completed",
+        startedAt: ago(40),
+        endedAt: ago(38),
+        items: [
+          {
+            kind: "question",
+            id: "u6q-done",
+            requestId: "rq-done",
+            questions: [
+              {
+                id: "picked",
+                header: "Database",
+                question: "Which store?",
+                options: [{ label: "SQLite", description: "Local file" }],
+                multiSelect: false,
+                allowCustom: false,
+              },
+            ],
+            answers: { picked: ["SQLite"] },
+          },
+          {
+            kind: "plan",
+            id: "u6plan-old",
+            markdown: "## Old plan\n\n1. Sketch\n2. Pause",
+            status: "superseded",
+          },
+        ],
+      }),
+      turn({
+        id: "u6b",
+        threadId: "t6",
+        prompt: "Plan pagination changes",
+        status: "running",
+        interactionMode: "plan",
+        startedAt: ago(1),
+        endedAt: null,
+        items: [
+          {
+            kind: "question",
+            id: "u6q-open",
+            requestId: "rq-open",
+            questions: [
+              {
+                id: "style",
+                header: "API style",
+                question: "How should clients page?",
+                options: [
+                  { label: "Cursor", description: "Stable cursor token" },
+                  { label: "Offset", description: "Skip/limit" },
+                ],
+                multiSelect: false,
+                allowCustom: true,
+              },
+            ],
+            answers: null,
+          },
+          {
+            kind: "plan",
+            id: "u6plan-new",
+            markdown:
+              "## Plan\n\n- Add `cursor` to `listOrders`\n- Cover with a vitest\n- Document defaults",
+            status: "proposed",
+          },
+        ],
+      }),
+    ],
+    t7: [
+      turn({
+        id: "u7",
+        threadId: "t7",
+        prompt: "Touch shared files after t6",
+        checkpointBefore: "refs/age/checkpoints/t7/u7/before",
+        startedAt: ago(4),
+        endedAt: ago(3.5),
+        items: [{ kind: "message", id: "u7m", role: "assistant", text: "Updated shared config." }],
+      }),
+    ],
   },
 };
 
@@ -374,6 +477,7 @@ export const fixtureProviders: ProviderStatus[] = [
       { id: "claude-opus-5-5", label: "Opus 5.5" },
       { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
     ],
+    capabilities: { planMode: true, questions: true, queue: true, rewind: true },
   },
   {
     kind: "codex",
@@ -401,6 +505,7 @@ export const fixtureProviders: ProviderStatus[] = [
     version: null,
     problem: null,
     models: [{ id: "demo", label: "Demo" }],
+    capabilities: { planMode: false, questions: true, queue: true },
   },
 ];
 
@@ -586,7 +691,13 @@ function respond(method: RpcMethod, params: unknown): unknown {
 
 export function createFixtureBackend(): Backend {
   return {
-    call: <M extends RpcMethod>(method: M, params: RpcParams<M>) =>
-      Promise.resolve(respond(method, params) as RpcResult<M>),
+    call: <M extends RpcMethod>(method: M, params: RpcParams<M>) => {
+      if (method === "fs.searchEntries") {
+        return Promise.reject(
+          new RpcCallError("unavailable", "File search is not available yet."),
+        ) as Promise<RpcResult<M>>;
+      }
+      return Promise.resolve(respond(method, params) as RpcResult<M>);
+    },
   };
 }

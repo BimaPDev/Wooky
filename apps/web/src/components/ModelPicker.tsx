@@ -1,5 +1,5 @@
 import type { ProviderKind, RuntimeMode, Thread } from "@age/contracts";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { configureThread } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { IconCheckSmall, IconLock, IconPen, IconSearch, IconShield } from "./Icons.tsx";
@@ -51,11 +51,15 @@ export function ModelPickerButton({
   className,
   children,
   placement = "above",
+  open,
+  onOpenChange,
 }: {
   thread: Thread;
   className: string;
   children: ReactNode;
   placement?: "below" | "above";
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   return (
     <PopoverChip
@@ -65,6 +69,8 @@ export function ModelPickerButton({
       title="Change provider or model"
       panel={<ProviderModelPanel thread={thread} />}
       wide
+      open={open}
+      onOpenChange={onOpenChange}
     >
       {children}
     </PopoverChip>
@@ -79,6 +85,8 @@ function PopoverChip({
   title,
   panel,
   wide = false,
+  open: controlledOpen,
+  onOpenChange,
 }: {
   className: string;
   children: ReactNode;
@@ -87,19 +95,30 @@ function PopoverChip({
   title: string;
   panel: ReactNode;
   wide?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
   const root = useRef<HTMLDivElement>(null);
   const id = useId();
+
+  const setOpenState = useCallback(
+    (next: boolean) => {
+      if (controlledOpen === undefined) setUncontrolledOpen(next);
+      onOpenChange?.(next);
+    },
+    [controlledOpen, onOpenChange],
+  );
 
   // sync: document-level pointer and key listeners close the popover
   useEffect(() => {
     if (!open) return;
     const onPointer = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      if (!root.current?.contains(event.target as Node)) setOpenState(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") setOpenState(false);
     };
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -107,7 +126,7 @@ function PopoverChip({
       document.removeEventListener("pointerdown", onPointer);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, setOpenState]);
 
   return (
     <div className="popover-root" ref={root}>
@@ -118,7 +137,7 @@ function PopoverChip({
         aria-controls={id}
         aria-haspopup="dialog"
         title={title}
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpenState(!open)}
       >
         {children}
       </button>
