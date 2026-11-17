@@ -39,8 +39,14 @@ turn.start ─▶ turn.started (checkpointBefore captured first)
 ```
 
 `turn.interrupt` aborts the adapter's `AbortSignal`; the adapter still emits one `done`.
-On server start, any turn left `running` is finished as `interrupted`: effects tied to a
-lost process are retired, never replayed.
+On server start, any turn left `running` is finished as `interrupted` and its `turn.run`
+effect is retired: provider work is never replayed. Idempotent effects are re-run instead:
+`checkpoint.restore` (a revert cut off mid-way), `worktree.remove` and `worktree.create`. A
+turn on an `isolate` thread never falls back to the project root; it creates the missing
+worktree or fails with the reason.
+
+When a checkpoint cannot be taken (not a repo, or capture failed) the runner upserts a
+`notice` item with the fixed id `age-no-checkpoint`, and `turn.revert` rejects that turn.
 
 ## Checkpoints
 
