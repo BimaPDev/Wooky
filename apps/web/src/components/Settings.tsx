@@ -1,9 +1,4 @@
-import {
-  DeviceSettings,
-  type DeviceSettings as DeviceSettingsValue,
-  type ProviderKind,
-  type ProviderStatus,
-} from "@age/contracts";
+import { DeviceSettings, type ProviderKind, type ProviderStatus } from "@age/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { loadDeviceSettings, patchDeviceSettings } from "../state/appearance.ts";
 import {
@@ -182,32 +177,17 @@ function GeneralPage() {
 
   return (
     <div className="settings-sections">
-      <SettingsSection title="Notifications">
+      <SettingsSection title="Composer">
         <SettingRow
-          title="Thread notifications"
-          description="Banner alerts when a thread finishes, fails, or needs approval."
-        >
-          <Select
-            value={settings.threadNotifications}
-            onChange={(value) =>
-              void patchDeviceSettings({
-                threadNotifications: value as DeviceSettingsValue["threadNotifications"],
-              })
-            }
-            options={[
-              { value: "off", label: "Off" },
-              { value: "banner", label: "Banner" },
-            ]}
-          />
-        </SettingRow>
-        <SettingRow
-          title="In-app notifications"
-          description="Show a notice when another thread needs input while this window has focus."
+          title="Queue messages sent while the agent works"
+          description="When on, new messages wait in a queue until the current turn finishes."
         >
           <Toggle
-            checked={settings.inAppNotifications}
-            onChange={(checked) => void patchDeviceSettings({ inAppNotifications: checked })}
-            label="In-app notifications"
+            checked={settings.followUp === "queue"}
+            onChange={(checked) =>
+              void patchDeviceSettings({ followUp: checked ? "queue" : "off" })
+            }
+            label="Queue messages sent while the agent works"
           />
         </SettingRow>
       </SettingsSection>
@@ -220,28 +200,6 @@ function GeneralPage() {
             checked={settings.projectGrouping}
             onChange={(checked) => void patchDeviceSettings({ projectGrouping: checked })}
             label="Project grouping"
-          />
-        </SettingRow>
-      </SettingsSection>
-      <SettingsSection title="Confirmations">
-        <SettingRow
-          title="Delete confirmation"
-          description="Ask before deleting a thread and its history."
-        >
-          <Toggle
-            checked={settings.confirmDelete}
-            onChange={(checked) => void patchDeviceSettings({ confirmDelete: checked })}
-            label="Delete confirmation"
-          />
-        </SettingRow>
-        <SettingRow
-          title="Archive confirmation"
-          description="Ask before clearing settled history (when archive lands)."
-        >
-          <Toggle
-            checked={settings.confirmArchive}
-            onChange={(checked) => void patchDeviceSettings({ confirmArchive: checked })}
-            label="Archive confirmation"
           />
         </SettingRow>
       </SettingsSection>
@@ -621,29 +579,5 @@ function Toggle({
     >
       <span className="toggle-thumb" />
     </button>
-  );
-}
-
-function Select({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <select
-      className="settings-select"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
   );
 }

@@ -6,6 +6,8 @@ import { DiffLines } from "./DiffView.tsx";
 import { IconChevron, IconFailed, ToolIcon } from "./Icons.tsx";
 import { shortcut } from "./labels.ts";
 import { Markdown } from "./Markdown.tsx";
+import { PlanCard } from "./PlanCard.tsx";
+import { QuestionCard } from "./QuestionCard.tsx";
 
 type Item<K extends TimelineItem["kind"]> = Extract<TimelineItem, { kind: K }>;
 
@@ -26,6 +28,10 @@ export const TimelineEntry = memo(function TimelineEntry({
       return <Markdown text={item.text} />;
     case "approval":
       return <ApprovalCard item={item} threadId={threadId} />;
+    case "question":
+      return <QuestionCard item={item} threadId={threadId} />;
+    case "plan":
+      return <PlanCard item={item} threadId={threadId} />;
     case "error":
       return (
         <p className="item-error" role="alert">
