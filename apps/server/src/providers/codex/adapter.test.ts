@@ -439,6 +439,82 @@ describe("createCodexAdapter", () => {
     });
   });
 
+  function usageEvents(events: ProviderEvent[]) {
+    return events.flatMap((ev) => (ev.type === "usage" ? [ev.usage] : []));
+  }
+
+  it("reports only the resumed turn's own tokens when the server restarted and no baseline is in memory", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "cumulative-usage"],
+    });
+
+    // A fresh adapter has never seen this thread: its cumulative total is 250/120
+    // but this turn only added 150/70.
+    const events = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_before_restart" })),
+    );
+    expect(usageEvents(events)).toEqual([
+      { inputTokens: 150, outputTokens: 70, cachedInputTokens: 15 },
+    ]);
+  });
+
+  it("does not report usage that arrives during thread/resume as the turn's usage", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "usage-during-resume"],
+    });
+
+    const events = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_before_restart" })),
+    );
+    // The resume-time 100/50 total seeds the baseline; only 250/120 - 100/50 is this turn's.
+    expect(usageEvents(events)).toEqual([
+      { inputTokens: 150, outputTokens: 70, cachedInputTokens: 15 },
+    ]);
+  });
+
+  it("re-baselines when thread/resume returns a different thread id with a lower total", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "resume-new-thread"],
+    });
+
+    const first = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: null })),
+    );
+    expect(first[0]).toEqual({ type: "session", sessionId: "thr_started_1" });
+    expect(usageEvents(first)).toEqual([
+      { inputTokens: 100, outputTokens: 50, cachedInputTokens: 25 },
+    ]);
+
+    // The old thread's 100/50 baseline must not be applied to the forked thread's 30/10.
+    const second = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_started_1" })),
+    );
+    expect(second[0]).toEqual({ type: "session", sessionId: "thr_forked_1" });
+    expect(usageEvents(second)).toEqual([
+      { inputTokens: 30, outputTokens: 10, cachedInputTokens: 5 },
+    ]);
+  });
+
+  it("fails the turn with the protocol error when the thread/resume response is dropped as oversized", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "oversized-resume-response"],
+    });
+
+    const events = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_existing_42" })),
+    );
+    const done = events.filter((ev) => ev.type === "done");
+    expect(done).toHaveLength(1);
+    const last = events.at(-1);
+    if (last?.type !== "done") throw new Error("Expected final event to be done");
+    expect(last.status).toBe("failed");
+    expect(last.error).toMatch(/oversized line/i);
+  }, 30_000);
+
   it("kills the whole process group so a grandchild does not outlive stop", async () => {
     const gcPidFile = join(workDir, "grandchild.pid");
     const controller = new AbortController();

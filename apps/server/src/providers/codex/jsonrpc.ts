@@ -5,6 +5,11 @@ import { type JsonRpcErrorPayload, type JsonRpcId, parseJsonRpcMessage } from ".
 
 const STDERR_CAP_BYTES = 4096;
 const SIGKILL_GRACE_MS = 3_000;
+// After the app-server exits, how long its stdout/stderr may stay open (a grandchild
+// can inherit them) before we destroy them so the close event still fires.
+const STDIO_CLOSE_GRACE_MS = 250;
+const GROUP_POLL_MS = 20;
+const GROUP_POLL_ATTEMPTS = 100;
 // Largest single JSONL line we will buffer from the app-server's stdout, measured
 // in UTF-16 code units. A line longer than this is dropped (we resync at the next
 // newline) so a runaway or hostile stream cannot grow the read buffer without bound.
@@ -48,11 +53,16 @@ export interface JsonRpcClientOptions {
   onServerRequest: (request: JsonRpcServerRequestMessage) => Promise<unknown>;
   onProtocolError?: (error: Error) => void;
   /**
-   * Reply body used to answer any server request still pending when the client is
+   * Result used to answer any server request still pending when the client is
    * torn down (e.g. an approval left unanswered by an interrupted turn). Returning
-   * a decline keeps the app-server's JSON-RPC request from dangling.
+   * a decline keeps the app-server's JSON-RPC request from dangling. Returning
+   * undefined answers the request with a JSON-RPC error instead.
    */
   cancelServerRequest?: (request: JsonRpcServerRequestMessage) => unknown;
+  /** Wait between SIGTERM and SIGKILL. Defaults to 3 seconds. */
+  killGraceMs?: number;
+  /** Wait after exit before destroying stdout/stderr. Defaults to 250 ms. */
+  stdioGraceMs?: number;
 }
 
 interface PendingCall {
@@ -62,6 +72,12 @@ interface PendingCall {
 
 function idKey(id: JsonRpcId): string {
   return `${typeof id}:${String(id)}`;
+}
+
+function oversizedLineError(): Error {
+  return new Error(
+    `Dropped an oversized line from the Codex app-server (exceeded ${MAX_LINE_LENGTH} bytes).`,
+  );
 }
 
 export class JsonRpcClient {
@@ -75,13 +91,41 @@ export class JsonRpcClient {
   private readonly stderrChunks: Buffer[] = [];
   private stderrBytes = 0;
   private nextId = 1;
+  private readonly killGraceMs: number;
+  private readonly stdioGraceMs: number;
   private processAlive = true;
   private closing = false;
   private killTimer: ReturnType<typeof setTimeout> | null = null;
   private exitInfo: ProcessExitInfo | null = null;
+  // The group outlives the app-server whenever a grandchild is still running, so
+  // its liveness is tracked apart from the child's own exit.
+  private groupGone = false;
+  private resolveGroupGone: () => void = () => {};
+  private readonly groupGonePromise = new Promise<void>((resolve) => {
+    this.resolveGroupGone = resolve;
+  });
+  private interruptPromise: Promise<void> | null = null;
+  private teardownPromise: Promise<ProcessExitInfo> | null = null;
+
+  // Last resort if the Wooky server dies without closing the client: the child
+  // is detached, so nothing else would stop its group. Must stay synchronous.
+  private readonly exitGuard = (): void => {
+    if (this.groupGone || typeof this.pid !== "number") return;
+    try {
+      if (process.platform === "win32") {
+        if (this.processAlive) process.kill(this.pid, "SIGKILL");
+      } else {
+        process.kill(-this.pid, "SIGKILL");
+      }
+    } catch {
+      // Already gone.
+    }
+  };
 
   constructor(options: JsonRpcClientOptions) {
     this.cancelServerRequest = options.cancelServerRequest;
+    this.killGraceMs = options.killGraceMs ?? SIGKILL_GRACE_MS;
+    this.stdioGraceMs = options.stdioGraceMs ?? STDIO_CLOSE_GRACE_MS;
     const argv = options.args ? [...options.args] : ["app-server"];
     this.child = spawn(options.bin, argv, {
       cwd: options.cwd,
@@ -94,6 +138,11 @@ export class JsonRpcClient {
       detached: process.platform !== "win32",
     });
     this.pid = this.child.pid;
+    if (typeof this.pid === "number") {
+      process.on("exit", this.exitGuard);
+    } else {
+      this.markGroupGone();
+    }
 
     const stdoutDecoder = new StringDecoder("utf8");
     let stdoutRemainder = "";
@@ -165,6 +214,9 @@ export class JsonRpcClient {
         if (droppingOversizedLine) {
           // This newline terminates the oversized line we already dropped; resume.
           droppingOversizedLine = false;
+        } else if (line.length > MAX_LINE_LENGTH) {
+          // The line crossed the cap in the same chunk as its newline.
+          options.onProtocolError?.(oversizedLineError());
         } else {
           handleLine(line);
         }
@@ -176,11 +228,7 @@ export class JsonRpcClient {
       } else if (stdoutRemainder.length > MAX_LINE_LENGTH) {
         droppingOversizedLine = true;
         stdoutRemainder = "";
-        options.onProtocolError?.(
-          new Error(
-            `Dropped an oversized line from the Codex app-server (exceeded ${MAX_LINE_LENGTH} bytes).`,
-          ),
-        );
+        options.onProtocolError?.(oversizedLineError());
       }
     });
 
@@ -194,7 +242,15 @@ export class JsonRpcClient {
 
     this.child.on("exit", () => {
       this.processAlive = false;
-      this.clearKillTimer();
+      // Only the child is gone. A grandchild may still be running, so the SIGKILL
+      // escalation stays armed until the group itself is gone.
+      this.refreshGroup();
+      // A grandchild holding the inherited pipes would keep close from firing.
+      const destroyStdio = setTimeout(() => {
+        this.child.stdout.destroy();
+        this.child.stderr.destroy();
+      }, this.stdioGraceMs);
+      destroyStdio.unref();
     });
 
     this.closed = new Promise<ProcessExitInfo>((resolve) => {
@@ -205,12 +261,18 @@ export class JsonRpcClient {
         if (settled) return;
         settled = true;
         this.processAlive = false;
-        this.clearKillTimer();
+        this.refreshGroup();
 
         const tail = stdoutRemainder + stdoutDecoder.end();
         stdoutRemainder = "";
         if (!droppingOversizedLine && tail.trim().length > 0) {
-          for (const part of tail.split("\n")) handleLine(part);
+          for (const part of tail.split("\n")) {
+            if (part.length > MAX_LINE_LENGTH) {
+              options.onProtocolError?.(oversizedLineError());
+            } else {
+              handleLine(part);
+            }
+          }
         }
         droppingOversizedLine = false;
 
@@ -286,12 +348,14 @@ export class JsonRpcClient {
 
   async abort(activeTurn: { threadId: string; turnId: string } | null): Promise<ProcessExitInfo> {
     // Set closing synchronously so an approval handler that resolves during the
-    // abort defers its reply to terminate(), which declines it exactly once.
+    // abort defers its reply to teardown, which declines it exactly once.
     this.closing = true;
-    if (!this.exitInfo && activeTurn && this.processAlive) {
+    // Interrupt once, and only while no teardown has started: later calls (and a
+    // close that raced ahead) share the one teardown.
+    if (!this.teardownPromise && !this.interruptPromise && activeTurn && this.processAlive) {
       const id = this.nextId;
       this.nextId += 1;
-      await this.writeFrameAndFlush({
+      this.interruptPromise = this.writeFrameAndFlush({
         id,
         method: "turn/interrupt",
         params: { threadId: activeTurn.threadId, turnId: activeTurn.turnId },
@@ -300,55 +364,104 @@ export class JsonRpcClient {
     return this.terminate();
   }
 
-  async close(): Promise<ProcessExitInfo> {
+  close(): Promise<ProcessExitInfo> {
     return this.terminate();
   }
 
-  private async terminate(): Promise<ProcessExitInfo> {
+  private terminate(): Promise<ProcessExitInfo> {
     this.closing = true;
-    if (this.exitInfo) return this.exitInfo;
+    this.teardownPromise ??= this.runTeardown();
+    return this.teardownPromise;
+  }
 
-    // Answer any approval request left pending (decline), flushed before we close
-    // stdin, so the app-server's JSON-RPC request never dangles on interrupt.
+  // Strictly in order, each exactly once: interrupt, decline pending requests,
+  // close stdin, SIGTERM the group. Every caller shares this one run.
+  private async runTeardown(): Promise<ProcessExitInfo> {
+    if (this.interruptPromise) await this.interruptPromise;
+
+    // Answer any approval request left pending, flushed before we close stdin, so
+    // the app-server's JSON-RPC request never dangles on interrupt.
     await this.cancelPendingServerRequests();
 
     if (!this.child.stdin.destroyed) {
       this.child.stdin.end();
     }
 
-    this.killSpawnedPid("SIGTERM");
-    // Escalate to SIGKILL only if the exit promise has not resolved within the
-    // grace window; the exit handler clears this timer, so a clean exit never
-    // escalates. This is driven by the process exit, not a fixed sleep.
-    if (this.processAlive && this.killTimer === null) {
-      this.killTimer = setTimeout(() => {
-        this.killTimer = null;
-        this.killSpawnedPid("SIGKILL");
-      }, SIGKILL_GRACE_MS);
-      this.killTimer.unref?.();
-    }
+    this.signalGroup("SIGTERM");
+    this.armKillTimer();
 
-    return this.closed;
+    const [info] = await Promise.all([this.closed, this.groupGonePromise]);
+    return info;
   }
 
-  private killSpawnedPid(signal: NodeJS.Signals): void {
-    if (!this.processAlive || typeof this.pid !== "number") return;
-    try {
-      if (process.platform === "win32") {
-        process.kill(this.pid, signal);
-      } else {
-        // Negative pid targets the whole process group we lead (detached: true),
-        // so any grandchildren the app-server spawned die with it.
-        process.kill(-this.pid, signal);
-      }
-    } catch {
-      // The group may already be gone (ESRCH); fall back to the bare pid once.
-      try {
-        process.kill(this.pid, signal);
-      } catch {
-        this.processAlive = false;
-      }
+  /** Whether anything in the app-server's process group is still running. */
+  private refreshGroup(): boolean {
+    if (this.groupGone) return false;
+    const pid = this.pid;
+    if (typeof pid !== "number") {
+      this.markGroupGone();
+      return false;
     }
+    if (process.platform === "win32") {
+      if (this.processAlive) return true;
+      this.markGroupGone();
+      return false;
+    }
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (err) {
+      // EPERM means the group exists but we may not signal it: still alive.
+      if (isErrnoCode(err, "EPERM")) return true;
+      // Once the group is seen empty, never signal it again: the pid may be reused.
+      this.markGroupGone();
+      return false;
+    }
+  }
+
+  private markGroupGone(): void {
+    if (this.groupGone) return;
+    this.groupGone = true;
+    this.clearKillTimer();
+    process.off("exit", this.exitGuard);
+    this.resolveGroupGone();
+  }
+
+  private signalGroup(signal: NodeJS.Signals): void {
+    const pid = this.pid;
+    if (typeof pid !== "number" || !this.refreshGroup()) return;
+    try {
+      // Negative pid targets the whole group we lead (detached: true), so any
+      // grandchildren die with the app-server. Never fall back to the bare pid:
+      // after the child exits it may belong to someone else.
+      process.kill(process.platform === "win32" ? pid : -pid, signal);
+    } catch {
+      // The group went away between the check and the signal.
+    }
+  }
+
+  // Escalate to SIGKILL unless the whole group is gone within the grace window.
+  // The timer is cleared only when the group is gone, not when the child exits.
+  private armKillTimer(): void {
+    if (this.killTimer !== null || !this.refreshGroup()) return;
+    this.killTimer = setTimeout(() => {
+      this.killTimer = null;
+      if (!this.refreshGroup()) return;
+      this.signalGroup("SIGKILL");
+      this.pollGroupGone(0);
+    }, this.killGraceMs);
+    this.killTimer.unref();
+  }
+
+  private pollGroupGone(attempt: number): void {
+    if (!this.refreshGroup()) return;
+    if (attempt >= GROUP_POLL_ATTEMPTS) {
+      // A SIGKILLed member that is not reaped must not hang teardown forever.
+      this.markGroupGone();
+      return;
+    }
+    const timer = setTimeout(() => this.pollGroupGone(attempt + 1), GROUP_POLL_MS);
+    timer.unref();
   }
 
   private async cancelPendingServerRequests(): Promise<void> {
@@ -356,9 +469,13 @@ export class JsonRpcClient {
     const requests = [...this.pendingServerRequests.values()];
     this.pendingServerRequests.clear();
     for (const request of requests) {
-      const body = this.cancelServerRequest
-        ? { result: this.cancelServerRequest(request) }
-        : { error: { code: -32603, message: "Request cancelled: Codex app-server is stopping." } };
+      const result = this.cancelServerRequest?.(request);
+      const body =
+        result !== undefined
+          ? { result }
+          : {
+              error: { code: -32603, message: "Request cancelled: Codex app-server is stopping." },
+            };
       await this.writeFrameAndFlush({ id: request.id, ...body });
     }
   }
@@ -469,6 +586,10 @@ export class JsonRpcClient {
     const base = `Codex app-server exited (${detail})`;
     return new Error(stderr ? `${base}: ${stderr}` : base);
   }
+}
+
+function isErrnoCode(err: unknown, code: string): boolean {
+  return typeof err === "object" && err !== null && "code" in err && err.code === code;
 }
 
 export class UnhandledServerRequestError extends Error {

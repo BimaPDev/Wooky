@@ -79,6 +79,50 @@ function deltaUsage(
   return { inputTokens, outputTokens };
 }
 
+function sanitizeUsage(raw: UsageTotals): UsageTotals {
+  return {
+    inputTokens: Math.max(0, Math.trunc(raw.inputTokens)),
+    outputTokens: Math.max(0, Math.trunc(raw.outputTokens)),
+    ...(typeof raw.cachedInputTokens === "number" && raw.cachedInputTokens >= 0
+      ? { cachedInputTokens: Math.trunc(raw.cachedInputTokens) }
+      : {}),
+  };
+}
+
+/** `total - last`, clamped at zero per field: the cumulative total before `last` was added. */
+function subtractUsage(total: UsageTotals, last: UsageTotals): UsageTotals {
+  return {
+    inputTokens: Math.max(0, total.inputTokens - last.inputTokens),
+    outputTokens: Math.max(0, total.outputTokens - last.outputTokens),
+    ...(typeof total.cachedInputTokens === "number"
+      ? { cachedInputTokens: Math.max(0, total.cachedInputTokens - (last.cachedInputTokens ?? 0)) }
+      : {}),
+  };
+}
+
+function addUsage(a: UsageTotals, b: UsageTotals): UsageTotals {
+  const cached =
+    typeof a.cachedInputTokens === "number" || typeof b.cachedInputTokens === "number"
+      ? (a.cachedInputTokens ?? 0) + (b.cachedInputTokens ?? 0)
+      : undefined;
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    ...(cached === undefined ? {} : { cachedInputTokens: cached }),
+  };
+}
+
+/** True when a counter went backwards, which means it was reset (compaction, a new thread). */
+function isBelowBaseline(total: UsageTotals, baseline: UsageTotals): boolean {
+  if (total.inputTokens < baseline.inputTokens) return true;
+  if (total.outputTokens < baseline.outputTokens) return true;
+  return (
+    typeof total.cachedInputTokens === "number" &&
+    typeof baseline.cachedInputTokens === "number" &&
+    total.cachedInputTokens < baseline.cachedInputTokens
+  );
+}
+
 function formatTurnError(err: CodexTurnError | null | undefined): string | null {
   if (!err) return null;
   const message = err.message.trim();
@@ -198,6 +242,12 @@ export interface UsageTotals {
 export interface CodexTranslatorOptions {
   /** Cumulative thread usage carried over from prior turns, subtracted so AGE sees per-turn deltas. */
   usageBaseline?: UsageTotals | null;
+  /**
+   * The turn continues an existing thread. With no baseline the thread's history
+   * is unknown, so the first usage report seeds one instead of counting the whole
+   * running total as this turn.
+   */
+  resumed?: boolean;
 }
 
 export interface CodexTranslator {
@@ -210,6 +260,13 @@ export interface CodexTranslator {
   getFileChangeForItem(itemId: string): FileChangePreview | undefined;
   /** Latest cumulative thread total seen this turn, for carrying over as the next baseline. */
   getCumulativeUsage(): UsageTotals | null;
+  /** Marks turn/start as sent. Usage seen before it only seeds the baseline. */
+  beginTurn(): void;
+  /**
+   * Replaces the baseline when thread/resume answers with a different thread id.
+   * Ignored once a usage report has already seeded the baseline from the server.
+   */
+  rebaseline(baseline: UsageTotals | null): void;
 }
 
 interface CommandState {
@@ -228,8 +285,12 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
   let doneEmitted = false;
   let lastError: string | null = null;
 
-  const usageBaseline = options?.usageBaseline ?? null;
+  let usageBaseline = options?.usageBaseline ?? null;
+  let usageNeedsSeed = options?.resumed === true && usageBaseline === null;
+  let usageSeededByServer = false;
+  let turnStarted = false;
   let latestCumulativeUsage: UsageTotals | null = null;
+  let accumulatedLastUsage: UsageTotals | null = null;
 
   const seenMessageIds = new Set<string>();
   const messageTexts = new Map<string, string>();
@@ -587,33 +648,44 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
       case "thread/tokenUsage/updated": {
         const parsed = ThreadTokenUsageUpdatedNotificationSchema.safeParse(params);
         if (!parsed.success) return [];
-        const { total, last } = parsed.data.tokenUsage;
-        // `total` is the cumulative thread total; subtract the baseline carried in
-        // from prior turns so AGE records this turn's delta, not the running total.
-        // `last` (when present without `total`) is already this turn's usage.
-        if (total) {
-          latestCumulativeUsage = {
-            inputTokens: Math.max(0, Math.trunc(total.inputTokens)),
-            outputTokens: Math.max(0, Math.trunc(total.outputTokens)),
-            ...(typeof total.cachedInputTokens === "number" && total.cachedInputTokens >= 0
-              ? { cachedInputTokens: Math.trunc(total.cachedInputTokens) }
-              : {}),
-          };
-          return [{ type: "usage", usage: deltaUsage(latestCumulativeUsage, usageBaseline) }];
+        const { total: rawTotal, last: rawLast } = parsed.data.tokenUsage;
+        const total = rawTotal ? sanitizeUsage(rawTotal) : null;
+        const last = rawLast ? sanitizeUsage(rawLast) : null;
+
+        if (!turnStarted) {
+          // Reported while the thread loads (thread/resume): the thread's running
+          // total before this turn. It becomes the baseline and is not usage.
+          if (total) {
+            usageBaseline = total;
+            usageNeedsSeed = false;
+            usageSeededByServer = true;
+            latestCumulativeUsage = total;
+          }
+          return [];
         }
+
+        if (total) {
+          if (usageNeedsSeed) {
+            usageBaseline = last ? subtractUsage(total, last) : total;
+            usageNeedsSeed = false;
+          } else if (usageBaseline && isBelowBaseline(total, usageBaseline)) {
+            usageBaseline = last ? subtractUsage(total, last) : null;
+          }
+          latestCumulativeUsage = total;
+          return [{ type: "usage", usage: deltaUsage(total, usageBaseline) }];
+        }
+
         if (last) {
-          return [
-            {
-              type: "usage",
-              usage: {
-                inputTokens: Math.max(0, Math.trunc(last.inputTokens)),
-                outputTokens: Math.max(0, Math.trunc(last.outputTokens)),
-                ...(typeof last.cachedInputTokens === "number" && last.cachedInputTokens >= 0
-                  ? { cachedInputTokens: Math.trunc(last.cachedInputTokens) }
-                  : {}),
-              },
-            },
-          ];
+          // `last` is one step's usage: sum the steps for the turn, and rebuild the
+          // thread total from the baseline when there is one to build on.
+          accumulatedLastUsage = accumulatedLastUsage ? addUsage(accumulatedLastUsage, last) : last;
+          if (!usageNeedsSeed) {
+            latestCumulativeUsage = addUsage(
+              usageBaseline ?? { inputTokens: 0, outputTokens: 0 },
+              accumulatedLastUsage,
+            );
+          }
+          return [{ type: "usage", usage: accumulatedLastUsage }];
         }
         return [];
       }
@@ -655,5 +727,13 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
       return entry ? { files: entry.files, diff: entry.diff } : undefined;
     },
     getCumulativeUsage: () => latestCumulativeUsage,
+    beginTurn: () => {
+      turnStarted = true;
+    },
+    rebaseline: (baseline) => {
+      if (usageSeededByServer) return;
+      usageBaseline = baseline;
+      usageNeedsSeed = baseline === null;
+    },
   };
 }
