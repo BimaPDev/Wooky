@@ -2,7 +2,7 @@ import type { QuestionAnswers, UserInputRequest, UserQuestion } from "@age/contr
 import { constants as fsConstants, lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { lstat, open } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { isInsideWorkspace } from "../paths.ts";
 
@@ -21,6 +21,7 @@ export function setPlanUserHomeForTests(home: string | undefined): void {
 
 type PlanFsHooks = {
   afterValidate?: () => void | Promise<void>;
+  beforeOpen?: () => void | Promise<void>;
   beforeRead?: () => void | Promise<void>;
 };
 
@@ -116,6 +117,44 @@ function realpathOrResolved(path: string): string {
   }
 }
 
+function homePlansRoot(): string {
+  return resolve(userHome(), ".claude", "plans");
+}
+
+/** Whether any path component between cwd and absolutePath is a symlink (lstat each segment). */
+function symlinkOnPathFromCwd(cwd: string, absolutePath: string): boolean {
+  const base = resolve(cwd);
+  const target = resolve(absolutePath);
+  const rel = relative(base, target);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`)) return false;
+  const segments = rel.split(sep).filter((part) => part !== "" && part !== ".");
+  let acc = base;
+  for (const seg of segments) {
+    acc = join(acc, seg);
+    if (isSymlink(acc)) return true;
+  }
+  return false;
+}
+
+type PlanRootCheck = "ok" | "symlink_root" | "outside";
+
+function checkPlanRootForFile(cwd: string, root: string, fileReal: string): PlanRootCheck {
+  const rootResolved = resolve(root);
+  const rootReal = realpathOrResolved(rootResolved);
+  if (!isInsideWorkspace(fileReal, rootReal)) return "outside";
+
+  const isHomeRoot = resolve(rootResolved) === homePlansRoot();
+  if (isHomeRoot) {
+    if (isSymlink(rootResolved)) return "symlink_root";
+    return "ok";
+  }
+
+  if (symlinkOnPathFromCwd(cwd, rootResolved)) return "symlink_root";
+  const cwdReal = realpathOrResolved(cwd);
+  if (!isInsideWorkspace(rootReal, cwdReal)) return "outside";
+  return "ok";
+}
+
 export type OpenRegularFileFailure =
   | "not_found"
   | "outside_roots"
@@ -145,6 +184,10 @@ export async function openRegularFileSafely(
   containment: OpenRegularFileContainment,
 ): Promise<OpenRegularFileResult> {
   const absolute = isAbsolute(filePath) ? resolve(filePath) : resolve(containment.cwd, filePath);
+
+  if (containment.kind === "settings" && symlinkOnPathFromCwd(containment.cwd, absolute)) {
+    return { ok: false, reason: "symlink" };
+  }
 
   let entryStat;
   try {
@@ -203,6 +246,8 @@ export async function openRegularFileSafely(
     return { ok: false, reason: "changed" };
   }
 
+  await planFsHooksForTests?.beforeOpen?.();
+
   const flags = openRegularFileFlags();
   let handle;
   try {
@@ -219,8 +264,11 @@ export async function openRegularFileSafely(
     if (!fdStat.isFile()) return { ok: false, reason: "not_regular" };
     if (fdStat.nlink !== 1) return { ok: false, reason: "hardlink" };
     if (fdStat.size > maxBytes) return { ok: false, reason: "too_large" };
+    if (fdStat.dev !== identityBeforeHook.dev || fdStat.ino !== identityBeforeHook.ino) {
+      return { ok: false, reason: "changed" };
+    }
 
-    const identity = { dev: fdStat.dev, ino: fdStat.ino };
+    const identity = identityBeforeHook;
 
     await planFsHooksForTests?.beforeRead?.();
 
@@ -236,13 +284,8 @@ export async function openRegularFileSafely(
     }
     if (afterReal !== firstReal) return { ok: false, reason: "changed" };
 
-    let afterStat;
-    try {
-      afterStat = statSync(openTarget);
-    } catch {
-      return { ok: false, reason: "changed" };
-    }
-    if (afterStat.dev !== identity.dev || afterStat.ino !== identity.ino) {
+    const fdStatAfter = await handle.stat();
+    if (fdStatAfter.dev !== identity.dev || fdStatAfter.ino !== identity.ino) {
       return { ok: false, reason: "changed" };
     }
 
@@ -264,11 +307,9 @@ async function containmentFailureForRealPath(
 
   const roots = await planFileRoots(containment.cwd);
   for (const root of roots) {
-    const rootResolved = resolve(root);
-    const rootSymlink = isSymlink(rootResolved);
-    const rootReal = realpathOrResolved(rootResolved);
-    if (!isInsideWorkspace(fileReal, rootReal)) continue;
-    if (rootSymlink) return "outside_roots";
+    const check = checkPlanRootForFile(containment.cwd, root, fileReal);
+    if (check === "outside") continue;
+    if (check === "symlink_root") return "outside_roots";
     return null;
   }
   return "outside_roots";
@@ -300,13 +341,14 @@ export async function plansDirectoryFromSettings(cwd: string): Promise<string | 
 }
 
 export async function planFileRoots(cwd: string): Promise<string[]> {
-  const roots = [resolve(userHome(), ".claude", "plans"), resolve(cwd, ".claude", "plans")];
+  const roots = [homePlansRoot(), resolve(cwd, ".claude", "plans")];
   const custom = await plansDirectoryFromSettings(cwd);
   if (custom) {
     const abs = resolve(cwd, custom);
     const cwdReal = realpathOrResolved(cwd);
-    const inside = isInsideWorkspace(realpathOrResolved(abs), cwdReal);
-    if (inside && !isSymlink(abs) && !roots.includes(abs)) roots.push(abs);
+    const absReal = realpathOrResolved(abs);
+    const rootInside = isInsideWorkspace(absReal, cwdReal) && !symlinkOnPathFromCwd(cwd, abs);
+    if (rootInside && !isSymlink(abs) && !roots.includes(abs)) roots.push(abs);
   }
   return roots;
 }
@@ -393,11 +435,9 @@ export async function validatePlanPath(
 
   const roots = await planFileRoots(cwd);
   for (const root of roots) {
-    const rootResolved = resolve(root);
-    const rootSymlink = isSymlink(rootResolved);
-    const rootReal = realpathOrResolved(rootResolved);
-    if (!isInsideWorkspace(fileReal, rootReal)) continue;
-    if (rootSymlink) return { allowed: false, reason: "symlink_root" };
+    const check = checkPlanRootForFile(cwd, root, fileReal);
+    if (check === "outside") continue;
+    if (check === "symlink_root") return { allowed: false, reason: "symlink_root" };
     return { allowed: true, absolute };
   }
   return { allowed: false, reason: "outside_roots" };

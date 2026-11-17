@@ -15,6 +15,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  openRegularFileSafely,
   planDenyMessage,
   plansDirectoryFromSettings,
   readPlanFromFile,
@@ -25,6 +26,8 @@ import {
   questionRequest,
   quoteAnswerLabel,
 } from "./interaction.ts";
+
+const SENTINEL = "SENTINEL_CREDENTIAL_NOT_A_REAL_SECRET";
 
 const execFileAsync = promisify(execFile);
 
@@ -264,6 +267,99 @@ describe("readPlanFromFile", () => {
     if (result.ok) throw new Error("expected rejection");
     expect(String(result)).not.toContain("ALT_PLAN");
   });
+
+  it("rejects a hard-link swap in the beforeOpen gap", async () => {
+    const cwd = projectWithPlans("hook-before-open-hardlink");
+    const planPath = join(cwd, ".claude", "plans", "task.md");
+    const credPath = join(cwd, "credential.md");
+    writeFileSync(planPath, "safe plan");
+    writeFileSync(credPath, SENTINEL);
+    setPlanFsHooksForTests({
+      beforeOpen: () => {
+        unlinkSync(planPath);
+        linkSync(credPath, planPath);
+        unlinkSync(credPath);
+      },
+    });
+    const result = await readPlanFromFile(planPath, cwd);
+    expect(result).toEqual({ ok: false, reason: "changed" });
+    expect(String(result)).not.toContain(SENTINEL);
+  });
+
+  it("rejects a directory symlink swap in the beforeOpen gap", async () => {
+    const cwd = projectWithPlans("hook-before-open-dir");
+    const plansDir = join(cwd, ".claude", "plans");
+    const secretDir = join(cwd, "secret-plans");
+    const planPath = join(plansDir, "task.md");
+    mkdirSync(secretDir, { recursive: true });
+    writeFileSync(join(secretDir, "task.md"), SENTINEL);
+    writeFileSync(planPath, "safe plan");
+    setPlanFsHooksForTests({
+      beforeOpen: () => {
+        renameSync(plansDir, join(cwd, ".claude", "plans-safe-hold"));
+        symlinkSync(secretDir, plansDir);
+      },
+    });
+    const result = await readPlanFromFile(planPath, cwd);
+    expect(result).toEqual({ ok: false, reason: "changed" });
+    expect(String(result)).not.toContain(SENTINEL);
+  });
+
+  it("rejects a plan under project .claude symlinked to an outside directory", async () => {
+    const cwd = tempDir("age-plan-ancestor-claude-");
+    const outside = join(cwd, "outside-plans-root");
+    mkdirSync(join(outside, "plans"), { recursive: true });
+    writeFileSync(join(outside, "plans", "task.md"), SENTINEL);
+    rmSync(join(cwd, ".claude"), { recursive: true, force: true });
+    symlinkSync(outside, join(cwd, ".claude"));
+    const result = await readPlanFromFile(join(cwd, ".claude", "plans", "task.md"), cwd);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected rejection");
+    expect(["symlink_root", "outside_roots"]).toContain(result.reason);
+    expect(String(result)).not.toContain(SENTINEL);
+  });
+
+  it("rejects a custom plansDirectory reached through a symlinked ancestor", async () => {
+    const cwd = tempDir("age-plan-custom-ancestor-");
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".claude", "settings.json"),
+      JSON.stringify({ plansDirectory: "docs/plans" }),
+    );
+    const outside = join(cwd, "outside-docs");
+    mkdirSync(join(outside, "plans"), { recursive: true });
+    writeFileSync(join(outside, "plans", "task.md"), SENTINEL);
+    symlinkSync(outside, join(cwd, "docs"));
+    const planPath = join(cwd, "docs", "plans", "task.md");
+    const result = await readPlanFromFile(planPath, cwd);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected rejection");
+    expect(["symlink_root", "outside_roots"]).toContain(result.reason);
+    expect(String(result)).not.toContain(SENTINEL);
+  });
+});
+
+describe("openRegularFileSafely", () => {
+  it("rejects a hard-link swap in the beforeOpen gap without leaking bytes", async () => {
+    const cwd = tempDir("age-open-before-hardlink-");
+    mkdirSync(join(cwd, ".claude", "plans"), { recursive: true });
+    const planPath = join(cwd, ".claude", "plans", "task.md");
+    const credPath = join(cwd, "credential.md");
+    writeFileSync(planPath, "safe plan");
+    writeFileSync(credPath, SENTINEL);
+    setPlanFsHooksForTests({
+      beforeOpen: () => {
+        unlinkSync(planPath);
+        linkSync(credPath, planPath);
+        unlinkSync(credPath);
+      },
+    });
+    const result = await openRegularFileSafely(planPath, 1 << 20, { kind: "plan", cwd });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unexpected ok");
+    expect(result.reason).toBe("changed");
+    expect(String(result)).not.toContain(SENTINEL);
+  });
 });
 
 describe("plansDirectoryFromSettings", () => {
@@ -275,6 +371,15 @@ describe("plansDirectoryFromSettings", () => {
       JSON.stringify({ plansDirectory: "docs/plans" }),
     );
     await expect(plansDirectoryFromSettings(cwd)).resolves.toBe("docs/plans");
+  });
+
+  it("ignores settings.json reached through a symlinked ancestor", async () => {
+    const cwd = tempDir("age-settings-ancestor-");
+    const outside = join(cwd, "outside-claude");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "settings.json"), JSON.stringify({ plansDirectory: "owned" }));
+    symlinkSync(outside, join(cwd, ".claude"));
+    await expect(plansDirectoryFromSettings(cwd)).resolves.toBeNull();
   });
 
   it("ignores a symlinked settings.json", async () => {
