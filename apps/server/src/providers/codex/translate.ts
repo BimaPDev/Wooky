@@ -669,11 +669,13 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
         }
 
         if (total) {
+          const previous = latestCumulativeUsage ?? usageBaseline;
           if (usageNeedsSeed) {
             usageBaseline = last ? subtractUsage(total, last) : total;
             usageNeedsSeed = false;
-          } else if (usageBaseline && isBelowBaseline(total, usageBaseline)) {
-            // The counter restarted mid-turn: keep what this turn already reported.
+          } else if (previous && isBelowBaseline(total, previous)) {
+            // The counter restarted mid-turn (below the last total seen, or the
+            // baseline before any): keep what this turn already reported.
             carriedUsage = lastEmittedUsage;
             usageBaseline = last ? subtractUsage(total, last) : null;
           }

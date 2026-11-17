@@ -417,6 +417,46 @@ describe("createCodexTranslator", () => {
       expect(t.getCumulativeUsage()).toEqual(tokens(80, 8));
     });
 
+    it("detects a second mid-turn counter reset against the previous total", () => {
+      const t = createCodexTranslator({ usageBaseline: tokens(900, 90), resumed: true });
+      t.beginTurn();
+      t.translateNotification(
+        ...usageNotification({ total: tokens(1000, 100), last: tokens(100, 10) }),
+      );
+      t.translateNotification(...usageNotification({ total: tokens(50, 5), last: tokens(50, 5) }));
+      t.translateNotification(...usageNotification({ total: tokens(80, 8), last: tokens(30, 3) }));
+      expect(
+        t.translateNotification(
+          ...usageNotification({ total: tokens(30, 3), last: tokens(30, 3) }),
+        ),
+      ).toEqual([{ type: "usage", usage: { inputTokens: 210, outputTokens: 21 } }]);
+    });
+
+    it("detects consecutive resets when no last is present", () => {
+      const t = createCodexTranslator({ usageBaseline: tokens(900, 90), resumed: true });
+      t.beginTurn();
+      t.translateNotification(...usageNotification({ total: tokens(1000, 100) }));
+      t.translateNotification(...usageNotification({ total: tokens(50, 5) }));
+      expect(t.translateNotification(...usageNotification({ total: tokens(20, 2) }))).toEqual([
+        { type: "usage", usage: { inputTokens: 170, outputTokens: 17 } },
+      ]);
+    });
+
+    it("detects a reset in a new thread's first turn (null baseline)", () => {
+      const t = createCodexTranslator({ usageBaseline: null });
+      t.beginTurn();
+      expect(
+        t.translateNotification(
+          ...usageNotification({ total: tokens(1000, 100), last: tokens(1000, 100) }),
+        ),
+      ).toEqual([{ type: "usage", usage: { inputTokens: 1000, outputTokens: 100 } }]);
+      expect(
+        t.translateNotification(
+          ...usageNotification({ total: tokens(50, 5), last: tokens(50, 5) }),
+        ),
+      ).toEqual([{ type: "usage", usage: { inputTokens: 1050, outputTokens: 105 } }]);
+    });
+
     it("re-baselines to zero when the total drops and no last is present", () => {
       const t = createCodexTranslator({ usageBaseline: tokens(500, 200), resumed: true });
       t.beginTurn();

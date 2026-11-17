@@ -384,6 +384,7 @@ describe("JsonRpcClient", () => {
         'process.on("exit", () => {',
         "  const deadline = Date.now() + 5000;",
         "  while (groupAlive() && Date.now() < deadline) {",
+        // age-allow sleep: synchronous exit handler; no event exists for process-group exit
         "    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);",
         "  }",
         "  writeSync(1, JSON.stringify({ pid, groupGone: !groupAlive() }));",
