@@ -21,7 +21,7 @@ export type Effect =
       answers: QuestionAnswers | null;
     }
   | { kind: "checkpoint.restore"; threadId: string; turnId: string; cwd: string; ref: string }
-  /** Rewind the native session after reverting turnId; keepNativeRef is the last kept turn's. */
+  /** Rewind the native session after reverting turnId. keepNativeRef null drops every turn. */
   | { kind: "session.rewind"; threadId: string; turnId: string; keepNativeRef: string | null };
 
 export type StoredEffect = Effect & { id: number };

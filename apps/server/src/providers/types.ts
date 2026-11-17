@@ -30,7 +30,10 @@ export interface TurnInput {
   runtimeMode: RuntimeMode;
   /** Native session to resume, if the thread has one for this provider. */
   resumeSessionId: string | null;
-  /** Native message to resume the session at (the last kept turn's nativeRef), or the end. */
+  /**
+   * Native message to resume the session at (the last kept turn's nativeRef).
+   * null means "continue at the end of the current session", not "start fresh".
+   */
   resumeAt: string | null;
   interactionMode: InteractionMode;
   /** Prior conversation as text when the thread was handed off from another provider. */
@@ -46,7 +49,10 @@ export interface RewindInput {
   threadId: string;
   /** The thread's current native session. */
   sessionId: string;
-  /** Last native message to keep; null drops every turn. */
+  /**
+   * Last native message to keep. null means "drop every turn and start fresh", unlike
+   * TurnInput.resumeAt, where null means "continue at the end of the session".
+   */
   keepNativeRef: string | null;
   cwd: string;
 }

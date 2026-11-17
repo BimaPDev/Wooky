@@ -154,7 +154,6 @@ export const AgeEvent = z.discriminatedUnion("type", [
     queueId: Id,
     reason: z.enum(["started", "removed"]),
   }),
-  z.object({ ...meta, type: z.literal("queue.promoted"), threadId: Id, queueId: Id }),
 ]);
 export type AgeEvent = z.infer<typeof AgeEvent>;
 export type AgeEventType = AgeEvent["type"];

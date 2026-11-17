@@ -26,6 +26,15 @@ describe("pendingQuestions", () => {
     expect(pendingQuestions(log.model(), "t1")).toEqual([]);
     expect(pendingQuestions(log.model(), "missing")).toEqual([]);
   });
+
+  it("returns one shared empty array when nothing is open, so selections stay stable", () => {
+    const log = testLog().project("p1", "/work").thread("t1", "p1");
+    const idle = pendingQuestions(log.model(), "t1");
+    expect(Object.isFrozen(idle)).toBe(true);
+    expect(pendingQuestions(log.model(), "missing")).toBe(idle);
+    log.start("t1", "u1").item("t1", "u1", { ...question("i1", "r1"), dismissed: true });
+    expect(pendingQuestions(log.model(), "t1")).toBe(idle);
+  });
 });
 
 describe("queuedPrompts and nextQueued", () => {
@@ -42,8 +51,9 @@ describe("queuedPrompts and nextQueued", () => {
     expect(queuedPrompts(log.model(), "t1").map((item) => item.prompt)).toEqual(["one", "two"]);
     expect(nextQueued(log.model(), "t1")?.id).toBe("q1");
 
-    log.push({ type: "queue.promoted", threadId: "t1", queueId: "q2" });
-    expect(nextQueued(log.model(), "t1")?.id).toBe("q2");
+    log.push({ type: "queue.removed", threadId: "t1", queueId: "q2", reason: "started" });
+    expect(queuedPrompts(log.model(), "t1").map((item) => item.id)).toEqual(["q1"]);
+    expect(nextQueued(log.model(), "t1")?.id).toBe("q1");
     expect(queuedPrompts(log.model(), "missing")).toEqual([]);
     expect(nextQueued(log.model(), "missing")).toBeNull();
   });
@@ -87,8 +97,33 @@ describe("resumePoint", () => {
     expect(resumePoint(log.model(), "t1")).toBe("msg-1");
 
     log.finish("t1", "u3", { status: "failed" });
-    expect(resumePoint(log.model(), "t1")).toBeNull();
+    expect(resumePoint(log.model(), "t1")).toBe("msg-1");
     expect(resumePoint(log.model(), "missing")).toBeNull();
+  });
+
+  it("walks back past running turns and turns without a nativeRef", () => {
+    const log = testLog()
+      .project("p1", "/work")
+      .thread("t1", "p1")
+      .start("t1", "u1")
+      .finish("t1", "u1", { nativeRef: "msg-1" })
+      .start("t1", "u2")
+      .finish("t1", "u2", { nativeRef: null })
+      .start("t1", "u3")
+      .finish("t1", "u3", { status: "interrupted" })
+      .start("t1", "u4");
+    expect(resumePoint(log.model(), "t1")).toBe("msg-1");
+  });
+
+  it("is null when no finished turn has a nativeRef", () => {
+    const log = testLog()
+      .project("p1", "/work")
+      .thread("t1", "p1")
+      .start("t1", "u1")
+      .finish("t1", "u1", { status: "failed" })
+      .start("t1", "u2")
+      .finish("t1", "u2", { nativeRef: null });
+    expect(resumePoint(log.model(), "t1")).toBeNull();
   });
 });
 
@@ -115,6 +150,14 @@ describe("threadsSharingWorkspace", () => {
     expect(threadsSharingWorkspace(model, "own")).toEqual([]);
     expect(threadsSharingWorkspace(model, "pending")).toEqual([]);
     expect(threadsSharingWorkspace(model, "missing")).toEqual([]);
+  });
+
+  it("returns one shared empty array when nothing is shared", () => {
+    const model = log.model();
+    const none = threadsSharingWorkspace(model, "own");
+    expect(Object.isFrozen(none)).toBe(true);
+    for (const id of ["pending", "missing", "elsewhere"])
+      expect(threadsSharingWorkspace(model, id)).toBe(none);
   });
 });
 

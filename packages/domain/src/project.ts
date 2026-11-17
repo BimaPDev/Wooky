@@ -217,8 +217,10 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
     }
 
     case "queue.added": {
-      const queue = model.threads[event.threadId]?.queue;
-      if (!queue || queue.some((item) => item.id === event.item.id)) return model;
+      const thread = model.threads[event.threadId];
+      if (!thread) return model;
+      const queue = thread.queue ?? [];
+      if (queue.some((item) => item.id === event.item.id)) return model;
       return patchThread(model, event.threadId, event.at, { queue: [...queue, event.item] });
     }
 
@@ -227,15 +229,6 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       if (!queue?.some((item) => item.id === event.queueId)) return model;
       return patchThread(model, event.threadId, event.at, {
         queue: queue.filter((item) => item.id !== event.queueId),
-      });
-    }
-
-    case "queue.promoted": {
-      const queue = model.threads[event.threadId]?.queue;
-      const item = queue?.find((candidate) => candidate.id === event.queueId);
-      if (!queue || !item || queue[0] === item) return model;
-      return patchThread(model, event.threadId, event.at, {
-        queue: [item, ...queue.filter((candidate) => candidate !== item)],
       });
     }
   }

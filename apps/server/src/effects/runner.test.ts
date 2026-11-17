@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgeEvent, ProviderEvent, ProviderKind, RuntimeMode, Thread } from "@age/contracts";
 import { createNoopGitService } from "../git/noop.ts";
 import type { GitService } from "../git/types.ts";
@@ -861,5 +861,122 @@ describe("effect runner hardening", () => {
     const finishes = h.store.eventsAfter(0).filter((event) => event.type === "turn.finished");
     expect(finishes).toMatchObject([{ turnId, status: "completed" }]);
     expect(h.store.model.threads[threadId]?.status).toBe("idle");
+  });
+});
+
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+const dbQuestion = {
+  id: "db",
+  question: "Which database?",
+  options: [{ label: "SQLite" }, { label: "Postgres" }],
+  multiSelect: false,
+  allowCustom: false,
+};
+
+describe("effect runner seams for revert rewind and questions", () => {
+  it("records the done event's nativeRef on turn.finished and the turn", async () => {
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* () {
+          yield { type: "done", status: "completed", error: null, nativeRef: "msg-42" };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    expect(await finishedFor(h.store, turnId)).toMatchObject({ nativeRef: "msg-42" });
+    expect(h.store.model.turns[threadId]?.at(-1)?.nativeRef).toBe("msg-42");
+  });
+
+  it("leaves nativeRef out when the adapter reports none", async () => {
+    const h = await harness();
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    expect(await finishedFor(h.store, turnId)).not.toHaveProperty("nativeRef");
+  });
+
+  it("delivers question answers to the adapter while its turn is still running", async () => {
+    const received = deferred<unknown>();
+    const release = deferred();
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* (input) {
+          const answers = await input.requestUserInput({
+            requestId: "r1",
+            questions: [dbQuestion],
+          });
+          received.resolve(answers);
+          await release.promise;
+          yield { type: "done", status: "completed", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    const asked = await waitForEvent(h.store, "question.requested");
+    expect(asked).toMatchObject({ turnId, requestId: "r1", questions: [dbQuestion] });
+    expect(h.store.model.threads[threadId]?.status).toBe("waiting");
+
+    const result = h.dispatch({
+      type: "question.respond",
+      threadId,
+      requestId: "r1",
+      answers: { db: ["SQLite"] },
+    });
+    expect(result).toMatchObject({ accepted: true });
+    expect(await received.promise).toEqual({ db: ["SQLite"] });
+    expect(h.store.model.turns[threadId]?.at(-1)?.status).toBe("running");
+    expect(h.store.model.threads[threadId]?.status).toBe("running");
+
+    release.resolve();
+    expect(await finishedFor(h.store, turnId)).toMatchObject({ status: "completed" });
+    const item = h.store.model.turns[threadId]?.at(-1)?.items.find((i) => i.kind === "question");
+    expect(item).toMatchObject({ requestId: "r1", answers: { db: ["SQLite"] } });
+  });
+
+  it("resolves an open question to null when the turn is interrupted", async () => {
+    const received = deferred<unknown>();
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* (input) {
+          received.resolve(
+            await input.requestUserInput({ requestId: "r1", questions: [dbQuestion] }),
+          );
+          yield { type: "done", status: "interrupted", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    await waitForEvent(h.store, "question.requested");
+    h.dispatch({ type: "turn.interrupt", threadId });
+    expect(await received.promise).toBeNull();
+    expect(await finishedFor(h.store, turnId)).toMatchObject({ status: "interrupted" });
+  });
+
+  it("fails session.rewind loudly instead of marking it done", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const h = await harness();
+      const threadId = h.createThread("full");
+      const { effects } = h.store.commit({
+        commandId: "rewind",
+        events: [],
+        effects: [{ kind: "session.rewind", threadId, turnId: "u1", keepNativeRef: null }],
+      });
+      h.runner.enqueue(effects);
+      await h.runner.idle();
+      expect(effectStatuses(h.home).at(-1)).toBe("session.rewind:retired");
+      expect(errors).toHaveBeenCalledWith("Effect session.rewind failed", expect.any(Error));
+    } finally {
+      errors.mockRestore();
+    }
   });
 });

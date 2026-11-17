@@ -412,3 +412,99 @@ describe("decide turn.revert", () => {
     ]);
   });
 });
+
+describe("decide question.respond", () => {
+  const asking = () =>
+    apply(running(), [
+      {
+        type: "question.requested",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u1",
+        itemId: "q1",
+        requestId: "r1",
+        questions: [
+          { id: "db", question: "Which?", options: [], multiSelect: false, allowCustom: true },
+        ],
+      },
+    ]);
+
+  it("resolves an open question and hands the answers to the runner", () => {
+    const cmd = command("question.respond", {
+      threadId: "t1",
+      requestId: "r1",
+      answers: { db: ["SQLite"] },
+    });
+    const { events, effects } = accepted(run(asking(), cmd));
+    expect(events).toMatchObject([
+      { type: "question.resolved", turnId: "u1", requestId: "r1", answers: { db: ["SQLite"] } },
+    ]);
+    expect(effects).toEqual([
+      {
+        kind: "question.resolve",
+        threadId: "t1",
+        turnId: "u1",
+        requestId: "r1",
+        answers: { db: ["SQLite"] },
+      },
+    ]);
+  });
+
+  it("passes a dismissal through as null answers", () => {
+    const cmd = command("question.respond", { threadId: "t1", requestId: "r1", answers: null });
+    expect(accepted(run(asking(), cmd)).effects).toMatchObject([{ answers: null }]);
+  });
+
+  it("rejects an unknown thread or request", () => {
+    const answers = { db: ["SQLite"] };
+    expect(
+      run(asking(), command("question.respond", { threadId: "t9", requestId: "r1", answers })),
+    ).toMatchObject({ code: "not_found" });
+    expect(
+      run(asking(), command("question.respond", { threadId: "t1", requestId: "r9", answers })),
+    ).toMatchObject({ code: "not_found" });
+  });
+
+  it("rejects a question that was already answered or dismissed", () => {
+    const answer = command("question.respond", {
+      threadId: "t1",
+      requestId: "r1",
+      answers: { db: ["SQLite"] },
+    });
+    const answered = apply(asking(), accepted(run(asking(), answer)).events);
+    expect(run(answered, answer)).toMatchObject({ code: "conflict" });
+
+    const dismiss = command("question.respond", { threadId: "t1", requestId: "r1", answers: null });
+    const dismissed = apply(asking(), accepted(run(asking(), dismiss)).events);
+    expect(run(dismissed, answer)).toMatchObject({ code: "conflict" });
+    expect(run(finished(asking()), answer)).toMatchObject({ code: "conflict" });
+  });
+});
+
+describe("decide queue commands", () => {
+  it("rejects queue.promote and queue.remove until Station 1", () => {
+    for (const type of ["queue.promote", "queue.remove"] as const)
+      expect(run(seed(), command(type, { threadId: "t1", queueId: "q1" }))).toMatchObject({
+        ok: false,
+        code: "bad_request",
+        message: `${type} is not supported yet.`,
+      });
+  });
+});
+
+describe("decide turn.revert restoreFiles", () => {
+  it("rejects a conversation-only revert until Station 1", () => {
+    const cmd = command("turn.revert", { threadId: "t1", turnId: "u1", restoreFiles: false });
+    expect(run(finished(running()), cmd)).toMatchObject({
+      code: "bad_request",
+      message: "conversation-only revert not supported yet",
+    });
+  });
+
+  it("still restores files when restoreFiles is true", () => {
+    const cmd = command("turn.revert", { threadId: "t1", turnId: "u1", restoreFiles: true });
+    expect(accepted(run(finished(running()), cmd)).effects).toMatchObject([
+      { kind: "checkpoint.restore" },
+    ]);
+  });
+});

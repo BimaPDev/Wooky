@@ -1,7 +1,9 @@
 import {
   ApprovalRequest,
   ProviderEvent,
+  UserInputRequest,
   type PendingEvent,
+  type QuestionAnswers,
   type ReadModel,
   type Usage,
   type Worktree,
@@ -51,8 +53,8 @@ const RECOVERABLE: ReadonlySet<Effect["kind"]> = new Set([
 
 /**
  * Effects run in order per thread and in parallel across threads. Control effects
- * (interrupt, approval answers) bypass the queue: they steer a turn that is already
- * occupying its thread's queue.
+ * (interrupt, approval and question answers) bypass the queue: they steer a turn that is
+ * already occupying its thread's queue.
  */
 export function createEffectRunner(deps: RunnerDeps): EffectRunner {
   const { store, providers, git, newId, coalesceMs = 30 } = deps;
@@ -60,19 +62,20 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
   const inflight = new Set<Promise<void>>();
   const controllers = new Map<string, AbortController>();
   const approvals = new Map<string, (decision: Decision) => void>();
+  const questions = new Map<string, (answers: QuestionAnswers | null) => void>();
   let stopped = false;
 
   const append = (events: PendingEvent[]) => {
     if (!stopped && events.length > 0) store.appendInternal(events);
   };
-  const markDone = (effect: StoredEffect) => {
-    if (!stopped) store.markEffect(effect.id, "done");
+  const markEffect = (effect: StoredEffect, status: "done" | "retired") => {
+    if (!stopped) store.markEffect(effect.id, status);
   };
   const track = (work: Promise<void>) => {
     inflight.add(work);
     void work.finally(() => inflight.delete(work));
   };
-  const approvalKey = (turnId: string, requestId: string) => `${turnId}\u0000${requestId}`;
+  const requestKey = (turnId: string, requestId: string) => `${turnId}\u0000${requestId}`;
 
   async function perform(effect: Effect): Promise<void> {
     switch (effect.kind) {
@@ -119,8 +122,13 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         controllers.get(effect.turnId)?.abort();
         return;
       case "approval.resolve":
-        approvals.get(approvalKey(effect.turnId, effect.requestId))?.(effect.decision);
+        approvals.get(requestKey(effect.turnId, effect.requestId))?.(effect.decision);
         return;
+      case "question.resolve":
+        questions.get(requestKey(effect.turnId, effect.requestId))?.(effect.answers);
+        return;
+      case "session.rewind":
+        throw new Error("session.rewind is not implemented yet.");
     }
   }
 
@@ -186,6 +194,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     let status: FinishStatus = "failed";
     let error: string | null = null;
     let usage: Usage | null = null;
+    let nativeRef: string | undefined;
     let cwd: string | null = null;
     let checkpoints = false;
 
@@ -249,7 +258,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
             return "deny";
           }
           const request = parsed.data;
-          const key = approvalKey(turnId, request.requestId);
+          const key = requestKey(turnId, request.requestId);
           const answer = new Promise<Decision>((resolve) => {
             const onAbort = () => resolve("deny");
             signal.addEventListener("abort", onAbort, { once: true });
@@ -278,7 +287,34 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           ]);
           return answer.finally(() => approvals.delete(key));
         },
-        requestUserInput: async () => null,
+        requestUserInput: async (raw) => {
+          if (signal.aborted) return null;
+          const parsed = UserInputRequest.safeParse(raw);
+          if (!parsed.success) {
+            notice("The agent asked a question Wooky could not read, so it was dismissed.");
+            return null;
+          }
+          const request = parsed.data;
+          const key = requestKey(turnId, request.requestId);
+          const answer = new Promise<QuestionAnswers | null>((resolve) => {
+            const onAbort = () => resolve(null);
+            signal.addEventListener("abort", onAbort, { once: true });
+            questions.set(key, (answers) => {
+              signal.removeEventListener("abort", onAbort);
+              resolve(answers);
+            });
+          });
+          emit([
+            {
+              type: "question.requested",
+              ...ids,
+              itemId: newId("question"),
+              requestId: request.requestId,
+              questions: request.questions,
+            },
+          ]);
+          return answer.finally(() => questions.delete(key));
+        },
       };
 
       let done: Extract<ProviderEvent, { type: "done" }> | null = null;
@@ -335,6 +371,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       if (done) {
         status = done.status;
         error = done.error;
+        nativeRef = done.nativeRef;
       } else if (signal.aborted) {
         status = "interrupted";
       } else {
@@ -374,6 +411,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       changedFiles,
       usage,
       error,
+      ...(nativeRef === undefined ? {} : { nativeRef }),
     };
     try {
       emit([finished]);
@@ -394,13 +432,15 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
   }
 
   async function execute(effect: StoredEffect): Promise<void> {
+    let status: "done" | "retired" = "done";
     try {
       await perform(effect);
     } catch (error) {
       console.error(`Effect ${effect.kind} failed`, error);
-    } finally {
-      markDone(effect);
+      // The store has no failed status; retired keeps a failure from reading as done.
+      status = "retired";
     }
+    markEffect(effect, status);
   }
 
   async function idle(): Promise<void> {
@@ -409,7 +449,11 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
 
   function enqueue(effects: readonly StoredEffect[]) {
     for (const effect of effects) {
-      if (effect.kind === "turn.interrupt" || effect.kind === "approval.resolve") {
+      if (
+        effect.kind === "turn.interrupt" ||
+        effect.kind === "approval.resolve" ||
+        effect.kind === "question.resolve"
+      ) {
         track(execute(effect));
         continue;
       }

@@ -2,6 +2,9 @@ import type { QueuedPrompt, ReadModel, Thread, TimelineItem, Turn } from "@age/c
 
 type ItemOf<K extends TimelineItem["kind"]> = Extract<TimelineItem, { kind: K }>;
 
+/** Shared empty result, so clients selecting by reference do not re-render on every event. */
+const NONE: readonly never[] = Object.freeze([]);
+
 export function threadsForProject(model: ReadModel, projectId: string): Thread[] {
   return Object.values(model.threads)
     .filter((thread) => thread.projectId === projectId)
@@ -19,13 +22,17 @@ export function pendingApprovals(model: ReadModel, threadId: string) {
   return turn.items.filter((item) => item.kind === "approval" && item.decision === null);
 }
 
-export function pendingQuestions(model: ReadModel, threadId: string): ItemOf<"question">[] {
+export function pendingQuestions(
+  model: ReadModel,
+  threadId: string,
+): readonly ItemOf<"question">[] {
   const turn = activeTurn(model, threadId);
-  if (!turn) return [];
-  return turn.items.filter(
+  if (!turn) return NONE;
+  const open = turn.items.filter(
     (item): item is ItemOf<"question"> =>
       item.kind === "question" && item.answers === null && !item.dismissed,
   );
+  return open.length > 0 ? open : NONE;
 }
 
 export function queuedPrompts(model: ReadModel, threadId: string): QueuedPrompt[] {
@@ -46,11 +53,14 @@ export function latestPlan(model: ReadModel, threadId: string): ItemOf<"plan"> |
 }
 
 /**
- * Where the native session should resume: the nativeRef of the last finished turn still
- * in the thread (after a revert, the last kept one). Null when there is none.
+ * Where the native session should resume: the newest nativeRef among the finished turns
+ * still in the thread (after a revert, the kept ones). Turns that recorded none are
+ * skipped. Null only when no finished turn has one.
  */
 export function resumePoint(model: ReadModel, threadId: string): string | null {
-  const kept = model.turns[threadId]?.findLast((turn) => turn.status !== "running");
+  const kept = model.turns[threadId]?.findLast(
+    (turn) => turn.status !== "running" && typeof turn.nativeRef === "string",
+  );
   return kept?.nativeRef ?? null;
 }
 
@@ -58,15 +68,16 @@ export function resumePoint(model: ReadModel, threadId: string): string | null {
  * Other threads working in the same checkout: neither side has (or will get) its own
  * worktree, and both belong to projects with the same root.
  */
-export function threadsSharingWorkspace(model: ReadModel, threadId: string): Thread[] {
+export function threadsSharingWorkspace(model: ReadModel, threadId: string): readonly Thread[] {
   const thread = model.threads[threadId];
-  if (!thread || !sharesRoot(thread)) return [];
+  if (!thread || !sharesRoot(thread)) return NONE;
   const root = model.projects[thread.projectId]?.root;
-  if (root === undefined) return [];
-  return Object.values(model.threads).filter(
+  if (root === undefined) return NONE;
+  const sharing = Object.values(model.threads).filter(
     (other) =>
       other.id !== thread.id && sharesRoot(other) && model.projects[other.projectId]?.root === root,
   );
+  return sharing.length > 0 ? sharing : NONE;
 }
 
 function sharesRoot(thread: Thread): boolean {

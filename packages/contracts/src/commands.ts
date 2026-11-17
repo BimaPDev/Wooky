@@ -63,7 +63,10 @@ export const Command = z.discriminatedUnion("type", [
     answers: QuestionAnswers.nullable(),
   }),
   z.object({ ...base, type: z.literal("queue.remove"), threadId: Id, queueId: Id }),
-  /** Move a queued prompt to the front of the queue. */
+  /**
+   * Start this queued prompt now, wherever it sits in the queue. Decided as
+   * `queue.removed {reason: "started"}` followed by `turn.started {fromQueueId}`.
+   */
   z.object({ ...base, type: z.literal("queue.promote"), threadId: Id, queueId: Id }),
   z.object({
     ...base,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgeEvent, PendingEvent } from "@age/contracts";
+import type { AgeEvent, PendingEvent, Thread } from "@age/contracts";
 import { applyEvents, emptyReadModel } from "./project.ts";
 import { pendingApprovals } from "./selectors.ts";
 import { plan, question, testLog } from "./test-log.ts";
@@ -397,12 +397,29 @@ describe("applyEvent: queue", () => {
     expect(ids(log)).toEqual(["q3"]);
   });
 
-  it("moves a promoted item to the front", () => {
-    expect(ids(queued().push({ type: "queue.promoted", threadId: "t1", queueId: "q3" }))).toEqual([
-      "q3",
-      "q1",
-      "q2",
+  it("starts a queued prompt from anywhere in the queue", () => {
+    const log = queued()
+      .push({ type: "queue.removed", threadId: "t1", queueId: "q3", reason: "started" })
+      .start("t1", "u1", { prompt: "do q3", fromQueueId: "q3" });
+    expect(ids(log)).toEqual(["q1", "q2"]);
+    expect(log.model().turns.t1?.at(-1)).toMatchObject({ prompt: "do q3", status: "running" });
+  });
+
+  it("treats a thread without a queue (an undecoded old snapshot) as an empty queue", () => {
+    const legacy = testLog().project("p1", "/work").thread("t1", "p1").model();
+    const { queue: _queue, ...thread } = legacy.threads.t1 as Thread;
+    const model = { ...legacy, threads: { t1: thread as Thread } };
+    const next = applyEvents(model, [
+      {
+        type: "queue.added",
+        seq: legacy.seq + 1,
+        at: "2026-01-02T00:00:00.000Z",
+        commandId: null,
+        threadId: "t1",
+        item: prompt("q1"),
+      },
     ]);
+    expect(next.threads.t1?.queue.map((item) => item.id)).toEqual(["q1"]);
   });
 
   it("does nothing for unknown items or threads", () => {
@@ -411,13 +428,12 @@ describe("applyEvent: queue", () => {
     const noops = log
       .push(
         { type: "queue.removed", threadId: "t1", queueId: "nope", reason: "removed" },
-        { type: "queue.promoted", threadId: "t1", queueId: "nope" },
-        { type: "queue.promoted", threadId: "t1", queueId: "q1" },
+        { type: "queue.removed", threadId: "missing", queueId: "q1", reason: "started" },
         { type: "queue.added", threadId: "missing", item: prompt("q9") },
       )
       .events.slice(before.seq);
     const after = applyEvents(before, noops);
-    expect(after.seq).toBe(before.seq + 4);
+    expect(after.seq).toBe(before.seq + 3);
     expect(after.threads).toBe(before.threads);
   });
 });
