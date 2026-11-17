@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { takePendingTerminalLine, toggleTerminal } from "../state/actions.ts";
 import { backend } from "../state/backend.ts";
 import { useStore } from "../state/store.ts";
@@ -13,40 +13,69 @@ export function TerminalPane() {
     thread ? state.model.projects[thread.projectId] : undefined,
   );
   const cwd = thread?.worktree?.path ?? project?.root ?? null;
+  const [generation, setGeneration] = useState(0);
 
+  // A new cwd or a restart remounts the session, which resets its state.
+  return (
+    <TerminalSession
+      key={`${cwd ?? ""}:${generation}`}
+      cwd={cwd}
+      onRestart={() => setGeneration((value) => value + 1)}
+    />
+  );
+}
+
+function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: () => void }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [output, setOutput] = useState("");
   const [line, setLine] = useState("");
   const [status, setStatus] = useState<"starting" | "ready" | "exited" | "error">("starting");
   const [error, setError] = useState<string | null>(null);
-  const [generation, setGeneration] = useState(0);
   const scrollRef = useRef<HTMLPreElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sessionRef = useRef<string | null>(null);
+  const pending = useStore((state) => state.pendingTerminalLine);
 
-  // sync: open a shell for the active project/worktree while the pane is mounted
+  const writeTo = (id: string, text: string) =>
+    backend()
+      .call("terminal.write", { sessionId: id, data: `${text}\r\n` })
+      .then(
+        () => setOutput((prev) => prev + `$ ${text}\r\n`),
+        (err: unknown) => {
+          setStatus("error");
+          setError(err instanceof Error ? err.message : "Write failed.");
+        },
+      );
+
+  const onReady = useEffectEvent((id: string) => {
+    sessionRef.current = id;
+    setSessionId(id);
+    setStatus("ready");
+  });
+
+  const deliverPending = useEffectEvent((id: string) => {
+    const text = takePendingTerminalLine(id);
+    if (text) void writeTo(id, text);
+  });
+
+  const onOpenFailed = useEffectEvent((err: unknown) => {
+    setStatus("error");
+    setError(err instanceof Error ? err.message : "Could not start the shell.");
+  });
+
+  // sync: open a server shell session for this cwd; close it on unmount
   useEffect(() => {
     let cancelled = false;
     const open = async () => {
-      setStatus("starting");
-      setError(null);
-      setOutput("");
-      setLine("");
       try {
-        const result = await backend().call("terminal.open", {
-          ...(cwd ? { cwd } : {}),
-        });
+        const result = await backend().call("terminal.open", cwd ? { cwd } : {});
         if (cancelled) {
           void backend().call("terminal.close", { sessionId: result.sessionId });
           return;
         }
-        sessionRef.current = result.sessionId;
-        setSessionId(result.sessionId);
-        setStatus("ready");
+        onReady(result.sessionId);
       } catch (err) {
-        if (cancelled) return;
-        setStatus("error");
-        setError(err instanceof Error ? err.message : "Could not start the shell.");
+        if (!cancelled) onOpenFailed(err);
       }
     };
     void open();
@@ -56,9 +85,14 @@ export function TerminalPane() {
       sessionRef.current = null;
       if (id) void backend().call("terminal.close", { sessionId: id });
     };
-  }, [cwd, generation]);
+  }, [cwd]);
 
-  // sync: append pushed terminal chunks for this session
+  // sync: send a Sign in line queued in the store to the ready server shell, once
+  useEffect(() => {
+    if (pending && sessionId && status === "ready") deliverPending(sessionId);
+  }, [pending, sessionId, status]);
+
+  // sync: append terminal chunks pushed over the websocket for this session
   useEffect(() => {
     return subscribeTerminal((message) => {
       if (!sessionRef.current || message.sessionId !== sessionRef.current) return;
@@ -78,30 +112,17 @@ export function TerminalPane() {
     });
   }, []);
 
-  // sync: keep the output pinned to the bottom as chunks arrive
+  // sync: keep the output element's scroll pinned to the bottom as chunks arrive
   useEffect(() => {
     const node = scrollRef.current;
-    if (!node) return;
+    if (!node || output.length === 0) return;
     node.scrollTop = node.scrollHeight;
   }, [output]);
 
   const writeLine = async (text: string) => {
     if (!sessionId || status !== "ready") return;
-    setOutput((prev) => prev + `$ ${text}\r\n`);
-    try {
-      await backend().call("terminal.write", { sessionId, data: `${text}\r\n` });
-    } catch (err) {
-      setStatus("error");
-      setError(err instanceof Error ? err.message : "Write failed.");
-    }
+    await writeTo(sessionId, text);
   };
-
-  // sync: Settings → Providers Sign in queues a login command for this shell
-  useEffect(() => {
-    if (!sessionId || status !== "ready") return;
-    const pending = takePendingTerminalLine();
-    if (pending) void writeLine(pending);
-  }, [sessionId, status]);
 
   const sendLine = async () => {
     if (!line) return;
@@ -119,14 +140,6 @@ export function TerminalPane() {
     }
   };
 
-  const restart = () => {
-    const id = sessionRef.current;
-    sessionRef.current = null;
-    if (id) void backend().call("terminal.close", { sessionId: id });
-    setSessionId(null);
-    setGeneration((value) => value + 1);
-  };
-
   return (
     <section className="terminal-pane" aria-label="Terminal">
       <header className="terminal-head">
@@ -137,7 +150,7 @@ export function TerminalPane() {
         </div>
         <div className="terminal-head-actions">
           {status === "exited" || status === "error" ? (
-            <button type="button" className="ghost-button" onClick={restart}>
+            <button type="button" className="ghost-button" onClick={onRestart}>
               Restart
             </button>
           ) : null}

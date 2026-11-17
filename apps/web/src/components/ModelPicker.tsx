@@ -197,7 +197,7 @@ function ProviderModelPanel({ thread }: { thread: Thread }) {
   const disabledProviders = useStore((state) => state.deviceSettings?.disabledProviders ?? []);
   const disabled = useMemo(() => new Set(disabledProviders), [disabledProviders]);
   const running = thread.status === "running" || thread.status === "waiting";
-  const [tab, setTab] = useState<ProviderKind>(thread.provider);
+  const [chosenTab, setTab] = useState<ProviderKind>(thread.provider);
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -206,13 +206,7 @@ function ProviderModelPanel({ thread }: { thread: Thread }) {
     searchRef.current?.focus();
   }, []);
 
-  // sync: keep the tab on a provider that still exists
-  useEffect(() => {
-    if (!providers.some((entry) => entry.kind === tab)) {
-      setTab(thread.provider);
-    }
-  }, [providers, tab, thread.provider]);
-
+  const tab = providers.some((entry) => entry.kind === chosenTab) ? chosenTab : thread.provider;
   const active = providers.find((entry) => entry.kind === tab) ?? null;
   const needle = query.trim().toLowerCase();
   const models = useMemo(() => {

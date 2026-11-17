@@ -65,6 +65,8 @@ Adapters emit `ProviderEvent`s, which become `turn.*` events. See `docs/architec
 - Web components use CSS variables from `apps/web/src/styles/tokens.css`, never literal colours.
 
 Escape hatch: `// age-allow <rule-id>: <reason>` on the line above, only with a real reason.
+For `color` only, `// age-allow-file color: <reason>` as a file's first line exempts the whole file,
+and only under `apps/web/src/state/`, `apps/web/src/dev/` or in `*.test.ts(x)` files.
 
 ## Checks
 

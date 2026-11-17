@@ -1,5 +1,5 @@
 import type { ProviderKind, ProviderLimits, Turn } from "@age/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { backend } from "../state/backend.ts";
 import { closeSettings } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
@@ -25,8 +25,8 @@ const METRIC_OPTIONS: { value: Metric; label: string }[] = [
 
 const PROVIDER_META: Record<ProviderKind, { label: string; color: string }> = {
   codex: { label: "Codex", color: "var(--text)" },
-  claude: { label: "Claude Code", color: "#d97757" },
-  cursor: { label: "Cursor", color: "#8b8b8b" },
+  claude: { label: "Claude Code", color: "var(--usage-claude)" },
+  cursor: { label: "Cursor", color: "var(--usage-cursor)" },
   demo: { label: "Demo", color: "var(--accent)" },
 };
 
@@ -72,7 +72,8 @@ export function UsageDashboard() {
   const [windowDays, setWindowDays] = useState<WindowDays>(1);
   const [metric, setMetric] = useState<Metric>("cost");
   const [breakdown, setBreakdown] = useState<Breakdown>("model");
-  const [tick, setTick] = useState(0);
+  // Refresh re-renders, and stats are rebuilt against the current clock each render.
+  const [, setTick] = useState(0);
   const [limitsReq, setLimitsReq] = useState({ nonce: 0, refresh: false });
   const [limitsLoad, setLimitsLoad] = useState<{ key: string; value: LimitsLoad } | null>(null);
   const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<ProviderKind>>(
@@ -80,10 +81,7 @@ export function UsageDashboard() {
   );
   const limitsKey = `${metric}:${limitsReq.nonce}:${limitsReq.refresh ? "1" : "0"}`;
 
-  const stats = useMemo(
-    () => buildUsageStats(turns, windowDays, hiddenProviders),
-    [turns, windowDays, tick, hiddenProviders],
-  );
+  const stats = buildUsageStats(turns, windowDays, hiddenProviders);
 
   // sync: server usage.limits when the Limits tab is open
   useEffect(() => {
@@ -293,7 +291,11 @@ function formatResetsAt(resetsAt: string | null, nowMs: number = Date.now()): st
   }
   const date = new Date(at);
   const weekday = date.toLocaleDateString(undefined, { weekday: "short" });
-  const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  const time = date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
   return `Resets ${weekday} ${time}`;
 }
 
@@ -508,7 +510,7 @@ function UsageOverview({
               </tr>
             </thead>
             <tbody>
-              {[...stats.periods].reverse().map((period) => {
+              {stats.periods.toReversed().map((period) => {
                 const total = metric === "cost" ? period.costTotal : period.tokensTotal;
                 const byProvider =
                   metric === "cost" ? period.costByProvider : period.tokensByProvider;
@@ -609,7 +611,7 @@ function UsageChart({
           ))}
         </svg>
         <div className="usage-chart-y">
-          {[...scale.ticks].reverse().map((tick) => (
+          {scale.ticks.toReversed().map((tick) => (
             <span key={tick}>{metric === "cost" ? formatUsd(tick) : formatTokens(tick)}</span>
           ))}
         </div>
@@ -713,8 +715,8 @@ function UsageProviderFilter({
       ? "All providers"
       : visible.length === 0
         ? "No providers"
-        : visible.length === 1
-          ? PROVIDER_META[visible[0]!].label
+        : visible.length === 1 && visible[0]
+          ? PROVIDER_META[visible[0]].label
           : `${visible.length} providers`;
 
   // sync: close the provider filter when clicking outside
@@ -886,7 +888,10 @@ function buildUsageStats(
       return row ? [row] : [];
     }),
     models: [...byModel.values()].toSorted((a, b) => b.cost - a.cost || b.tokens - a.tokens),
-    periods: periodKeys.map((key) => periodMap.get(key)!),
+    periods: periodKeys.flatMap((key) => {
+      const period = periodMap.get(key);
+      return period ? [period] : [];
+    }),
     resolution,
   };
 }
@@ -931,10 +936,8 @@ function formatPeriodLabel(key: string, resolution: "hour" | "day"): string {
 
 function polyline(points: { x: number; y: number }[]): string {
   if (points.length === 0) return "";
-  if (points.length === 1) {
-    const point = points[0]!;
-    return `M${point.x},${point.y}`;
-  }
+  const [first] = points;
+  if (points.length === 1 && first) return `M${first.x},${first.y}`;
   return points
     .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`)
     .join(" ");

@@ -252,7 +252,7 @@ function GeneralPage() {
 function ProvidersPage() {
   const providers = useStore((state) => state.providers);
   const settings = useStore((state) => state.deviceSettings);
-  const [selected, setSelected] = useState<ProviderKind | null>(null);
+  const [chosen, setSelected] = useState<ProviderKind | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   // sync: load device settings for provider enable toggles
@@ -260,17 +260,10 @@ function ProvidersPage() {
     void loadDeviceSettings();
   }, []);
 
-  // sync: keep selection on a live provider row
-  useEffect(() => {
-    if (providers.length === 0) {
-      setSelected(null);
-      return;
-    }
-    if (!selected || !providers.some((entry) => entry.kind === selected)) {
-      setSelected(providers[0]?.kind ?? null);
-    }
-  }, [providers, selected]);
-
+  const selected =
+    chosen && providers.some((entry) => entry.kind === chosen)
+      ? chosen
+      : (providers[0]?.kind ?? null);
   const disabled = new Set(settings?.disabledProviders ?? []);
   const active = providers.find((entry) => entry.kind === selected) ?? null;
 

@@ -88,12 +88,6 @@ export const IconMoon = () => (
     <path d="M11.5 9.2A4.5 4.5 0 1 1 6.8 4.5 3.6 3.6 0 0 0 11.5 9.2z" />
   </Svg>
 );
-export const IconUpload = () => (
-  <Svg>
-    <path d="M8 10.5V3.5M5.5 5.8L8 3.3l2.5 2.5" />
-    <path d="M3 11.5v1a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 13 12.5v-1" />
-  </Svg>
-);
 export const IconPaint = () => (
   <Svg>
     <path d="M3.5 10.5c0 1.4 1.1 2.5 2.5 2.5h.5V11a1.5 1.5 0 0 1 3 0v2h.5c1.4 0 2.5-1.1 2.5-2.5V9H3.5z" />

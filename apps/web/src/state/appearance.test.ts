@@ -1,8 +1,10 @@
+// age-allow-file color: assertions on generated theme CSS compare hex values.
 import { AppearanceTheme } from "@age/contracts";
 import { describe, expect, it } from "vitest";
 import { buildAppearanceCss } from "./appearance.ts";
 
 const ui = { appearanceContrast: 100, glassOpacity: 80 };
+const line = (css: string) => /--line: (#[0-9a-f]{6});/.exec(css)?.[1];
 const theme = AppearanceTheme.parse({
   id: "neon",
   name: "Neon",
@@ -41,7 +43,6 @@ describe("buildAppearanceCss", () => {
   it("applies contrast to hairlines but leaves the canvas alone", () => {
     const flat = buildAppearanceCss(null, ui);
     const sharp = buildAppearanceCss(null, { ...ui, appearanceContrast: 150 });
-    const line = (css: string) => /--line: (#[0-9a-f]{6});/.exec(css)?.[1];
     expect(line(sharp)).not.toBe(line(flat));
     expect(sharp).toContain("--bg-0: #0d0d0c;");
   });
