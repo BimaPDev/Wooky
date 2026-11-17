@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { ProviderEvent, ProviderStatus } from "@age/contracts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { createNdjsonSplitter } from "./ndjson.ts";
-import { parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
+import { isAuthFailure, parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
 import { CursorTranslator } from "./translate.ts";
 
 const PROBE_TIMEOUT_MS = 5_000;
@@ -70,7 +70,10 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
         authenticated = null;
       }
 
-      const models = await listModels(cursorBin, cursorArgsPrefix);
+      const listed = await listModels(cursorBin, cursorArgsPrefix);
+      // `status` can claim a login that real calls reject; a refused model list is the stronger signal.
+      if (listed.authFailed) authenticated = false;
+      const models = listed.models;
 
       const problem =
         authenticated === false
@@ -97,25 +100,28 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
 async function listModels(
   cursorBin: string,
   prefix: string[],
-): Promise<Array<{ id: string; label: string }>> {
+): Promise<{ models: Array<{ id: string; label: string }>; authFailed: boolean }> {
   const now = Date.now();
   if (modelsCache && now - modelsCache.at < MODELS_CACHE_MS) {
-    return modelsCache.models;
+    return { models: modelsCache.models, authFailed: false };
   }
   try {
-    const { stdout, code } = await runProbe(cursorBin, prefix, ["--list-models"]);
+    const { stdout, stderr, code } = await runProbe(cursorBin, prefix, ["--list-models"]);
     if (code === 0) {
       const parsed = parseModelsFromList(stdout);
       if (parsed.length > 0) {
         modelsCache = { at: now, models: parsed };
-        return parsed;
+        return { models: parsed, authFailed: false };
       }
     }
+    if (isAuthFailure(`${stdout}\n${stderr}`)) return { models: FALLBACK_MODELS, authFailed: true };
   } catch {
     // fall through
   }
-  return [{ id: "auto", label: "Auto" }];
+  return { models: FALLBACK_MODELS, authFailed: false };
 }
+
+const FALLBACK_MODELS = [{ id: "auto", label: "Auto" }];
 
 function runProbe(
   cursorBin: string,

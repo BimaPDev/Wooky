@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createCursorAdapter } from "./adapter.ts";
-import { parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
+import { isAuthFailure, parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
 
 describe("parseAuthFromStatus", () => {
   it("detects logged in", () => {
@@ -36,5 +36,19 @@ describe("probe with nonexistent binary", () => {
     const status = await adapter.probe();
     expect(status.installed).toBe(false);
     expect(status.problem).toMatch(/not installed/i);
+  });
+
+  it("does not mistake 'not logged in' for a login", () => {
+    expect(parseAuthFromStatus("You are not logged in.")).toBe(false);
+    expect(parseAuthFromStatus("Not signed in")).toBe(false);
+  });
+
+  it("recognises the CLI's sign-in refusal", () => {
+    expect(
+      isAuthFailure(
+        "Error: Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY.",
+      ),
+    ).toBe(true);
+    expect(isAuthFailure("auto - Auto (current, default)")).toBe(false);
   });
 });

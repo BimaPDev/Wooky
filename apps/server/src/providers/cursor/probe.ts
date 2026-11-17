@@ -2,18 +2,21 @@
 
 export function parseAuthFromStatus(output: string): boolean | null {
   const lower = output.toLowerCase();
-  if (lower.includes("logged in") || lower.includes("✓") || /\bsigned in\b/.test(lower)) {
-    return true;
-  }
-  if (
-    lower.includes("login") ||
-    lower.includes("authentication is required") ||
-    lower.includes("not signed in") ||
-    lower.includes("not logged in")
-  ) {
-    return false;
-  }
+  // Negative phrases first: "not logged in" contains "logged in".
+  if (isAuthFailure(lower) || /\bnot (signed|logged) in\b/.test(lower)) return false;
+  if (/\b(logged|signed) in\b/.test(lower)) return true;
   return null;
+}
+
+/** True when CLI output says the user must sign in (status, --list-models or a turn). */
+export function isAuthFailure(output: string): boolean {
+  const lower = output.toLowerCase();
+  return (
+    lower.includes("authentication required") ||
+    lower.includes("authentication is required") ||
+    lower.includes("run 'agent login'") ||
+    lower.includes("please run 'agent login'")
+  );
 }
 
 export function parseModelsFromList(output: string): Array<{ id: string; label: string }> {
