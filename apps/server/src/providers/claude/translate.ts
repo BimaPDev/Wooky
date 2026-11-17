@@ -25,6 +25,8 @@ export interface TranslatorOptions {
   turnId?: string;
   /** Used to show paths relative to the workspace. */
   cwd?: string;
+  /** Set when a plan event was emitted this turn (ExitPlanMode interrupt should still complete). */
+  planProposed?: { value: boolean };
 }
 
 type ToolItem = Extract<TimelineItem, { kind: "tool" }>;
@@ -57,7 +59,8 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
   let sessionId: string | null = null;
   let authFailed = false;
   let finished = false;
-  let lastAssistantUuid: string | null = null;
+  let lastChainUuid: string | null = null;
+  const planProposed = options.planProposed;
 
   const stateFor = (messageId: string): MessageState => {
     let state = messages.get(messageId);
@@ -131,7 +134,7 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
     if (message.error === "authentication_failed") authFailed = true;
     const fromSubagent = message.parent_tool_use_id !== null;
     if (!fromSubagent) {
-      lastAssistantUuid = message.uuid;
+      lastChainUuid = message.uuid;
     }
     for (const block of message.message.content) {
       if (block.type === "text" && !fromSubagent) {
@@ -162,6 +165,9 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
   }
 
   function toolResults(message: SDKUserMessage, out: ProviderEvent[]) {
+    if (message.parent_tool_use_id === null && message.uuid) {
+      lastChainUuid = message.uuid;
+    }
     const content = message.message.content;
     if (typeof content === "string") return;
     for (const block of content) {
@@ -199,7 +205,7 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
       type: "done",
       status,
       error,
-      ...(lastAssistantUuid ? { nativeRef: lastAssistantUuid } : {}),
+      ...(lastChainUuid ? { nativeRef: lastChainUuid } : {}),
     });
     return out;
   }
@@ -247,6 +253,10 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
       settleRunningTools("failed", out);
       if (reason.kind === "aborted") return done("interrupted", null, out);
       if (reason.kind === "error") return done("failed", errorText(reason.error), out);
+      if (planProposed?.value) {
+        settleRunningTools("done", out);
+        return done("completed", null, out);
+      }
       const lastLine = reason.stderr
         ?.split("\n")
         .map((line) => line.trim())

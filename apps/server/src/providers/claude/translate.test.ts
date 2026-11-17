@@ -285,6 +285,19 @@ describe("tool lifecycle", () => {
   });
 });
 
+describe("nativeRef", () => {
+  it("uses the last top-level chain uuid, including a trailing tool result", () => {
+    const assistantMsg = assistant("m1", [toolUse("tu1", "Bash", { command: "ls" })]);
+    const userMsg = toolResult("tu1", "ok");
+    const events = run([init(), assistantMsg, userMsg, resultSuccess()]);
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      status: "completed",
+      nativeRef: userMsg.uuid,
+    });
+  });
+});
+
 describe("result", () => {
   it("emits usage then a single completed done", () => {
     const events = run([init(), assistant("m1", [text("hi")]), resultSuccess()]);
@@ -383,6 +396,14 @@ describe("finish", () => {
     const events = run([init()], { kind: "ended" });
     expect(events.at(-1)).toMatchObject({ type: "done", status: "failed" });
     expectOneDoneLast(events);
+  });
+
+  it("completes when the stream ends after a plan was proposed", () => {
+    const planProposed = { value: true };
+    const translator = createTranslator({ turnId: "t1", planProposed });
+    translator.push(init());
+    const events = translator.finish({ kind: "ended" });
+    expect(events.at(-1)).toEqual({ type: "done", status: "completed", error: null });
   });
 
   it("an ended stream prefers the sign-in sentence, then the last stderr line", () => {

@@ -1,12 +1,20 @@
 import type { ApprovalRequest, ProviderEvent, UserInputRequest } from "@age/contracts";
 import type { Options, query } from "@anthropic-ai/claude-agent-sdk";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { TurnInput } from "../types.ts";
 import { createClaudeAdapter } from "./adapter.ts";
-import { assistant, init, resultSuccess, text, toolUse, type SDKMessage } from "./fixtures.ts";
+import {
+  assistant,
+  init,
+  resultSuccess,
+  text,
+  toolResult,
+  toolUse,
+  type SDKMessage,
+} from "./fixtures.ts";
 
 type Params = Parameters<typeof query>[0];
 type Script = (params: Params) => AsyncGenerator<SDKMessage, void>;
@@ -449,6 +457,24 @@ const context = (signal = new AbortController().signal) => ({
 });
 
 describe("nativeRef", () => {
+  it("is the last top-level chain entry uuid when a tool result follows", async () => {
+    const assistantMsg = assistant("m1", [toolUse("tu1", "Read", { file_path: "a" })]);
+    const userMsg = toolResult("tu1", "ok");
+    const { fake } = fakeQuery(async function* () {
+      yield init();
+      yield assistantMsg;
+      yield userMsg;
+      yield resultSuccess();
+    });
+    const events = await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput()));
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      status: "completed",
+      error: null,
+      nativeRef: userMsg.uuid,
+    });
+  });
+
   it("is the last top-level assistant message uuid of the turn", async () => {
     const first = assistant("m1", [text("one")]);
     const last = assistant("m2", [text("two")]);
@@ -545,13 +571,14 @@ describe("AskUserQuestion", () => {
   async function ask(
     runtimeMode: TurnInput["runtimeMode"],
     answer: Awaited<ReturnType<TurnInput["requestUserInput"]>>,
+    toolInput = askInput,
   ) {
     const requests: UserInputRequest[] = [];
     const requestApproval = vi.fn<TurnInput["requestApproval"]>(async () => "allow");
     let result: unknown;
     const { fake, calls } = fakeQuery(async function* (params) {
       yield init();
-      result = await params.options?.canUseTool?.("AskUserQuestion", askInput, context());
+      result = await params.options?.canUseTool?.("AskUserQuestion", toolInput, context());
       yield resultSuccess();
     });
     const events = await collect(
@@ -568,6 +595,23 @@ describe("AskUserQuestion", () => {
     );
     return { requests, result, events, requestApproval, options: calls[0]?.options as Options };
   }
+
+  it("quotes option labels that contain comma-space in answers", async () => {
+    const ambiguous = {
+      questions: [
+        {
+          question: "Which?",
+          header: "Which",
+          options: [{ label: "a, b" }, { label: "only" }],
+        },
+      ],
+    };
+    const { result } = await ask("approve", { "Which?": ["a, b"] }, ambiguous as typeof askInput);
+    expect(result).toMatchObject({
+      behavior: "allow",
+      updatedInput: { answers: { "Which?": '"a, b"' } },
+    });
+  });
 
   it("maps the tool's questions and returns the answers as updatedInput", async () => {
     const { requests, result, requestApproval } = await ask("approve", {
@@ -711,15 +755,103 @@ describe("plan mode", () => {
       itemId: "t1:tu1",
       markdown: plan,
     });
-    expect(result).toEqual({ behavior: "deny", message: "The user will review the plan." });
+    expect(result).toEqual({
+      behavior: "deny",
+      message: "The user will review the plan.",
+      interrupt: true,
+    });
     expectOneDoneLast(events);
     expect(events.at(-1)).toMatchObject({ status: "completed" });
+  });
+
+  it("reads the plan from a tracked plan file when ExitPlanMode has no plan arg", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "age-plan-"));
+    const planPath = join(dir, ".claude", "plans", "task.md");
+    const filePlan = "## From file\n\nStep one";
+    await mkdir(join(dir, ".claude", "plans"), { recursive: true });
+    await writeFile(planPath, filePlan);
+
+    let result: unknown;
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      yield assistant("m1", [toolUse("tw", "Write", { file_path: planPath, content: filePlan })]);
+      yield assistant("m2", [toolUse("tu1", "ExitPlanMode", {})]);
+      result = await params.options?.canUseTool?.("ExitPlanMode", {}, context());
+      yield resultSuccess();
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(
+        turnInput({ interactionMode: "plan", cwd: dir }),
+      ),
+    );
+    expect(events.find((event) => event.type === "plan")).toEqual({
+      type: "plan",
+      itemId: "t1:tu1",
+      markdown: filePlan,
+    });
+    expect(result).toMatchObject({ behavior: "deny", interrupt: true });
+  });
+
+  it("reads a plan file from the default ~/.claude/plans location", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "age-plan-home-"));
+    const planPath = join(homedir(), ".claude", "plans", `age-test-${Date.now()}.md`);
+    const filePlan = "## Home plan";
+    await mkdir(join(homedir(), ".claude", "plans"), { recursive: true });
+    await writeFile(planPath, filePlan);
+
+    let result: unknown;
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      yield assistant("m1", [toolUse("tw", "Write", { file_path: planPath, content: filePlan })]);
+      yield assistant("m2", [toolUse("tu1", "ExitPlanMode", {})]);
+      result = await params.options?.canUseTool?.("ExitPlanMode", {}, context());
+      yield resultSuccess();
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(
+        turnInput({ interactionMode: "plan", cwd: dir }),
+      ),
+    );
+    expect(events.find((event) => event.type === "plan")).toMatchObject({ markdown: filePlan });
+    expect(result).toMatchObject({ behavior: "deny", interrupt: true });
   });
 
   it("emits no plan event when the plan text is missing", async () => {
     const { result, events } = await exitPlan({});
     expect(events.some((event) => event.type === "plan")).toBe(false);
     expect(result).toMatchObject({ behavior: "deny" });
+    expect((result as { message: string }).message).toMatch(/plan file/i);
+    expect((result as { message: string }).message).not.toMatch(/plan content as a parameter/i);
+  });
+
+  it("still completes when ExitPlanMode interrupts the turn", async () => {
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      yield assistant("m1", [toolUse("tu1", "ExitPlanMode", { plan: "## Plan\n\nok" })]);
+      await params.options?.canUseTool?.("ExitPlanMode", { plan: "## Plan\n\nok" }, context());
+      yield resultSuccess({ terminal_reason: "aborted_tools" });
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(turnInput({ interactionMode: "plan" })),
+    );
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "completed" });
+  });
+
+  it("flushes a side-channel plan event before done", async () => {
+    const sideChannelPlan = "## Side\n\nchannel";
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      yield assistant("m1", [toolUse("tu1", "ExitPlanMode", { plan: sideChannelPlan })]);
+      await params.options?.canUseTool?.("ExitPlanMode", { plan: sideChannelPlan }, context());
+      yield resultSuccess();
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(turnInput({ interactionMode: "plan" })),
+    );
+    const doneIndex = events.findIndex((event) => event.type === "done");
+    const planIndex = events.findIndex((event) => event.type === "plan");
+    expect(planIndex).toBeGreaterThan(-1);
+    expect(planIndex).toBeLessThan(doneIndex);
   });
 
   it("plan mode in full runtime still asks before running commands", async () => {

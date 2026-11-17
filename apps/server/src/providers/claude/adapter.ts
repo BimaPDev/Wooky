@@ -7,6 +7,7 @@ import {
   type Options,
   type PermissionMode,
   type PermissionResult,
+  type SDKMessage,
   type SDKRateLimitInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 import { resolveCommand } from "../../process/resolve-command.ts";
@@ -15,8 +16,8 @@ import { editPreview } from "./diff.ts";
 import {
   ASK_USER_QUESTION,
   EXIT_PLAN_MODE,
-  planMarkdown,
   questionRequest,
+  resolvePlanMarkdown,
   toolAnswers,
 } from "./interaction.ts";
 import { clip } from "./text.ts";
@@ -98,7 +99,13 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         yield { type: "done", status: "interrupted", error: null };
         return;
       }
-      const translator = createTranslator({ turnId: input.turnId, cwd: input.cwd });
+      const planProposed = { value: false };
+      const lastPlanWritePath = { value: null as string | null };
+      const translator = createTranslator({
+        turnId: input.turnId,
+        cwd: input.cwd,
+        planProposed,
+      });
       const abort = new AbortController();
       let settleAborted: (value: typeof ABORTED) => void = () => undefined;
       const aborted = new Promise<typeof ABORTED>((resolve) => {
@@ -113,6 +120,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
       const side: ProviderEvent[] = [];
       let wake: () => void = () => undefined;
       const emit = (event: ProviderEvent) => {
+        if (event.type === "plan") planProposed.value = true;
         side.push(event);
         wake();
       };
@@ -132,7 +140,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           ? { resumeSessionAt: input.resumeAt, forkSession: true }
           : {}),
         ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
-        ...permissionOptions(input, emit),
+        ...permissionOptions(input, emit, input.cwd, lastPlanWritePath),
         stderr: (data) => {
           stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
         },
@@ -160,15 +168,18 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           if (step.value.type === "rate_limit_event") {
             options.onRateLimit?.(step.value.rate_limit_info);
           }
+          trackPlanWrite(step.value, lastPlanWritePath);
           for (const event of translator.push(step.value)) {
             yield event;
             if (event.type === "done") finished = true;
           }
         }
+        for (const event of side.splice(0)) yield event;
         yield* translator.finish(
           input.signal.aborted ? { kind: "aborted" } : { kind: "ended", stderr: stderrTail },
         );
       } catch (error) {
+        for (const event of side.splice(0)) yield event;
         yield* translator.finish(
           input.signal.aborted
             ? { kind: "aborted" }
@@ -200,9 +211,11 @@ function buildPrompt(input: TurnInput): string {
 function permissionOptions(
   input: TurnInput,
   emit: (event: ProviderEvent) => void,
+  cwd: string,
+  lastPlanWritePath: { value: string | null },
 ): Partial<Options> {
   // Always installed: AskUserQuestion and ExitPlanMode need the callback in every mode.
-  const canUseTool = createPermissionHandler(input, emit);
+  const canUseTool = createPermissionHandler(input, emit, cwd, lastPlanWritePath);
   if (input.interactionMode === "plan") return { permissionMode: "plan", canUseTool };
   if (input.runtimeMode === "full") {
     return {
@@ -225,6 +238,8 @@ const INTERRUPTED: PermissionResult = {
 function createPermissionHandler(
   input: TurnInput,
   emit: (event: ProviderEvent) => void,
+  cwd: string,
+  lastPlanWritePath: { value: string | null },
 ): CanUseTool {
   return async (toolName, toolInput, context): Promise<PermissionResult> => {
     let onAbort: () => void = () => undefined;
@@ -238,7 +253,9 @@ function createPermissionHandler(
       if (toolName === ASK_USER_QUESTION) {
         return await answerQuestions(input, requestId, toolInput, aborted);
       }
-      if (toolName === EXIT_PLAN_MODE) return proposePlan(requestId, toolInput, emit);
+      if (toolName === EXIT_PLAN_MODE) {
+        return proposePlan(requestId, toolInput, emit, cwd, lastPlanWritePath.value);
+      }
       // Plan mode never skips the card, even in full: the agent must not change anything.
       if (input.runtimeMode === "full" && input.interactionMode !== "plan") {
         return { behavior: "allow", updatedInput: toolInput };
@@ -275,20 +292,40 @@ async function answerQuestions(
   };
 }
 
-function proposePlan(
+async function proposePlan(
   requestId: string,
   toolInput: ToolInput,
   emit: (event: ProviderEvent) => void,
-): PermissionResult {
-  const markdown = planMarkdown(toolInput);
+  cwd: string,
+  lastPlanWritePath: string | null,
+): Promise<PermissionResult> {
+  const markdown = await resolvePlanMarkdown(toolInput, lastPlanWritePath, cwd);
   if (!markdown) {
     return {
       behavior: "deny",
-      message: "Write the plan out in full, then call ExitPlanMode again.",
+      message: "Write the plan to your plan file, then call ExitPlanMode again.",
     };
   }
   emit({ type: "plan", itemId: requestId, markdown });
-  return { behavior: "deny", message: "The user will review the plan." };
+  return {
+    behavior: "deny",
+    message: "The user will review the plan.",
+    interrupt: true,
+  };
+}
+
+function trackPlanWrite(message: SDKMessage, lastPlanWritePath: { value: string | null }): void {
+  if (message.type !== "assistant" || message.parent_tool_use_id !== null) return;
+  for (const block of message.message.content) {
+    if (block.type !== "tool_use") continue;
+    if (block.name !== "Write" && block.name !== "Edit") continue;
+    const input =
+      typeof block.input === "object" && block.input !== null
+        ? (block.input as Record<string, unknown>)
+        : {};
+    const filePath = input.file_path;
+    if (typeof filePath === "string" && filePath !== "") lastPlanWritePath.value = filePath;
+  }
 }
 
 function approvalRequest(

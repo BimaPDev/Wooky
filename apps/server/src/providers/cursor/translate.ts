@@ -260,12 +260,10 @@ export class CursorTranslator {
     const errorText = isError && typeof event.result === "string" ? event.result : null;
 
     this.doneEmitted = true;
-    const requestId = typeof event.request_id === "string" ? event.request_id : "";
     out.push({
       type: "done",
       status: isError ? "failed" : "completed",
       error: errorText,
-      ...(requestId ? { nativeRef: requestId } : {}),
     });
     return out;
   }
