@@ -21,6 +21,7 @@ if (args.includes("--version")) {
   if (mode === "version-hang") {
     process.stdin.resume();
     setInterval(() => {}, 2 ** 31 - 1);
+    await new Promise(() => {}); // block: never fall through to the replay below
   } else {
     process.stdout.write("fake-cursor-agent 0.0.0-test\n");
     process.exit(0);
@@ -51,6 +52,7 @@ if (mode === "hang") {
   }
   process.stdin.resume();
   setInterval(() => {}, 2 ** 31 - 1);
+  await new Promise(() => {}); // block: never fall through to the replay below
 }
 
 if (mode === "crash") {
@@ -74,6 +76,7 @@ if (mode === "signal-exit") {
   process.stdout.write(`PID ${process.pid}\n`);
   process.stdin.resume();
   setInterval(() => {}, 2 ** 31 - 1);
+  await new Promise(() => {}); // block: never fall through to the replay below
 }
 
 const prompt = args[args.length - 1] ?? "";
