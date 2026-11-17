@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { createEffectRunner } from "./effects/runner.ts";
-import { createNoopGitService } from "./git/noop.ts";
+import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
 import type { DecideContext } from "./orchestrator/decide.ts";
 import { createDispatcher } from "./orchestrator/dispatcher.ts";
@@ -40,7 +40,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const store = openEventStore(options.home, ctx.now);
   const providers = createProviderRegistry(options.adapters ?? builtinAdapters());
-  const git = options.git ?? createNoopGitService();
+  const git = options.git ?? createGitService();
   const runner = createEffectRunner({ store, providers, git, newId: ctx.newId });
   runner.recover();
   const dispatcher = createDispatcher({ store, runner, ctx });
