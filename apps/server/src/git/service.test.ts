@@ -15,7 +15,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { createGitService, GitError } from "./service.ts";
+import { createGitService, GitError, LIST_FILES_CAP } from "./service.ts";
+import { createWorkspaceSearch } from "../workspace/search.ts";
 
 const execFileAsync = promisify(execFile);
 const git = createGitService();
@@ -602,5 +603,68 @@ describe("bounded run (fix 6)", () => {
     await chmod(bin, 0o755);
     const fake = createGitService({ gitBin: bin, maxStdoutBytes: 1024 });
     await expect(fake.captureCheckpoint(base, "refs/age/x/y")).rejects.toThrow(/exceeded cap/);
+  });
+});
+
+async function putFiles(root: string, files: Record<string, string>): Promise<void> {
+  for (const [path, body] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), body);
+  }
+}
+
+describe("listFiles", () => {
+  it("lists tracked and untracked files but not ignored ones", async () => {
+    const root = await makeRepo(false);
+    await putFiles(root, {
+      ".gitignore": "dist/\n",
+      "a.ts": "",
+      "src/b.ts": "",
+      "dist/out.js": "",
+    });
+    await raw(root, "add", "a.ts");
+    expect((await git.listFiles(root)).sort()).toEqual([".gitignore", "a.ts", "src/b.ts"]);
+  });
+
+  it("falls back to a bounded walk outside a repo", async () => {
+    const root = await mkdtemp(join(tmpdir(), "age-git-plain-"));
+    bases.push(root);
+    await putFiles(root, {
+      "x.txt": "",
+      "deep/y.txt": "",
+      "node_modules/z.js": "",
+      ".hidden/w.txt": "",
+    });
+    expect((await git.listFiles(root)).sort()).toEqual(["deep/y.txt", "x.txt"]);
+  });
+
+  it("caps the listing in a repo and in the fallback walk", async () => {
+    const files = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`f${i}.txt`, ""]));
+    const capped = createGitService({ listFilesCap: 10 });
+    const repo = await makeRepo(false);
+    await putFiles(repo, files);
+    expect(await capped.listFiles(repo)).toHaveLength(10);
+    const plain = await mkdtemp(join(tmpdir(), "age-git-plain-"));
+    bases.push(plain);
+    await putFiles(plain, files);
+    expect(await capped.listFiles(plain)).toHaveLength(10);
+    expect(LIST_FILES_CAP).toBe(50_000);
+  });
+
+  it("feeds workspace search with real repo files, skipping ignored ones", async () => {
+    const root = await makeRepo(false);
+    await putFiles(root, { ".gitignore": "build/\n", "src/main.ts": "", "build/x.js": "" });
+    const search = createWorkspaceSearch({
+      model: () =>
+        ({
+          projects: { p1: { id: "p1", root } },
+          threads: { t1: { id: "t1", projectId: "p1" } },
+        }) as never,
+      listFiles: (cwd) => git.listFiles(cwd),
+    });
+    expect(await search.search({ threadId: "t1", query: "main" })).toEqual([
+      { path: "src/main.ts", kind: "file" },
+    ]);
+    expect(await search.search({ threadId: "t1", query: "x.js" })).toEqual([]);
   });
 });

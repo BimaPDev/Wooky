@@ -9,6 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, readdir, rmdir, realpath } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -78,10 +79,12 @@ export function createGitService(options?: {
   gitBin?: string;
   timeoutMs?: number;
   maxStdoutBytes?: number;
+  listFilesCap?: number;
 }): GitService {
   const gitBin = options?.gitBin ?? "git";
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxStdoutBytes = options?.maxStdoutBytes ?? DEFAULT_STDOUT_CAP;
+  const listCap = options?.listFilesCap ?? LIST_FILES_CAP;
   const chains = new Map<string, Promise<void>>();
 
   function baseEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -432,8 +435,55 @@ export function createGitService(options?: {
     captureCheckpoint,
     restoreCheckpoint,
     diff,
-    listFiles: () => Promise.reject(new Error("Listing files is not available yet.")),
+    listFiles,
   };
+
+  async function listFiles(cwd: string): Promise<string[]> {
+    if (!(await isRepo(cwd))) return walkFiles(cwd, listCap);
+    const { stdout } = await run(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+      cwd,
+    });
+    const files = new Set<string>();
+    for (const entry of stdout.split("\0")) {
+      if (entry === "") continue;
+      files.add(entry);
+      if (files.size >= listCap) break;
+    }
+    return [...files];
+  }
+}
+
+export const LIST_FILES_CAP = 50_000;
+const WALK_MAX_DEPTH = 12;
+
+/** Bounded breadth-first walk for workspaces that are not git repos. */
+async function walkFiles(root: string, cap: number): Promise<string[]> {
+  const files: string[] = [];
+  let level = [""];
+  for (let depth = 0; depth <= WALK_MAX_DEPTH && level.length > 0; depth++) {
+    const next: string[] = [];
+    for (const rel of level) {
+      let entries: Dirent[];
+      try {
+        entries = await readdir(join(root, rel), { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      for (const entry of entries) {
+        const path = rel === "" ? entry.name : `${rel}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+          next.push(path);
+        } else {
+          files.push(path);
+          if (files.length >= cap) return files;
+        }
+      }
+    }
+    level = next;
+  }
+  return files;
 }
 
 interface NameStatusEntry {

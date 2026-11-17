@@ -1,15 +1,17 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { FileDiff, RpcResult } from "@age/contracts";
+import type { FileDiff, RpcParams, RpcResult } from "@age/contracts";
 import { ServiceError } from "./errors.ts";
 import type { GitService } from "./git/types.ts";
 import type { EventStore } from "./store/event-store.ts";
+import { createWorkspaceSearch } from "./workspace/search.ts";
 
 const PICKABLE_MAX = 50;
 
 export interface Queries {
   diff(threadId: string, turnId?: string): Promise<FileDiff[]>;
   pickable(query?: string): RpcResult<"fs.pickable">;
+  searchEntries(params: RpcParams<"fs.searchEntries">): Promise<RpcResult<"fs.searchEntries">>;
 }
 
 /** Read-only questions about the workspace that the read model alone cannot answer. */
@@ -19,7 +21,13 @@ export function createQueries(deps: {
   userHome: string;
 }): Queries {
   const { store, git, userHome } = deps;
+  const workspace = createWorkspaceSearch({
+    model: () => store.model,
+    listFiles: (cwd) => git.listFiles(cwd),
+  });
   return {
+    searchEntries: (params) => workspace.search(params),
+
     async diff(threadId, turnId) {
       const model = store.model;
       const thread = model.threads[threadId];

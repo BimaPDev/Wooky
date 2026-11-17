@@ -64,9 +64,7 @@ function createHandlers({
     "providers.list": () => providers.list(),
     "git.diff": ({ threadId, turnId }) => queries.diff(threadId, turnId),
     "fs.pickable": ({ query }) => queries.pickable(query),
-    "fs.searchEntries": () => {
-      throw new ServiceError("unavailable", "File search is not available yet.");
-    },
+    "fs.searchEntries": (params) => queries.searchEntries(params),
     "settings.get": () => themes.getSettings(),
     "settings.put": ({ settings }) => themes.putSettings(settings),
     "themes.list": () => themes.list(),
