@@ -567,8 +567,6 @@ function respond(method: RpcMethod, params: unknown): unknown {
       return fixtureProviders;
     case "git.diff":
       return diffs[(params as RpcParams<"git.diff">).threadId] ?? [];
-    case "fs.searchEntries":
-      throw new RpcCallError("unavailable", "File search is not available yet.");
     case "fs.pickable":
       return [
         { path: "/Users/demo/code/orders-api", isGitRepo: true },
@@ -693,7 +691,13 @@ function respond(method: RpcMethod, params: unknown): unknown {
 
 export function createFixtureBackend(): Backend {
   return {
-    call: <M extends RpcMethod>(method: M, params: RpcParams<M>) =>
-      Promise.resolve(respond(method, params) as RpcResult<M>),
+    call: <M extends RpcMethod>(method: M, params: RpcParams<M>) => {
+      if (method === "fs.searchEntries") {
+        return Promise.reject(
+          new RpcCallError("unavailable", "File search is not available yet."),
+        ) as Promise<RpcResult<M>>;
+      }
+      return Promise.resolve(respond(method, params) as RpcResult<M>);
+    },
   };
 }

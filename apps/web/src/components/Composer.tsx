@@ -1,6 +1,14 @@
 import type { InteractionMode } from "@age/contracts";
 import { useId, useRef, useState } from "react";
-import { insertMentionPath, type SlashCommandId } from "../lib/composer-trigger.ts";
+import {
+  composerMenuIdentity,
+  composerMenuVisible,
+  composerTrigger,
+  insertMentionPath,
+  PLAN_MODE_UNAVAILABLE,
+  slashPlanModeAllowed,
+  type SlashCommandId,
+} from "../lib/composer-trigger.ts";
 import { configureThread, interruptTurn, openDialog, startTurn } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { ComposerMenuPanel, useComposerMenu } from "./ComposerMenu.tsx";
@@ -17,6 +25,7 @@ export function Composer({ threadId }: { threadId: string }) {
   const [sending, setSending] = useState(false);
   const [caret, setCaret] = useState(0);
   const [menuIndex, setMenuIndex] = useState(0);
+  const [menuDismissedFor, setMenuDismissedFor] = useState<string | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
@@ -70,10 +79,17 @@ export function Composer({ threadId }: { threadId: string }) {
   const applySlash = (command: SlashCommandId) => {
     setDraft("");
     setCaret(0);
+    setMenuDismissedFor(null);
     switch (command) {
-      case "plan":
+      case "plan": {
+        const allowed = slashPlanModeAllowed(planModeSupported);
+        if (!allowed.allowed) {
+          useStore.setState({ notice: allowed.reason });
+          return;
+        }
         void configureThread(threadId, { interactionMode: "plan" });
         break;
+      }
       case "default":
         void configureThread(threadId, { interactionMode: "default" });
         break;
@@ -87,6 +103,7 @@ export function Composer({ threadId }: { threadId: string }) {
   };
 
   const menuItems = trigger?.kind === "slash" ? slashItems : mentionItems;
+  const panelOpen = menuOpen && trigger !== null && composerMenuVisible(trigger, menuDismissedFor);
 
   const acceptMenu = () => {
     if (!trigger || menuItems.length === 0) return;
@@ -127,7 +144,7 @@ export function Composer({ threadId }: { threadId: string }) {
           else void send();
         }}
       >
-        {menuOpen && trigger ? (
+        {panelOpen && trigger ? (
           <ComposerMenuPanel
             trigger={trigger}
             slashItems={slashItems}
@@ -151,8 +168,8 @@ export function Composer({ threadId }: { threadId: string }) {
             rows={2}
             value={draft}
             aria-label="Message"
-            aria-controls={menuOpen ? listId : undefined}
-            aria-expanded={menuOpen}
+            aria-controls={panelOpen ? listId : undefined}
+            aria-expanded={panelOpen}
             placeholder={
               running
                 ? followUp === "queue"
@@ -163,15 +180,21 @@ export function Composer({ threadId }: { threadId: string }) {
                   : "Ask anything, @tag files/folders, or use / to show available commands"
             }
             onChange={(event) => {
-              setDraft(event.target.value);
-              syncCaret(event.currentTarget);
+              const el = event.currentTarget;
+              const nextCaret = el.selectionStart ?? 0;
+              setDraft(el.value);
+              syncCaret(el);
               setMenuIndex(0);
-              fitHeight(event.currentTarget);
+              if (!composerTrigger(el.value, nextCaret)) setMenuDismissedFor(null);
+              fitHeight(el);
             }}
             onSelect={(event) => syncCaret(event.currentTarget)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                return;
+              }
               if (
-                menuOpen &&
+                panelOpen &&
                 menuItems.length > 0 &&
                 (event.key === "ArrowDown" ||
                   event.key === "ArrowUp" ||
@@ -194,13 +217,14 @@ export function Composer({ threadId }: { threadId: string }) {
                   return;
                 }
               }
-              if (event.key === "Escape" && menuOpen) {
+              if (event.key === "Escape" && panelOpen && trigger) {
                 event.preventDefault();
+                setMenuDismissedFor(composerMenuIdentity(trigger));
                 setMenuIndex(0);
                 return;
               }
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                if (menuOpen) return;
+                if (panelOpen) return;
                 event.preventDefault();
                 if (queueSend || !busy) void send();
               }
@@ -277,9 +301,7 @@ function PlanModeControl({
   supported: boolean;
   onMode: (mode: InteractionMode) => void;
 }) {
-  const title = supported
-    ? "Switch between default and plan mode"
-    : "This provider does not support plan mode";
+  const title = supported ? "Switch between default and plan mode" : PLAN_MODE_UNAVAILABLE;
   return (
     <div className="plan-mode-control" title={supported ? undefined : title}>
       <button

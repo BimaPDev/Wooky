@@ -21,6 +21,8 @@ export const PlanCard = memo(function PlanCard({
   threadId: string;
 }) {
   const [busy, setBusy] = useState(false);
+  const threadStatus = useStore((state) => state.model.threads[threadId]?.status);
+  const threadBusy = threadStatus === "running" || threadStatus === "waiting";
   const isLatest = useStore((state) => latestPlan(state.model, threadId)?.id === item.id);
   const collapsed = item.status === "superseded";
   const [open, setOpen] = useState(!collapsed);
@@ -39,12 +41,15 @@ export const PlanCard = memo(function PlanCard({
   }
 
   const implement = async () => {
-    if (busy) return;
+    if (busy || threadBusy) return;
     setBusy(true);
-    await configureThread(threadId, { interactionMode: "default" });
-    const ack = await startTurn(threadId, "Implement the plan.");
+    const configured = await configureThread(threadId, { interactionMode: "default" });
+    if (!configured?.accepted) {
+      setBusy(false);
+      return;
+    }
+    await startTurn(threadId, "Implement the plan.");
     setBusy(false);
-    if (!ack) setBusy(false);
   };
 
   return (
@@ -66,7 +71,10 @@ export const PlanCard = memo(function PlanCard({
           <button
             type="button"
             className="button primary"
-            disabled={busy}
+            disabled={busy || threadBusy}
+            title={
+              threadBusy ? "Wait until the agent is idle before implementing the plan" : undefined
+            }
             onClick={() => void implement()}
           >
             Implement

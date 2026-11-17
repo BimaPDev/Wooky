@@ -90,6 +90,7 @@ function OpenQuestion({ item, threadId }: { item: Item; threadId: string }) {
           type="button"
           className="button primary"
           disabled={!complete || busy}
+          title={!complete ? "Answer every question before submitting" : undefined}
           onClick={() => void submit()}
         >
           Submit

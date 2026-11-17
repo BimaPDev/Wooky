@@ -49,3 +49,23 @@ export function insertMentionPath(
   const next = text.slice(0, trigger.replaceStart) + mention + text.slice(trigger.replaceEnd);
   return { text: next, caret: trigger.replaceStart + mention.length };
 }
+
+/** Stable key for the active trigger span; used to dismiss and restore the composer menu. */
+export function composerMenuIdentity(trigger: ComposerTrigger): string {
+  return `${trigger.kind}:${trigger.replaceStart}:${trigger.query}`;
+}
+
+export function composerMenuVisible(
+  trigger: ComposerTrigger,
+  dismissedFor: string | null,
+): boolean {
+  return dismissedFor !== composerMenuIdentity(trigger);
+}
+
+export const PLAN_MODE_UNAVAILABLE = "This provider does not support plan mode";
+
+export function slashPlanModeAllowed(planModeSupported: boolean) {
+  return planModeSupported
+    ? ({ allowed: true } as const)
+    : ({ allowed: false, reason: PLAN_MODE_UNAVAILABLE } as const);
+}

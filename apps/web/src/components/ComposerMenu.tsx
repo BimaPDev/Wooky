@@ -11,27 +11,47 @@ import { backend } from "../state/backend.ts";
 export function useComposerMenu(threadId: string, text: string, caret: number) {
   const trigger = composerTrigger(text, caret);
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
+  const [entriesQuery, setEntriesQuery] = useState<string | null>(null);
   const [searchUnavailable, setSearchUnavailable] = useState(false);
+  const [unavailableFor, setUnavailableFor] = useState<string | null>(null);
   const request = useRef(0);
   const mentionQuery = trigger?.kind === "mention" ? trigger.query : null;
+  const visibleEntries = mentionQuery === entriesQuery ? entries : [];
 
   // sync: debounced fs.searchEntries RPC for @mentions
   useEffect(() => {
-    if (mentionQuery === null) return;
+    if (mentionQuery === null) {
+      request.current += 1;
+      return;
+    }
     const id = ++request.current;
     const timer = setTimeout(() => {
-      void backend()
-        .call("fs.searchEntries", { threadId, query: mentionQuery, limit: 50 })
-        .then((result) => {
-          if (id !== request.current) return;
-          setSearchUnavailable(false);
-          setEntries(result);
-        })
-        .catch((error) => {
-          if (id !== request.current) return;
-          setEntries([]);
-          setSearchUnavailable(error instanceof RpcCallError && error.code === "unavailable");
-        });
+      try {
+        void backend()
+          .call("fs.searchEntries", { threadId, query: mentionQuery, limit: 50 })
+          .then((result) => {
+            if (id !== request.current) return;
+            setEntriesQuery(mentionQuery);
+            setUnavailableFor(null);
+            setSearchUnavailable(false);
+            setEntries(result);
+          })
+          .catch((error) => {
+            if (id !== request.current) return;
+            setEntriesQuery(mentionQuery);
+            setEntries([]);
+            const unavailable = error instanceof RpcCallError && error.code === "unavailable";
+            setSearchUnavailable(unavailable);
+            setUnavailableFor(unavailable ? mentionQuery : null);
+          });
+      } catch (error) {
+        if (id !== request.current) return;
+        setEntriesQuery(mentionQuery);
+        setEntries([]);
+        const unavailable = error instanceof RpcCallError && error.code === "unavailable";
+        setSearchUnavailable(unavailable);
+        setUnavailableFor(unavailable ? mentionQuery : null);
+      }
     }, 80);
     return () => clearTimeout(timer);
   }, [threadId, mentionQuery]);
@@ -47,7 +67,7 @@ export function useComposerMenu(threadId: string, text: string, caret: number) {
 
   const mentionItems =
     trigger?.kind === "mention"
-      ? entries.map((entry) => ({
+      ? visibleEntries.map((entry) => ({
           id: entry.path,
           label: entry.path,
           detail: entry.kind === "dir" ? "folder" : "file",
@@ -59,7 +79,8 @@ export function useComposerMenu(threadId: string, text: string, caret: number) {
     menuOpen: trigger !== null && (trigger.kind === "slash" ? slashItems.length > 0 : true),
     slashItems,
     mentionItems,
-    searchUnavailable: trigger?.kind === "mention" && searchUnavailable,
+    searchUnavailable:
+      trigger?.kind === "mention" && unavailableFor === mentionQuery && searchUnavailable,
   };
 }
 
