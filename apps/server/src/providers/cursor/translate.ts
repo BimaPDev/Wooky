@@ -1,3 +1,4 @@
+import { workspaceRelative } from "../paths.ts";
 import type { ProviderEvent, ToolKind, Usage } from "@age/contracts";
 
 const OUTPUT_PREVIEW_MAX = 4 * 1024;
@@ -240,15 +241,6 @@ function sanitizeCallId(callId: string): string {
   return callId.replace(/\s+/g, "_").slice(0, 120);
 }
 
-function pathRelativeToCwd(path: string, cwd: string): string {
-  const normalizedCwd = cwd.endsWith("/") ? cwd.slice(0, -1) : cwd;
-  if (path === normalizedCwd) return path.split("/").pop() ?? path;
-  const prefix = `${normalizedCwd}/`;
-  if (path.startsWith(prefix)) return path.slice(prefix.length);
-  const parts = path.split("/");
-  return parts[parts.length - 1] ?? path;
-}
-
 function classifyToolCall(
   toolCall: Record<string, unknown>,
   cwd: string,
@@ -264,7 +256,7 @@ function classifyToolCall(
   const args = inner?.args as Record<string, unknown> | undefined;
 
   if (name === "readToolCall") {
-    const path = typeof args?.path === "string" ? pathRelativeToCwd(args.path, cwd) : "?";
+    const path = typeof args?.path === "string" ? workspaceRelative(args.path, cwd) : "?";
     return { kind: "read", name, title: `Read ${path}` };
   }
   if (name === "shellToolCall") {
@@ -283,7 +275,7 @@ function classifyToolCall(
         : typeof args?.file_path === "string"
           ? args.file_path
           : "?";
-    const path = raw === "?" ? raw : pathRelativeToCwd(raw, cwd);
+    const path = raw === "?" ? raw : workspaceRelative(raw, cwd);
     return { kind: "edit", name, title: `Edit ${path}`, files: [path] };
   }
   if (name === "grepToolCall" || name === "searchToolCall" || name === "globToolCall") {

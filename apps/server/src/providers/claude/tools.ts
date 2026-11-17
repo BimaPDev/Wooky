@@ -1,4 +1,4 @@
-import { isAbsolute, relative } from "node:path";
+import { workspaceRelative as relPath } from "../paths.ts";
 import type { ToolKind } from "@age/contracts";
 import { clip, firstLine } from "./text.ts";
 
@@ -30,12 +30,7 @@ export function str(input: ToolInput, key: string): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-/** Path relative to `cwd` when it lives inside it, otherwise unchanged. */
-export function relPath(path: string, cwd: string): string {
-  if (!cwd || !isAbsolute(path)) return path;
-  const rel = relative(cwd, path);
-  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : path;
-}
+export { relPath };
 
 export function targetPath(input: ToolInput): string | undefined {
   return str(input, "file_path") ?? str(input, "notebook_path") ?? str(input, "path");
