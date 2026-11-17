@@ -13,6 +13,10 @@ export type ProviderKind = z.infer<typeof ProviderKind>;
 export const RuntimeMode = z.enum(["approve", "auto-edits", "full"]);
 export type RuntimeMode = z.infer<typeof RuntimeMode>;
 
+/** default: the agent works. plan: the agent proposes a plan and changes nothing. */
+export const InteractionMode = z.enum(["default", "plan"]);
+export type InteractionMode = z.infer<typeof InteractionMode>;
+
 export const Id = z.string().min(1).max(128);
 export const IsoTime = z.string();
 
@@ -30,6 +34,14 @@ export const Worktree = z.object({
 });
 export type Worktree = z.infer<typeof Worktree>;
 
+/** A follow-up typed while a turn runs; it starts when the thread is free. */
+export const QueuedPrompt = z.object({
+  id: Id,
+  prompt: z.string().min(1),
+  queuedAt: IsoTime,
+});
+export type QueuedPrompt = z.infer<typeof QueuedPrompt>;
+
 export const ThreadStatus = z.enum(["idle", "running", "waiting", "error"]);
 export type ThreadStatus = z.infer<typeof ThreadStatus>;
 
@@ -45,6 +57,10 @@ export const Thread = z.object({
   isolate: z.boolean().optional(),
   /** Native session id reported by the provider, used to resume. Reset on provider switch. */
   providerSessionId: z.string().nullable(),
+  /** Absent means "default". */
+  interactionMode: InteractionMode.optional(),
+  /** Follow-ups waiting for the running turn, oldest first. */
+  queue: z.array(QueuedPrompt).default([]),
   status: ThreadStatus,
   createdAt: IsoTime,
   updatedAt: IsoTime,
@@ -55,6 +71,22 @@ export const ToolKind = z.enum(["read", "edit", "command", "search", "web", "tas
 export type ToolKind = z.infer<typeof ToolKind>;
 
 export const ItemStatus = z.enum(["running", "done", "failed"]);
+
+/** A multiple-choice question the agent asks the user. */
+export const UserQuestion = z.object({
+  id: z.string(),
+  header: z.string().optional(),
+  question: z.string(),
+  options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
+  multiSelect: z.boolean(),
+  /** The user may type an answer of their own. */
+  allowCustom: z.boolean(),
+});
+export type UserQuestion = z.infer<typeof UserQuestion>;
+
+/** Chosen labels (or free text) per question id. */
+export const QuestionAnswers = z.record(z.string(), z.array(z.string()));
+export type QuestionAnswers = z.infer<typeof QuestionAnswers>;
 
 /** One normalized step of an agent turn. Every provider's output maps onto these. */
 export const TimelineItem = z.discriminatedUnion("kind", [
@@ -92,6 +124,21 @@ export const TimelineItem = z.discriminatedUnion("kind", [
     /** Unified diff preview for edit approvals. */
     diff: z.string().optional(),
     decision: z.enum(["allow", "deny"]).nullable(),
+  }),
+  z.object({
+    kind: z.literal("question"),
+    id: Id,
+    requestId: Id,
+    questions: z.array(UserQuestion),
+    /** null while open, and when dismissed. */
+    answers: QuestionAnswers.nullable(),
+    dismissed: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("plan"),
+    id: Id,
+    markdown: z.string(),
+    status: z.enum(["proposed", "accepted", "superseded"]),
   }),
   z.object({
     kind: z.literal("error"),
@@ -133,6 +180,9 @@ export const Turn = z.object({
   changedFiles: z.array(z.string()),
   usage: Usage.nullable(),
   error: z.string().nullable(),
+  /** Provider id of the turn's last native message; where a rewound session resumes. */
+  nativeRef: z.string().nullable().optional(),
+  interactionMode: InteractionMode.optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 
@@ -147,6 +197,17 @@ export const FileDiff = z.object({
 });
 export type FileDiff = z.infer<typeof FileDiff>;
 
+/** What an adapter supports. A missing flag means unsupported. */
+export const ProviderCapabilities = z
+  .object({
+    rewind: z.boolean(),
+    questions: z.boolean(),
+    planMode: z.boolean(),
+    queue: z.boolean(),
+  })
+  .partial();
+export type ProviderCapabilities = z.infer<typeof ProviderCapabilities>;
+
 export const ProviderStatus = z.object({
   kind: ProviderKind,
   label: z.string(),
@@ -157,5 +218,6 @@ export const ProviderStatus = z.object({
   models: z.array(z.object({ id: z.string(), label: z.string() })),
   /** Why the provider is unavailable, in one plain sentence. */
   problem: z.string().nullable(),
+  capabilities: ProviderCapabilities.optional(),
 });
 export type ProviderStatus = z.infer<typeof ProviderStatus>;

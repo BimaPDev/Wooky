@@ -16,4 +16,6 @@ export interface GitService {
   restoreCheckpoint(cwd: string, ref: string): Promise<void>;
   /** Diff between two refs, or between a ref and the live working tree when `to` is null. */
   diff(cwd: string, from: string, to: string | null): Promise<FileDiff[]>;
+  /** Tracked and untracked files under cwd, relative, respecting .gitignore. */
+  listFiles(cwd: string): Promise<string[]>;
 }

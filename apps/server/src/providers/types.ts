@@ -1,9 +1,12 @@
 import type {
   ApprovalRequest,
+  InteractionMode,
   ProviderEvent,
   ProviderKind,
   ProviderStatus,
+  QuestionAnswers,
   RuntimeMode,
+  UserInputRequest,
 } from "@age/contracts";
 
 /**
@@ -27,11 +30,25 @@ export interface TurnInput {
   runtimeMode: RuntimeMode;
   /** Native session to resume, if the thread has one for this provider. */
   resumeSessionId: string | null;
+  /** Native message to resume the session at (the last kept turn's nativeRef), or the end. */
+  resumeAt: string | null;
+  interactionMode: InteractionMode;
   /** Prior conversation as text when the thread was handed off from another provider. */
   handoffContext: string | null;
   signal: AbortSignal;
   /** Resolve an approval card. Only called when runtimeMode requires it. */
   requestApproval: (request: ApprovalRequest) => Promise<"allow" | "deny">;
+  /** Ask the user structured questions. Resolves to answers per question id, or null if dismissed. */
+  requestUserInput: (request: UserInputRequest) => Promise<QuestionAnswers | null>;
+}
+
+export interface RewindInput {
+  threadId: string;
+  /** The thread's current native session. */
+  sessionId: string;
+  /** Last native message to keep; null drops every turn. */
+  keepNativeRef: string | null;
+  cwd: string;
 }
 
 export interface ProviderAdapter {
@@ -39,4 +56,9 @@ export interface ProviderAdapter {
   /** Cheap availability check. Must not start a model turn or spend quota. */
   probe(): Promise<ProviderStatus>;
   runTurn(input: TurnInput): AsyncIterable<ProviderEvent>;
+  /**
+   * Cut the native conversation back after a revert. Returns the session the next turn
+   * resumes, or null to start fresh. Adapters without it get the handoff transcript instead.
+   */
+  rewind?(input: RewindInput): Promise<{ sessionId: string | null }>;
 }

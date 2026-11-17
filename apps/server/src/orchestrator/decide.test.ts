@@ -37,6 +37,7 @@ function thread(fields: Partial<Thread> = {}): Thread {
     runtimeMode: "approve",
     worktree: null,
     providerSessionId: null,
+    queue: [],
     status: "idle",
     createdAt: at,
     updatedAt: at,

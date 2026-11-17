@@ -236,6 +236,8 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         model: turn.model,
         runtimeMode: thread.runtimeMode,
         resumeSessionId: thread.providerSessionId,
+        resumeAt: null,
+        interactionMode: thread.interactionMode ?? "default",
         handoffContext,
         signal,
         requestApproval: async (raw) => {
@@ -276,6 +278,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           ]);
           return answer.finally(() => approvals.delete(key));
         },
+        requestUserInput: async () => null,
       };
 
       let done: Extract<ProviderEvent, { type: "done" }> | null = null;
@@ -310,6 +313,19 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         else if (event.type === "item")
           append([{ type: "turn.itemUpserted", ...ids, item: event.item }]);
         else if (event.type === "usage") usage = event.usage;
+        else if (event.type === "plan")
+          append([
+            {
+              type: "turn.itemUpserted",
+              ...ids,
+              item: {
+                kind: "plan",
+                id: event.itemId,
+                markdown: event.markdown,
+                status: "proposed",
+              },
+            },
+          ]);
         else {
           done = event;
           break;

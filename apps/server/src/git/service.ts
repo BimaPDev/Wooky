@@ -432,6 +432,7 @@ export function createGitService(options?: {
     captureCheckpoint,
     restoreCheckpoint,
     diff,
+    listFiles: () => Promise.reject(new Error("Listing files is not available yet.")),
   };
 }
 

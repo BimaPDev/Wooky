@@ -96,6 +96,10 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
         [{ kind: "approval.resolve", ...ids, decision: command.decision }],
       );
     }
+    case "question.respond":
+    case "queue.remove":
+    case "queue.promote":
+      return reject("bad_request", `${command.type} is not supported yet.`);
     case "turn.revert": {
       const thread = model.threads[command.threadId];
       if (!thread) return notFound("thread", command.threadId);
@@ -189,6 +193,7 @@ function createThread(
           worktree: null,
           ...(command.isolate ? { isolate: true } : {}),
           providerSessionId: null,
+          queue: [],
           status: "idle",
           createdAt: now,
           updatedAt: now,

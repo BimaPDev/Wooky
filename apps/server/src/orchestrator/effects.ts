@@ -1,4 +1,4 @@
-import type { Worktree } from "@age/contracts";
+import type { QuestionAnswers, Worktree } from "@age/contracts";
 
 /** Work the orchestrator asks for. Stored with the events that caused it, run by the effect runner. */
 export type Effect =
@@ -13,7 +13,16 @@ export type Effect =
       requestId: string;
       decision: "allow" | "deny";
     }
-  | { kind: "checkpoint.restore"; threadId: string; turnId: string; cwd: string; ref: string };
+  | {
+      kind: "question.resolve";
+      threadId: string;
+      turnId: string;
+      requestId: string;
+      answers: QuestionAnswers | null;
+    }
+  | { kind: "checkpoint.restore"; threadId: string; turnId: string; cwd: string; ref: string }
+  /** Rewind the native session after reverting turnId; keepNativeRef is the last kept turn's. */
+  | { kind: "session.rewind"; threadId: string; turnId: string; keepNativeRef: string | null };
 
 export type StoredEffect = Effect & { id: number };
 

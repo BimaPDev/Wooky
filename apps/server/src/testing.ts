@@ -66,6 +66,7 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
     async restoreCheckpoint(_cwd, ref) {
       calls.push(`restore ${ref}`);
     },
+    listFiles: async () => [],
     async diff(_cwd, from, to): Promise<FileDiff[]> {
       calls.push(`diff ${from} ${to}`);
       return (options.changed ?? ["AGE_DEMO.md"]).map((path) => ({

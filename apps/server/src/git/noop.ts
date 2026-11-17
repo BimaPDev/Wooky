@@ -11,5 +11,6 @@ export function createNoopGitService(): GitService {
     captureCheckpoint: unavailable("capture checkpoint"),
     restoreCheckpoint: unavailable("restore checkpoint"),
     diff: unavailable("diff"),
+    listFiles: unavailable("list files"),
   };
 }

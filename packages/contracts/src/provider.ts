@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Id, TimelineItem, ToolKind, Usage } from "./model.ts";
+import { Id, TimelineItem, ToolKind, Usage, UserQuestion } from "./model.ts";
 
 /**
  * What a provider adapter emits while running one turn. Adapters translate their
@@ -14,11 +14,15 @@ export const ProviderEvent = z.discriminatedUnion("type", [
   /** Streamed text for an existing message/reasoning item. */
   z.object({ type: z.literal("delta"), itemId: Id, text: z.string() }),
   z.object({ type: z.literal("usage"), usage: Usage }),
+  /** A proposed plan (plan mode). The runner records it as a `plan` item with status proposed. */
+  z.object({ type: z.literal("plan"), itemId: Id, markdown: z.string().min(1) }),
   /** Terminal event. Exactly one per turn, always last. */
   z.object({
     type: z.literal("done"),
     status: z.enum(["completed", "interrupted", "failed"]),
     error: z.string().nullable(),
+    /** Provider id of the turn's last native message, so a revert can rewind to it. */
+    nativeRef: z.string().optional(),
   }),
 ]);
 export type ProviderEvent = z.infer<typeof ProviderEvent>;
@@ -32,3 +36,10 @@ export const ApprovalRequest = z.object({
   diff: z.string().optional(),
 });
 export type ApprovalRequest = z.infer<typeof ApprovalRequest>;
+
+/** Asked by an adapter when the agent poses structured questions to the user. */
+export const UserInputRequest = z.object({
+  requestId: Id,
+  questions: z.array(UserQuestion).min(1),
+});
+export type UserInputRequest = z.infer<typeof UserInputRequest>;
