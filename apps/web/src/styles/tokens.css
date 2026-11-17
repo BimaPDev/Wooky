@@ -33,6 +33,28 @@
   --radius-xl: 14px;
   --appearance-contrast: 100%;
   --glass-opacity: 80%;
+
+  /* Project monograms and usage chart series: identity colours, the same in every theme. */
+  --monogram-1: #9ca3af;
+  --monogram-2: #f87171;
+  --monogram-3: #fb923c;
+  --monogram-4: #fbbf24;
+  --monogram-5: #facc15;
+  --monogram-6: #a3e635;
+  --monogram-7: #4ade80;
+  --monogram-8: #34d399;
+  --monogram-9: #2dd4bf;
+  --monogram-10: #22d3ee;
+  --monogram-11: #38bdf8;
+  --monogram-12: #60a5fa;
+  --monogram-13: #818cf8;
+  --monogram-14: #a78bfa;
+  --monogram-15: #c084fc;
+  --monogram-16: #e879f9;
+  --monogram-17: #f472b6;
+  --monogram-18: #fb7185;
+  --usage-claude: #d97757;
+  --usage-cursor: #8b8b8b;
 }
 
 :root[data-chat-width="wide"] {

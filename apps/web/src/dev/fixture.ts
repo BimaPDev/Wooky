@@ -1,3 +1,4 @@
+// age-allow-file color: dev fixture themes are user data stored as hex, like the server sends them.
 import {
   DeviceSettings,
   type AppearanceTheme,

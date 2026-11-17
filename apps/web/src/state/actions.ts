@@ -51,8 +51,6 @@ export const toggleSidebar = () =>
 export const toggleTerminal = () =>
   useStore.setState((state) => ({ terminalOpen: !state.terminalOpen }));
 
-export const openTerminal = () => useStore.setState({ terminalOpen: true });
-
 /** Queue a line for the docked terminal (used by Settings → Providers Sign in). */
 export const runInTerminal = (line: string) =>
   useStore.setState({ terminalOpen: true, pendingTerminalLine: line, settingsOpen: false });

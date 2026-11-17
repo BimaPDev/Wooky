@@ -1,25 +1,6 @@
 import type { CSSProperties } from "react";
 
-const COLORS = [
-  "#9ca3af",
-  "#f87171",
-  "#fb923c",
-  "#fbbf24",
-  "#facc15",
-  "#a3e635",
-  "#4ade80",
-  "#34d399",
-  "#2dd4bf",
-  "#22d3ee",
-  "#38bdf8",
-  "#60a5fa",
-  "#818cf8",
-  "#a78bfa",
-  "#c084fc",
-  "#e879f9",
-  "#f472b6",
-  "#fb7185",
-] as const;
+const MONOGRAM_COLORS = 18;
 
 /** T3-style letters: first glyph + last glyph of the first word (or next word). */
 export function projectMonogramText(name: string): string {
@@ -39,19 +20,22 @@ export function projectMonogramText(name: string): string {
   return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
 }
 
-export function projectMonogramColor(name: string): string {
+/** Name of the tokens.css variable (`--monogram-1`..`--monogram-18`) for this project. */
+function projectMonogramVar(name: string): string {
   const seed = name.normalize("NFKC").trim().toLocaleLowerCase("en-US") || "project";
   let index = 0;
   for (const glyph of seed) {
-    index = (index * 31 + (glyph.codePointAt(0) ?? 0)) % COLORS.length;
+    index = (index * 31 + (glyph.codePointAt(0) ?? 0)) % MONOGRAM_COLORS;
   }
-  return COLORS[index] ?? COLORS[0];
+  return `--monogram-${index + 1}`;
 }
 
 /** PNG data URL so Electron `setIcon` and the Windows titlebar can use it. */
 export function projectMonogramIconDataUrl(name: string): string {
   const text = projectMonogramText(name);
-  const color = projectMonogramColor(name);
+  const color = getComputedStyle(document.documentElement)
+    .getPropertyValue(projectMonogramVar(name))
+    .trim();
   const size = 64;
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -60,32 +44,16 @@ export function projectMonogramIconDataUrl(name: string): string {
   if (!ctx) return "";
   const radius = size * 0.25;
   ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = withAlpha(color, 0.22);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.22;
   roundRect(ctx, 0, 0, size, size, radius);
   ctx.fill();
-  ctx.fillStyle = color;
+  ctx.globalAlpha = 1;
   ctx.font = `700 ${Math.round(size * 0.42)}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(text, size / 2, size / 2 + size * 0.03);
   return canvas.toDataURL("image/png");
-}
-
-function withAlpha(hex: string, alpha: number): string {
-  const raw = hex.replace("#", "");
-  const n = Number.parseInt(
-    raw.length === 3
-      ? raw
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : raw,
-    16,
-  );
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 function roundRect(
@@ -112,9 +80,8 @@ export function ProjectMonogram({
   name: string;
   className?: string;
 }) {
-  const color = projectMonogramColor(name);
   const style = {
-    "--project-monogram": color,
+    "--project-monogram": `var(${projectMonogramVar(name)})`,
   } as CSSProperties;
   return (
     <span className={className} style={style} aria-hidden="true">

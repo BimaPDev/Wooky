@@ -77,6 +77,8 @@ for (const file of files) {
   const text = readFileSync(file, "utf8");
   const lines = text.split("\n");
   const isTest = /\.test\.tsx?$/.test(file);
+  // File-level escape hatch, for the colour rule only: `// age-allow-file color: <reason>` on line 1.
+  const allowFileColor = /\/\/\s*age-allow-file color:\s*\S/.test(lines[0] ?? "");
 
   for (const rule of rules) {
     if (!rule.applies(rel)) continue;
@@ -149,7 +151,8 @@ for (const file of files) {
     if (
       rel.startsWith(`apps${sep}web${sep}src${sep}`) &&
       /["'`][^"'`\n]*(#[0-9a-fA-F]{3,8}\b|rgba?\()/.test(content) &&
-      !allow("color")
+      !allow("color") &&
+      !allowFileColor
     ) {
       report(file, line, "tokens-only", "use a CSS variable from tokens.css, not a literal colour");
     }

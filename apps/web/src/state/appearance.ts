@@ -2,6 +2,7 @@ import type { AppearanceTheme, DeviceSettings, ThemeColorRoles } from "@age/cont
 import { backend } from "./backend.ts";
 import { useStore } from "./store.ts";
 import { setTheme } from "./theme.ts";
+import { BASE_PALETTES as BASE, WHITE } from "./theme-data.ts";
 
 const STYLE_ID = "age-appearance-theme";
 
@@ -38,70 +39,6 @@ export const ROLE_TO_VAR: Record<ColorRole, string> = {
   providerCursor: "--provider-cursor",
   providerCodex: "--provider-codex",
   providerDemo: "--provider-demo",
-};
-
-/** Mirrors tokens.css so contrast and partial themes have a full base to work from. */
-const BASE: Record<Mode, Palette> = {
-  dark: {
-    bg0: "#0d0d0c",
-    bg1: "#141413",
-    bg2: "#1b1b19",
-    bg3: "#242421",
-    bgHover: "#2a2a27",
-    bgActive: "#31312d",
-    line: "#2b2a27",
-    lineStrong: "#3a3935",
-    text: "#ecebe6",
-    text2: "#b4b2aa",
-    text3: "#85837b",
-    text4: "#5f5d57",
-    accent: "#d7c9a7",
-    accentInk: "#1a1813",
-    focus: "#c9b98f",
-    amber: "#e2a54a",
-    amberBg: "#2a2114",
-    red: "#e5675d",
-    redBg: "#2c1716",
-    green: "#7cbf86",
-    addBg: "#15261a",
-    addInk: "#a9d8b0",
-    delBg: "#2c1716",
-    delInk: "#eba49d",
-    providerClaude: "#d98b63",
-    providerCursor: "#b9b8b3",
-    providerCodex: "#8fb3e6",
-    providerDemo: "#a7c79a",
-  },
-  light: {
-    bg0: "#f4f3ef",
-    bg1: "#faf9f6",
-    bg2: "#ffffff",
-    bg3: "#efede7",
-    bgHover: "#ebe9e2",
-    bgActive: "#e2e0d8",
-    line: "#e3e1da",
-    lineStrong: "#cfccc3",
-    text: "#1d1c1a",
-    text2: "#4a4843",
-    text3: "#75726b",
-    text4: "#a19e96",
-    accent: "#3b3528",
-    accentInk: "#faf9f6",
-    focus: "#8a7444",
-    amber: "#b97813",
-    amberBg: "#fbf1df",
-    red: "#c2392f",
-    redBg: "#fbe9e7",
-    green: "#2f7d3b",
-    addBg: "#e7f4e8",
-    addInk: "#1f5e2a",
-    delBg: "#fbe9e7",
-    delInk: "#8f2a22",
-    providerClaude: "#b8653d",
-    providerCursor: "#55534e",
-    providerCodex: "#3d6fb3",
-    providerDemo: "#4f7c43",
-  },
 };
 
 export function mix(a: string, b: string, t: number): string {
@@ -155,14 +92,14 @@ export function resolvePalette(theme: AppearanceTheme): Palette {
     text3: mix(ink, canvas, dark ? 0.45 : 0.5),
     text4: mix(ink, canvas, dark ? 0.62 : 0.66),
     accent,
-    accentInk: luminance(accent) > 0.55 ? "#1a1813" : "#faf9f6",
+    accentInk: luminance(accent) > 0.55 ? BASE.dark.accentInk : BASE.light.accentInk,
     focus: mix(accent, ink, 0.15),
     amberBg: mix(canvas, base.amber, dark ? 0.14 : 0.1),
     redBg: mix(canvas, base.red, dark ? 0.14 : 0.1),
     addBg: mix(canvas, base.green, dark ? 0.14 : 0.1),
     delBg: mix(canvas, base.red, dark ? 0.14 : 0.1),
   };
-  if (!dark) derived.bg2 = mix(canvas, "#ffffff", 0.7);
+  if (!dark) derived.bg2 = mix(canvas, WHITE, 0.7);
   for (const [role, value] of Object.entries(theme.colors)) {
     if (value) derived[role as ColorRole] = value;
   }

@@ -12,6 +12,7 @@ import {
   restoreSavedTheme,
   type ColorRole,
 } from "../state/appearance.ts";
+import { BLACK } from "../state/theme-data.ts";
 import { IconClose, IconCopy, IconTrash } from "./Icons.tsx";
 
 type Theme = AppearanceTheme;
@@ -713,7 +714,7 @@ function toColorInput(value: string): string {
     const [, a, b, c] = value;
     return `#${a}${a}${b}${b}${c}${c}`;
   }
-  return "#000000";
+  return BLACK;
 }
 
 /** Downscale to at most 2560px and re-encode, so a theme stays a small portable file. */

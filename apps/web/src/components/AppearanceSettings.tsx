@@ -15,6 +15,7 @@ import {
   saveTheme,
 } from "../state/appearance.ts";
 import { useStore } from "../state/store.ts";
+import { BLACK, PREVIEW_RING, WHITE, WIREFRAME_DEFAULTS } from "../state/theme-data.ts";
 import {
   IconCheck,
   IconCopy,
@@ -534,10 +535,7 @@ function ThemePreviewCircle({
       `radial-gradient(circle at 30% 30%, ${colors.accent} 0%, color-mix(in srgb, ${colors.accent} 40%, transparent) 42%, transparent 70%)`,
       `radial-gradient(circle at 72% 68%, color-mix(in srgb, ${colors.messageAction} 70%, transparent) 0%, transparent 55%)`,
     ].join(", "),
-    boxShadow:
-      mode === "dark"
-        ? "inset 0 0 0 1px rgb(255 255 255 / 0.14), 0 1px 2px rgb(0 0 0 / 0.18)"
-        : "inset 0 0 0 1px rgb(0 0 0 / 0.10), 0 1px 2px rgb(0 0 0 / 0.08)",
+    boxShadow: PREVIEW_RING[mode],
   };
   return (
     <span className={picked ? "theme-preview-circle picked" : "theme-preview-circle"}>
@@ -628,45 +626,24 @@ function wireframeColors(
   if (theme && theme.appearance === mode) {
     const canvas = theme.canvas;
     const accent = theme.accent;
-    const surface = mix(
-      canvas,
-      mode === "dark" ? "#ffffff" : "#000000",
-      mode === "dark" ? 0.08 : 0.04,
-    );
-    const sidebar = mix(canvas, mode === "dark" ? "#000000" : "#ffffff", 0.12);
+    const surface = mix(canvas, mode === "dark" ? WHITE : BLACK, mode === "dark" ? 0.08 : 0.04);
+    const sidebar = mix(canvas, mode === "dark" ? BLACK : WHITE, 0.12);
     return {
       canvas,
       sidebar,
       surface,
       accentSurface: mix(surface, accent, 0.18),
       accent,
-      messageSurface: mix(
-        canvas,
-        mode === "dark" ? "#ffffff" : "#000000",
-        mode === "dark" ? 0.14 : 0.08,
-      ),
+      messageSurface: mix(canvas, mode === "dark" ? WHITE : BLACK, mode === "dark" ? 0.14 : 0.08),
       messageAction: accent,
     };
   }
-  if (mode === "light") {
-    return {
-      canvas: "#f4f3ef",
-      sidebar: "#fafafa",
-      surface: "#ffffff",
-      accentSurface: "#f4f4f5",
-      accent: theme?.accent ?? "#7c6a46",
-      messageSurface: "#e4e4e7",
-      messageAction: theme?.accent ?? "#7c6a46",
-    };
-  }
+  const fallback = WIREFRAME_DEFAULTS[mode];
   return {
-    canvas: theme?.canvas ?? "#0f0f10",
-    sidebar: "#0f0f10",
-    surface: "#121212",
-    accentSurface: "#27272a",
-    accent: theme?.accent ?? "#d7c9a7",
-    messageSurface: "#27272a",
-    messageAction: theme?.accent ?? "#d7c9a7",
+    ...fallback,
+    canvas: mode === "dark" ? (theme?.canvas ?? fallback.canvas) : fallback.canvas,
+    accent: theme?.accent ?? fallback.accent,
+    messageAction: theme?.accent ?? fallback.messageAction,
   };
 }
 
