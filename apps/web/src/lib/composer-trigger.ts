@@ -55,6 +55,15 @@ export function composerMenuIdentity(trigger: ComposerTrigger): string {
   return `${trigger.kind}:${trigger.replaceStart}:${trigger.query}`;
 }
 
+/** Drop stored dismissal when the draft no longer carries it (e.g. after send). */
+export function composerMenuDismissalForDraft(
+  dismissedFor: string | null,
+  draft: string,
+): string | null {
+  if (!draft || !dismissedFor) return null;
+  return dismissedFor;
+}
+
 export function composerMenuVisible(
   trigger: ComposerTrigger,
   dismissedFor: string | null,

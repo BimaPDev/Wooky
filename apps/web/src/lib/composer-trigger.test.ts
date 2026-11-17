@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  composerMenuDismissalForDraft,
   composerMenuIdentity,
   composerMenuVisible,
   composerTrigger,
@@ -68,6 +69,31 @@ describe("composerMenuIdentity", () => {
     expect(b?.kind).toBe("mention");
     if (a?.kind !== "mention" || b?.kind !== "mention") return;
     expect(composerMenuIdentity(a)).not.toBe(composerMenuIdentity(b));
+  });
+});
+
+describe("composerMenuDismissalForDraft", () => {
+  it("reopens the menu after the draft is cleared and the same trigger is typed again", () => {
+    const slash = composerTrigger("/", 1);
+    expect(slash?.kind).toBe("slash");
+    if (slash?.kind !== "slash") return;
+    const dismissed = composerMenuIdentity(slash);
+    expect(composerMenuVisible(slash, dismissed)).toBe(false);
+
+    const afterClear = composerMenuDismissalForDraft(dismissed, "");
+    const again = composerTrigger("/", 1);
+    expect(again?.kind).toBe("slash");
+    if (again?.kind !== "slash") return;
+    expect(composerMenuVisible(again, afterClear)).toBe(true);
+  });
+
+  it("keeps the menu dismissed while the same trigger identity remains in the draft", () => {
+    const slash = composerTrigger("/", 1);
+    expect(slash?.kind).toBe("slash");
+    if (slash?.kind !== "slash") return;
+    const dismissed = composerMenuIdentity(slash);
+    const stored = composerMenuDismissalForDraft(dismissed, "/");
+    expect(composerMenuVisible(slash, stored)).toBe(false);
   });
 });
 

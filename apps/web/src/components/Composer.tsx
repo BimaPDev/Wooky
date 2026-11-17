@@ -1,6 +1,7 @@
 import type { InteractionMode } from "@age/contracts";
 import { useId, useRef, useState } from "react";
 import {
+  composerMenuDismissalForDraft,
   composerMenuIdentity,
   composerMenuVisible,
   composerTrigger,
@@ -30,11 +31,15 @@ export function Composer({ threadId }: { threadId: string }) {
   const area = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
 
-  const { trigger, menuOpen, slashItems, mentionItems, searchUnavailable } = useComposerMenu(
-    threadId,
-    draft,
-    caret,
-  );
+  const {
+    trigger,
+    menuOpen,
+    slashItems,
+    mentionItems,
+    mentionQuery,
+    entriesQuery,
+    searchUnavailable,
+  } = useComposerMenu(threadId, draft, caret);
 
   if (!thread) return null;
   const running = thread.status === "running";
@@ -56,6 +61,7 @@ export function Composer({ threadId }: { threadId: string }) {
     if (ack) {
       setDraft("");
       setCaret(0);
+      setMenuDismissedFor(null);
       if (area.current) area.current.style.height = "";
     }
   };
@@ -67,6 +73,7 @@ export function Composer({ threadId }: { threadId: string }) {
     const end = el.selectionEnd ?? draft.length;
     const next = `${draft.slice(0, start)}@${draft.slice(end)}`;
     setDraft(next);
+    setMenuDismissedFor(null);
     requestAnimationFrame(() => {
       el.focus();
       const nextCaret = start + 1;
@@ -103,7 +110,8 @@ export function Composer({ threadId }: { threadId: string }) {
   };
 
   const menuItems = trigger?.kind === "slash" ? slashItems : mentionItems;
-  const panelOpen = menuOpen && trigger !== null && composerMenuVisible(trigger, menuDismissedFor);
+  const menuDismissed = composerMenuDismissalForDraft(menuDismissedFor, draft);
+  const panelOpen = menuOpen && trigger !== null && composerMenuVisible(trigger, menuDismissed);
 
   const acceptMenu = () => {
     if (!trigger || menuItems.length === 0) return;
@@ -116,6 +124,7 @@ export function Composer({ threadId }: { threadId: string }) {
     const next = insertMentionPath(draft, trigger, choice.id);
     setDraft(next.text);
     setCaret(next.caret);
+    setMenuDismissedFor(null);
     requestAnimationFrame(() => {
       const el = area.current;
       if (!el) return;
@@ -149,6 +158,8 @@ export function Composer({ threadId }: { threadId: string }) {
             trigger={trigger}
             slashItems={slashItems}
             mentionItems={mentionItems}
+            mentionQuery={mentionQuery}
+            entriesQuery={entriesQuery}
             searchUnavailable={searchUnavailable}
             activeIndex={Math.min(menuIndex, Math.max(0, menuItems.length - 1))}
             listId={listId}
@@ -158,6 +169,7 @@ export function Composer({ threadId }: { threadId: string }) {
                 const next = insertMentionPath(draft, trigger, id);
                 setDraft(next.text);
                 setCaret(next.caret);
+                setMenuDismissedFor(null);
               }
             }}
           />

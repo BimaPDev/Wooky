@@ -435,7 +435,7 @@ dialog * {
     color var(--duration-fast) var(--ease);
 }
 
-.ghost-button:hover {
+.ghost-button:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text);
 }
@@ -447,7 +447,6 @@ dialog * {
 .ghost-button:disabled {
   opacity: 0.45;
   cursor: default;
-  pointer-events: none;
 }
 
 .crumb-sep {

@@ -1,6 +1,7 @@
 import type { WorkspaceEntry } from "@age/contracts";
 import { useEffect, useRef, useState } from "react";
 import { RpcCallError } from "../rpc/client.ts";
+import { mentionMenuFooter } from "../lib/composer-mention-menu.ts";
 import {
   composerTrigger,
   filterSlashCommands,
@@ -74,13 +75,17 @@ export function useComposerMenu(threadId: string, text: string, caret: number) {
         }))
       : [];
 
+  const mentionSearchUnavailable =
+    trigger?.kind === "mention" && unavailableFor === mentionQuery && searchUnavailable;
+
   return {
     trigger,
     menuOpen: trigger !== null && (trigger.kind === "slash" ? slashItems.length > 0 : true),
     slashItems,
     mentionItems,
-    searchUnavailable:
-      trigger?.kind === "mention" && unavailableFor === mentionQuery && searchUnavailable,
+    mentionQuery,
+    entriesQuery,
+    searchUnavailable: mentionSearchUnavailable,
   };
 }
 
@@ -88,6 +93,8 @@ export function ComposerMenuPanel({
   trigger,
   slashItems,
   mentionItems,
+  mentionQuery,
+  entriesQuery,
   searchUnavailable,
   activeIndex,
   listId,
@@ -96,21 +103,26 @@ export function ComposerMenuPanel({
   trigger: ComposerTrigger;
   slashItems: { id: string; label: string; detail?: string }[];
   mentionItems: { id: string; label: string; detail?: string }[];
+  mentionQuery: string | null;
+  entriesQuery: string | null;
   searchUnavailable: boolean;
   activeIndex: number;
   listId: string;
   onPick: (id: string) => void;
 }) {
   const items = trigger.kind === "slash" ? slashItems : mentionItems;
+  const footer =
+    trigger.kind === "mention"
+      ? mentionMenuFooter(mentionQuery, entriesQuery, items.length, searchUnavailable)
+      : "none";
 
   return (
     <div className="composer-menu-wrap">
       {trigger.kind === "mention" && searchUnavailable ? (
         <p className="composer-menu-note">File search unavailable</p>
       ) : null}
-      {items.length === 0 && trigger.kind === "mention" && !searchUnavailable ? (
-        <p className="composer-menu-note muted">No matches</p>
-      ) : null}
+      {footer === "searching" ? <p className="composer-menu-note muted">Searching…</p> : null}
+      {footer === "no-matches" ? <p className="composer-menu-note muted">No matches</p> : null}
       {items.length > 0 ? (
         <ul
           className="composer-menu"
