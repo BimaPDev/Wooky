@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createCursorAdapter } from "./adapter.ts";
+import { afterEach, describe, expect, it } from "vitest";
+import { createCursorAdapter, CURSOR_FAKE_AGENT_SCRIPT } from "./adapter.ts";
 import { isAuthFailure, parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
 
 describe("parseAuthFromStatus", () => {
@@ -26,6 +26,30 @@ describe("parseModelsFromList", () => {
       { id: "gpt-test", label: "GPT Test" },
     ]);
   });
+});
+
+describe("probe version timeout", () => {
+  afterEach(() => {
+    delete process.env.AGE_FAKE_CURSOR_MODE;
+  });
+
+  it("keeps installed true when --version times out", async () => {
+    const prev = process.env.AGE_FAKE_CURSOR_MODE;
+    process.env.AGE_FAKE_CURSOR_MODE = "version-hang";
+    try {
+      const adapter = createCursorAdapter({
+        cursorBin: process.execPath,
+        cursorArgsPrefix: [CURSOR_FAKE_AGENT_SCRIPT],
+      });
+      const status = await adapter.probe();
+      expect(status.installed).toBe(true);
+      expect(status.version).toBeNull();
+      expect(status.problem).toBe("Cursor Agent did not respond. Try again.");
+    } finally {
+      if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
+      else process.env.AGE_FAKE_CURSOR_MODE = prev;
+    }
+  }, 10_000);
 });
 
 describe("probe with nonexistent binary", () => {

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ProviderEvent } from "@age/contracts";
 import { createCursorAdapter, CURSOR_FAKE_AGENT_SCRIPT } from "./adapter.ts";
 // @ts-expect-error test fixture is plain ESM without types
@@ -31,7 +31,21 @@ function baseInput(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const FAKE_ENV_KEYS = [
+  "AGE_FAKE_CURSOR_MODE",
+  "AGE_FAKE_CURSOR_PID_FILE",
+  "AGE_FAKE_CURSOR_LOG_ARGV",
+  "AGE_FAKE_CURSOR_FIXTURE",
+  "AGE_FAKE_CURSOR_AUTH",
+] as const;
+
 describe("createCursorAdapter e2e", () => {
+  afterEach(() => {
+    for (const key of FAKE_ENV_KEYS) {
+      delete process.env[key];
+    }
+  });
+
   it("completes a turn via fake binary replay", async () => {
     const adapter = createCursorAdapter({
       cursorBin: process.execPath,
@@ -61,18 +75,28 @@ describe("createCursorAdapter e2e", () => {
     }
   });
 
-  async function waitForFile(path: string): Promise<string> {
+  async function waitForPositivePid(pidFile: string): Promise<number> {
     for (;;) {
       try {
-        return await readFile(path, "utf8");
+        const pid = Number((await readFile(pidFile, "utf8")).trim());
+        if (pid > 0) return pid;
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-        await new Promise((r) => setImmediate(r));
       }
+      await new Promise((r) => setImmediate(r));
     }
   }
 
-  it("interrupts a hanging turn and kills the fake process", async () => {
+  function processGroupAlive(pid: number): boolean {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("interrupts a hanging turn and kills the fake process group", async () => {
     const work = await mkdtemp(join(tmpdir(), "age-cursor-abort-"));
     const pidFile = join(work, "pid");
     const prevMode = process.env.AGE_FAKE_CURSOR_MODE;
@@ -92,28 +116,88 @@ describe("createCursorAdapter e2e", () => {
       return events.filter((e) => e.type === "done").at(-1);
     })();
 
-    await waitForFile(pidFile);
+    const pid = await waitForPositivePid(pidFile);
+    expect(pid).toBeGreaterThan(0);
     ac.abort();
 
     const done = await donePromise;
     expect(done?.status).toBe("interrupted");
+    expect(processGroupAlive(pid)).toBe(false);
 
     try {
-      const pid = Number(await readFile(pidFile, "utf8"));
-      let alive = true;
-      try {
-        process.kill(pid, 0);
-      } catch {
-        alive = false;
-      }
-      expect(alive).toBe(false);
-    } finally {
       await rm(work, { recursive: true, force: true });
+    } finally {
       if (prevMode === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
       else process.env.AGE_FAKE_CURSOR_MODE = prevMode;
       if (prevPid === undefined) delete process.env.AGE_FAKE_CURSOR_PID_FILE;
       else process.env.AGE_FAKE_CURSOR_PID_FILE = prevPid;
     }
+  });
+
+  it("returns interrupted without spawning when already aborted", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const adapter = createCursorAdapter({
+      cursorBin: process.execPath,
+      cursorArgsPrefix: [fakeBin],
+    });
+    const events = await collect(adapter.runTurn(baseInput({ signal: ac.signal })));
+    expect(events.filter((e) => e.type === "done")).toEqual([
+      { type: "done", status: "interrupted", error: null },
+    ]);
+  });
+
+  it("emits exactly one failed done for a stdout null line", async () => {
+    const prev = process.env.AGE_FAKE_CURSOR_MODE;
+    process.env.AGE_FAKE_CURSOR_MODE = "null-line";
+    try {
+      const adapter = createCursorAdapter({
+        cursorBin: process.execPath,
+        cursorArgsPrefix: [fakeBin],
+      });
+      const events = await collect(adapter.runTurn(baseInput({ turnId: "turn-null-line" })));
+      const dones = events.filter((e) => e.type === "done");
+      expect(dones).toHaveLength(1);
+      expect(dones[0]?.status).toBe("completed");
+    } finally {
+      if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
+      else process.env.AGE_FAKE_CURSOR_MODE = prev;
+    }
+  });
+
+  it("finishes with failed when the child dies on a signal", async () => {
+    const work = await mkdtemp(join(tmpdir(), "age-cursor-signal-"));
+    const pidFile = join(work, "pid");
+    const prevMode = process.env.AGE_FAKE_CURSOR_MODE;
+    const prevPid = process.env.AGE_FAKE_CURSOR_PID_FILE;
+    process.env.AGE_FAKE_CURSOR_MODE = "hang";
+    process.env.AGE_FAKE_CURSOR_PID_FILE = pidFile;
+
+    const adapter = createCursorAdapter({
+      cursorBin: process.execPath,
+      cursorArgsPrefix: [fakeBin],
+    });
+
+    const doneP = collect(adapter.runTurn(baseInput({ turnId: "turn-signal-kill" }))).then((ev) =>
+      ev.filter((e) => e.type === "done").at(-1),
+    );
+
+    const pid = await waitForPositivePid(pidFile);
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      process.kill(pid, "SIGKILL");
+    }
+
+    const done = await doneP;
+    expect(done?.status).toBe("failed");
+    expect(done?.error).toMatch(/SIGKILL/);
+
+    await rm(work, { recursive: true, force: true });
+    if (prevMode === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
+    else process.env.AGE_FAKE_CURSOR_MODE = prevMode;
+    if (prevPid === undefined) delete process.env.AGE_FAKE_CURSOR_PID_FILE;
+    else process.env.AGE_FAKE_CURSOR_PID_FILE = prevPid;
   });
 
   it("passes --force only in full runtime mode", async () => {

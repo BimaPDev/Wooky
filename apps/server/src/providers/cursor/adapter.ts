@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProviderEvent, ProviderStatus } from "@age/contracts";
+import { z } from "zod";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { createNdjsonSplitter } from "./ndjson.ts";
 import { isAuthFailure, parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
@@ -11,6 +12,9 @@ const PROBE_TIMEOUT_MS = 5_000;
 const MODELS_CACHE_MS = 5 * 60 * 1000;
 const KILL_GRACE_MS = 3_000;
 const STDERR_TAIL_MAX = 4 * 1024;
+const STREAM_CLOSE_GRACE_MS = 100;
+
+const streamObjectSchema = z.object({ type: z.string() }).passthrough();
 
 export const CURSOR_FAKE_AGENT_SCRIPT = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -47,18 +51,35 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
 
       let version: string | null = null;
       try {
-        const { stdout, code } = await runProbe(cursorBin, cursorArgsPrefix, ["--version"]);
-        if (code !== 0) {
+        const probe = await runProbe(cursorBin, cursorArgsPrefix, ["--version"]);
+        if (probe.timedOut) {
+          return {
+            ...base,
+            installed: true,
+            version: null,
+            problem: "Cursor Agent did not respond. Try again.",
+          };
+        }
+        if (probe.code !== 0) {
           return {
             ...base,
             problem: "Cursor Agent is not installed.",
           };
         }
-        version = stdout.trim().split("\n")[0]?.trim() ?? null;
-      } catch {
+        version = probe.stdout.trim().split("\n")[0]?.trim() ?? null;
+      } catch (err) {
+        const missing = (err as NodeJS.ErrnoException).code === "ENOENT";
+        if (missing) {
+          return {
+            ...base,
+            problem: "Cursor Agent is not installed.",
+          };
+        }
         return {
           ...base,
-          problem: "Cursor Agent is not installed.",
+          installed: true,
+          version: null,
+          problem: "Cursor Agent did not respond. Try again.",
         };
       }
 
@@ -71,7 +92,6 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
       }
 
       const listed = await listModels(cursorBin, cursorArgsPrefix);
-      // `status` can claim a login that real calls reject; a refused model list is the stronger signal.
       if (listed.authFailed) authenticated = false;
       const models = listed.models;
 
@@ -123,17 +143,25 @@ async function listModels(
 
 const FALLBACK_MODELS = [{ id: "auto", label: "Auto" }];
 
-function runProbe(
+export type ProbeResult = {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  timedOut: boolean;
+};
+
+export function runProbe(
   cursorBin: string,
   prefix: string[],
   args: string[],
-): Promise<{ stdout: string; stderr: string; code: number | null }> {
+): Promise<ProbeResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(cursorBin, [...prefix, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
@@ -142,6 +170,7 @@ function runProbe(
     });
 
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGTERM");
     }, PROBE_TIMEOUT_MS);
 
@@ -151,7 +180,7 @@ function runProbe(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ stdout, stderr, code });
+      resolve({ stdout, stderr, code, timedOut });
     });
   });
 }
@@ -172,11 +201,27 @@ async function* runCursorTurn(
     };
   }
 
+  const translator = new CursorTranslator(input.turnId, input.cwd);
+  let doneYielded = false;
+
+  const yieldDone = function* (events: ProviderEvent[]) {
+    for (const event of events) {
+      if (event.type === "done") doneYielded = true;
+      yield event;
+    }
+  };
+
+  if (input.signal.aborted) {
+    yield* yieldDone(translator.finish(null, null, null, true));
+    return;
+  }
+
   let prompt = input.prompt;
   if (input.handoffContext) {
     prompt = `Earlier conversation in this thread, from another agent:\n\n${input.handoffContext}\n\n---\n\n${prompt}`;
   }
 
+  // cursor-agent help lists `prompt` as a trailing positional argument with no `--` sentinel.
   const argv = [
     ...prefix,
     "-p",
@@ -193,39 +238,95 @@ async function* runCursorTurn(
     prompt,
   ];
 
-  const child = spawn(cursorBin, argv, {
-    cwd: input.cwd,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(cursorBin, argv, {
+      cwd: input.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to start Cursor Agent";
+    yield* yieldDone([{ type: "done", status: "failed", error: message }]);
+    return;
+  }
 
-  const translator = new CursorTranslator(input.turnId, input.cwd);
   const splitter = createNdjsonSplitter();
   let stderr = "";
   let exitCode: number | null = null;
+  let exitSignal: string | null = null;
+  let closed = false;
   let aborted = false;
-  let doneYielded = false;
+  let killTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const killOnAbort = () => {
-    aborted = true;
-    if (child.pid) {
-      child.kill("SIGTERM");
-      const pid = child.pid;
-      setTimeout(() => {
-        try {
-          process.kill(pid, 0);
-          child.kill("SIGKILL");
-        } catch {
-          // already gone
-        }
-      }, KILL_GRACE_MS);
+  const wakeExit: Array<() => void> = [];
+  const waitExit = () =>
+    new Promise<void>((resolve) => {
+      if (closed) resolve();
+      else wakeExit.push(resolve);
+    });
+
+  const finishProcess = (code: number | null, signal: string | null) => {
+    if (closed) return;
+    closed = true;
+    exitCode = code;
+    exitSignal = signal;
+    while (wakeExit.length > 0) wakeExit.pop()?.();
+  };
+
+  const killGroup = (signal: NodeJS.Signals) => {
+    const pid = child.pid;
+    if (!pid) return;
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        // already gone
+      }
     }
   };
 
-  if (input.signal.aborted) {
-    killOnAbort();
-  } else {
-    input.signal.addEventListener("abort", killOnAbort, { once: true });
+  const killOnAbort = () => {
+    aborted = true;
+    killGroup("SIGTERM");
+    killTimer = setTimeout(() => {
+      const pid = child.pid;
+      if (!pid) return;
+      try {
+        process.kill(-pid, 0);
+        killGroup("SIGKILL");
+      } catch {
+        // already gone
+      }
+    }, KILL_GRACE_MS);
+  };
+
+  const onAbort = () => killOnAbort();
+  input.signal.addEventListener("abort", onAbort, { once: true });
+
+  const childStdout = child.stdout;
+  const childStderr = child.stderr;
+  if (!childStdout || !childStderr) {
+    yield* yieldDone([
+      { type: "done", status: "failed", error: "Cursor Agent streams were unavailable" },
+    ]);
+    return;
   }
+
+  child.on("exit", (code, signal) => {
+    finishProcess(code, signal);
+    setTimeout(() => {
+      childStdout.destroy();
+      childStderr.destroy();
+    }, STREAM_CLOSE_GRACE_MS);
+  });
+
+  child.on("error", (err) => {
+    stderr += err.message;
+    finishProcess(1, null);
+  });
 
   const lineQueue: string[] = [];
   let resolveLine: (() => void) | null = null;
@@ -235,70 +336,91 @@ async function* runCursorTurn(
       else resolveLine = resolve;
     });
 
-  child.stdout.on("data", (chunk: Buffer) => {
+  childStdout.on("data", (chunk: Buffer) => {
     const lines = splitter.push(chunk.toString());
     lineQueue.push(...lines);
     resolveLine?.();
     resolveLine = null;
   });
 
-  child.stderr.on("data", (chunk: Buffer) => {
+  childStderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
     if (stderr.length > STDERR_TAIL_MAX * 2) {
       stderr = stderr.slice(-STDERR_TAIL_MAX * 2);
     }
   });
 
-  const closePromise = new Promise<number | null>((resolve) => {
-    child.on("close", (code) => resolve(code));
-    child.on("error", () => resolve(1));
-  });
+  try {
+    for (;;) {
+      if (lineQueue.length === 0) {
+        if (closed) break;
+        await Promise.race([waitLine(), waitExit()]);
+        if (lineQueue.length === 0 && closed) break;
+        if (lineQueue.length === 0 && input.signal.aborted) break;
+        continue;
+      }
 
-  for (;;) {
-    if (lineQueue.length === 0) {
-      if (exitCode !== null) break;
-      await Promise.race([waitLine(), closePromise.then((c) => ((exitCode = c), undefined))]);
-      if (lineQueue.length === 0 && exitCode !== null) break;
-      if (lineQueue.length === 0 && input.signal.aborted) break;
-      continue;
+      const line = lineQueue.shift();
+      if (line === undefined) continue;
+      if (!line.trim()) continue;
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      const validated = streamObjectSchema.safeParse(parsed);
+      if (!validated.success) continue;
+
+      try {
+        for (const event of translator.translate(validated.data)) {
+          if (event.type === "done") doneYielded = true;
+          yield event;
+        }
+      } catch (err) {
+        if (!doneYielded) {
+          const message = err instanceof Error ? err.message : "Translation failed";
+          doneYielded = true;
+          yield { type: "done", status: "failed", error: message };
+        }
+        return;
+      }
     }
 
-    const line = lineQueue.shift();
-    if (line === undefined) continue;
-    if (!line.trim()) continue;
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
+    const tail = splitter.flush();
+    if (tail?.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(tail);
+        const validated = streamObjectSchema.safeParse(parsed);
+        if (validated.success) {
+          for (const event of translator.translate(validated.data)) {
+            if (event.type === "done") doneYielded = true;
+            yield event;
+          }
+        }
+      } catch {
+        // ignore partial JSON
+      }
     }
-
-    for (const event of translator.translate(parsed)) {
-      if (event.type === "done") doneYielded = true;
-      yield event;
+  } catch (err) {
+    if (!doneYielded) {
+      const message = err instanceof Error ? err.message : "Turn failed";
+      doneYielded = true;
+      yield { type: "done", status: "failed", error: message };
     }
-  }
-
-  const tail = splitter.flush();
-  if (tail?.trim()) {
-    try {
-      const parsed = JSON.parse(tail) as Record<string, unknown>;
-      for (const event of translator.translate(parsed)) {
-        if (event.type === "done") doneYielded = true;
+  } finally {
+    input.signal.removeEventListener("abort", onAbort);
+    if (killTimer) clearTimeout(killTimer);
+    if (!closed) {
+      await waitExit();
+    }
+    if (!doneYielded) {
+      const stderrTail = stderr.length > 0 ? stderr.slice(-STDERR_TAIL_MAX) : null;
+      for (const event of translator.finish(exitCode, exitSignal, stderrTail, aborted)) {
         yield event;
       }
-    } catch {
-      // ignore partial JSON
-    }
-  }
-
-  if (exitCode === null) exitCode = await closePromise;
-
-  if (!doneYielded) {
-    const stderrTail = stderr.length > 0 ? stderr.slice(-STDERR_TAIL_MAX) : null;
-    for (const event of translator.finish(exitCode, stderrTail, aborted)) {
-      yield event;
     }
   }
 }

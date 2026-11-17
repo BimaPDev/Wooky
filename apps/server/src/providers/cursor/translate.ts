@@ -3,6 +3,18 @@ import type { ProviderEvent, ToolKind, Usage } from "@age/contracts";
 
 const OUTPUT_PREVIEW_MAX = 4 * 1024;
 
+const previewEncoder = new TextEncoder();
+const previewDecoder = new TextDecoder();
+
+function truncateUtf8Bytes(text: string, maxBytes: number, marker = "…"): string {
+  if (previewEncoder.encode(text).length <= maxBytes) return text;
+  const room = maxBytes - previewEncoder.encode(marker).length;
+  const cut = previewDecoder
+    .decode(previewEncoder.encode(text).slice(0, Math.max(0, room)))
+    .replace(/�+$/u, "");
+  return cut + marker;
+}
+
 export type CursorStreamEvent = Record<string, unknown>;
 
 export class CursorTranslator {
@@ -54,12 +66,26 @@ export class CursorTranslator {
     return out;
   }
 
-  finish(exitCode: number | null, stderrTail: string | null, aborted: boolean): ProviderEvent[] {
+  finish(
+    exitCode: number | null,
+    exitSignal: string | null,
+    stderrTail: string | null,
+    aborted: boolean,
+  ): ProviderEvent[] {
     if (this.doneEmitted) return [];
     this.doneEmitted = true;
 
     if (aborted) {
       return [{ type: "done", status: "interrupted", error: null }];
+    }
+    if (exitSignal) {
+      return [
+        {
+          type: "done",
+          status: "failed",
+          error: stderrTail ?? `Process exited on signal ${exitSignal}`,
+        },
+      ];
     }
     if (exitCode !== null && exitCode !== 0) {
       return [
@@ -70,7 +96,16 @@ export class CursorTranslator {
         },
       ];
     }
-    return [{ type: "done", status: "completed", error: null }];
+    if (exitCode === 0) {
+      return [{ type: "done", status: "completed", error: null }];
+    }
+    return [
+      {
+        type: "done",
+        status: "failed",
+        error: stderrTail ?? "Process exited unexpectedly",
+      },
+    ];
   }
 
   private closeMessageSegment(): void {
@@ -85,6 +120,7 @@ export class CursorTranslator {
 
   private onThinking(event: CursorStreamEvent): ProviderEvent[] {
     if (event.subtype !== "delta" || typeof event.text !== "string") return [];
+    this.closeMessageSegment();
     const text = event.text;
 
     if (!this.reasoningItemId) {
@@ -106,9 +142,15 @@ export class CursorTranslator {
   private onAssistant(event: CursorStreamEvent): ProviderEvent[] {
     const text = extractAssistantText(event);
     if (text === null) return [];
+    this.closeReasoningSegment();
 
     const hasModelCallId = typeof event.model_call_id === "string";
-    const isFullSegment = hasModelCallId || typeof event.timestamp_ms !== "number";
+    const hasTimestamp = typeof event.timestamp_ms === "number";
+    const isFullSegment =
+      hasModelCallId ||
+      (!hasTimestamp &&
+        (text === this.messageText ||
+          (this.messageText.length > 0 && text.startsWith(this.messageText))));
 
     if (isFullSegment) {
       if (text === this.messageText) return [];
@@ -321,21 +363,21 @@ function extractToolOutput(toolCall: Record<string, unknown>): {
       const failed = typeof exitCode === "number" && exitCode !== 0;
       let output: string | undefined;
       if (typeof success.interleavedOutput === "string") {
-        output = truncate(success.interleavedOutput, OUTPUT_PREVIEW_MAX);
+        output = truncatePreview(success.interleavedOutput);
       } else {
         const stdout = typeof success.stdout === "string" ? success.stdout : "";
         const stderr = typeof success.stderr === "string" ? success.stderr : "";
         const combined = stdout + stderr;
-        output = combined.length > 0 ? truncate(combined, OUTPUT_PREVIEW_MAX) : undefined;
+        output = combined.length > 0 ? truncatePreview(combined) : undefined;
       }
       return { output, failed };
     }
 
     if (typeof success.content === "string") {
-      return { output: truncate(success.content, OUTPUT_PREVIEW_MAX), failed: false };
+      return { output: truncatePreview(success.content), failed: false };
     }
     if (typeof success.output === "string") {
-      return { output: truncate(success.output, OUTPUT_PREVIEW_MAX), failed: false };
+      return { output: truncatePreview(success.output), failed: false };
     }
     return { output: previewJson(success), failed: false };
   }
@@ -344,7 +386,7 @@ function extractToolOutput(toolCall: Record<string, unknown>): {
 }
 
 function previewJson(value: unknown): string {
-  return truncate(JSON.stringify(value), OUTPUT_PREVIEW_MAX);
+  return truncatePreview(JSON.stringify(value));
 }
 
 function parseUsage(raw: unknown): Usage | null {
@@ -361,6 +403,10 @@ function parseUsage(raw: unknown): Usage | null {
   return usage;
 }
 
-function truncate(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + "…";
+function truncate(s: string, maxChars: number): string {
+  return s.length <= maxChars ? s : s.slice(0, maxChars - 1) + "…";
+}
+
+function truncatePreview(s: string): string {
+  return truncateUtf8Bytes(s, OUTPUT_PREVIEW_MAX);
 }
