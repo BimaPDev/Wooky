@@ -466,6 +466,35 @@ button.chip:active {
   font-weight: 500;
 }
 
+.sidebar-foot {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+
+.sidebar-foot kbd {
+  margin-left: var(--space-1);
+  color: var(--text-4);
+}
+
+.notice-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  max-width: calc(var(--content-width) - 2 * var(--space-6));
+  width: calc(100% - 2 * var(--space-6));
+  margin: 0 auto var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  background: var(--red-bg);
+  color: var(--red);
+  animation: pop-in var(--duration) var(--ease);
+}
+
 /* ── Top bar ─────────────────────────────────────────── */
 
 .topbar {

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { setPaletteOpen } from "../state/actions.ts";
+import { dismissNotice, setPaletteOpen } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
@@ -13,6 +13,7 @@ export function App() {
   const theme = useStore((state) => state.theme);
   const threadId = useStore((state) => state.selectedThreadId);
   const changesOpen = useStore((state) => state.changes.open);
+  const notice = useStore((state) => state.notice);
   const hasProjects = useStore((state) => Object.keys(state.model.projects).length > 0);
 
   // sync: document root attribute drives the CSS theme tokens
@@ -50,6 +51,14 @@ export function App() {
               : "Add a project folder to get started."}
           </p>
         )}
+        {notice ? (
+          <div className="notice-bar" role="alert">
+            <span>{notice}</span>
+            <button type="button" className="link-button" onClick={dismissNotice}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
       </main>
       {changesOpen && threadId ? <ChangesPanel threadId={threadId} /> : null}
       <Palette />

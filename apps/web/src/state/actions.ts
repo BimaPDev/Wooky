@@ -14,6 +14,9 @@ export async function dispatch(command: CommandInput) {
     return await backend().call("dispatch", full);
   } catch (error) {
     console.error(`AGE: ${command.type} failed`, error);
+    useStore.setState({
+      notice: error instanceof Error ? error.message : "The server could not record that.",
+    });
     return null;
   }
 }
@@ -40,6 +43,8 @@ export const selectThread = (threadId: string | null) =>
     selectedThreadId: threadId,
     changes: { ...state.changes, turnId: null, focusPath: null },
   }));
+
+export const dismissNotice = () => useStore.setState({ notice: null });
 
 export const openDialog = (dialog: Dialog) => useStore.setState({ dialog, paletteOpen: false });
 export const closeDialog = () => useStore.setState({ dialog: null });

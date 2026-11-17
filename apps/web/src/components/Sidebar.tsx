@@ -8,8 +8,10 @@ import {
   selectThread,
 } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
+import { toggleTheme } from "../state/theme.ts";
 import { IconFolder, IconEdit, IconPlus, IconTrash } from "./Icons.tsx";
 import { InlineRename } from "./InlineRename.tsx";
+import { shortcut } from "./labels.ts";
 
 export function Sidebar() {
   const projects = useStore((state) => state.model.projects);
@@ -52,6 +54,18 @@ export function Sidebar() {
         {groups.map(({ project, threads: list }) => (
           <ProjectGroup key={project.id} project={project} threads={list} selected={selected} />
         ))}
+      </div>
+      <div className="sidebar-foot">
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => useStore.setState({ paletteOpen: true })}
+        >
+          Commands <kbd>{shortcut("K")}</kbd>
+        </button>
+        <button type="button" className="link-button" onClick={toggleTheme}>
+          Theme
+        </button>
       </div>
     </nav>
   );

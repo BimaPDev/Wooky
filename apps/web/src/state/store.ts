@@ -31,6 +31,8 @@ export interface AppState {
   theme: Theme | null;
   /** Bumped when a turn finishes, so the Changes panel knows to refetch. */
   diffVersion: number;
+  /** Last rejected command or failed request, in one sentence. */
+  notice: string | null;
 }
 
 export const useStore = create<AppState>(() => ({
@@ -44,6 +46,7 @@ export const useStore = create<AppState>(() => ({
   dialog: null,
   theme: null,
   diffVersion: 0,
+  notice: null,
 }));
 
 export function receiveSnapshot(model: ReadModel) {
