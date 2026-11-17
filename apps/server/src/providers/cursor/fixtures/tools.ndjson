@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","session_id":"sess-test-001"}
+{"type":"tool_call","subtype":"started","call_id":"call-read-1","tool_call":{"readToolCall":{"args":{"path":"/workspace/test.txt"}}},"session_id":"sess-test-001"}
+{"type":"tool_call","subtype":"completed","call_id":"call-read-1","tool_call":{"readToolCall":{"args":{"path":"/workspace/test.txt"},"result":{"success":{"content":"hello world\n","path":"/workspace/test.txt"}}}},"session_id":"sess-test-001"}
+{"type":"tool_call","subtype":"started","call_id":"call-shell-1","tool_call":{"shellToolCall":{"args":{"command":"echo hi"}}},"session_id":"sess-test-001"}
+{"type":"tool_call","subtype":"completed","call_id":"call-shell-1","tool_call":{"shellToolCall":{"args":{"command":"echo hi"},"result":{"success":{"command":"echo hi","exitCode":0,"interleavedOutput":"hi\n"}}}},"session_id":"sess-test-001"}
+{"type":"tool_call","subtype":"started","call_id":"call-shell-2","tool_call":{"shellToolCall":{"args":{"command":"false"}}},"session_id":"sess-test-001"}
+{"type":"tool_call","subtype":"completed","call_id":"call-shell-2","tool_call":{"shellToolCall":{"args":{"command":"false"},"result":{"success":{"command":"false","exitCode":1,"interleavedOutput":"error\n"}}}},"session_id":"sess-test-001"}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess-test-001","usage":{"inputTokens":100,"outputTokens":50}}
