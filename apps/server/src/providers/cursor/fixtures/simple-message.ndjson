@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","cwd":"/workspace","session_id":"sess-test-001","model":"Auto"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with ok."}]},"session_id":"sess-test-001"}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"sess-test-001","timestamp_ms":1}
+{"type":"thinking","subtype":"delta","text":" user wants a simple reply of \"ok\".","session_id":"sess-test-001","timestamp_ms":2}
+{"type":"thinking","subtype":"completed","session_id":"sess-test-001","timestamp_ms":2}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"session_id":"sess-test-001","timestamp_ms":3}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"session_id":"sess-test-001"}
+{"type":"result","subtype":"success","duration_ms":1928,"is_error":false,"result":"ok","session_id":"sess-test-001","usage":{"inputTokens":9519,"outputTokens":19,"cacheReadTokens":3968}}

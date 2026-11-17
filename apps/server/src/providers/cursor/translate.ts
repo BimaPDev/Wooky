@@ -1,0 +1,319 @@
+import type { ProviderEvent, ToolKind, Usage } from "@age/contracts";
+
+const OUTPUT_PREVIEW_MAX = 4 * 1024;
+
+export type CursorStreamEvent = Record<string, unknown>;
+
+let nextItemId = 0;
+function newItemId(prefix: string): string {
+  nextItemId += 1;
+  return `${prefix}-${nextItemId}`;
+}
+
+/** Reset item-id counter between tests. */
+export function resetTranslateIds(): void {
+  nextItemId = 0;
+}
+
+export class CursorTranslator {
+  private sessionEmitted = false;
+  private messageItemId: string | null = null;
+  private messageText = "";
+  private reasoningItemId: string | null = null;
+  private reasoningText = "";
+  private tools = new Map<string, string>();
+  private doneEmitted = false;
+
+  /** Feed one parsed NDJSON object; returns zero or more provider events. */
+  translate(event: CursorStreamEvent): ProviderEvent[] {
+    if (this.doneEmitted) return [];
+
+    const out: ProviderEvent[] = [];
+    const sessionId = typeof event.session_id === "string" ? event.session_id : null;
+    if (sessionId && !this.sessionEmitted) {
+      this.sessionEmitted = true;
+      out.push({ type: "session", sessionId });
+    }
+
+    switch (event.type) {
+      case "thinking":
+        out.push(...this.onThinking(event));
+        break;
+      case "assistant":
+        out.push(...this.onAssistant(event));
+        break;
+      case "tool_call":
+        out.push(...this.onToolCall(event));
+        break;
+      case "result":
+        out.push(...this.onResult(event));
+        break;
+      default:
+        break;
+    }
+
+    return out;
+  }
+
+  finish(exitCode: number | null, stderrTail: string | null, aborted: boolean): ProviderEvent[] {
+    if (this.doneEmitted) return [];
+    this.doneEmitted = true;
+
+    if (aborted) {
+      return [{ type: "done", status: "interrupted", error: null }];
+    }
+    if (exitCode !== null && exitCode !== 0) {
+      return [
+        {
+          type: "done",
+          status: "failed",
+          error: stderrTail ?? `Process exited with code ${exitCode}`,
+        },
+      ];
+    }
+    return [{ type: "done", status: "completed", error: null }];
+  }
+
+  private onThinking(event: CursorStreamEvent): ProviderEvent[] {
+    const subtype = event.subtype;
+    if (subtype === "delta" && typeof event.text === "string") {
+      const text = event.text;
+      if (!this.reasoningItemId) {
+        this.reasoningItemId = newItemId("reasoning");
+        this.reasoningText = "";
+        return [
+          {
+            type: "item",
+            item: { kind: "reasoning", id: this.reasoningItemId, text: "" },
+          },
+          { type: "delta", itemId: this.reasoningItemId, text },
+        ];
+      }
+      this.reasoningText += text;
+      return [{ type: "delta", itemId: this.reasoningItemId, text }];
+    }
+    return [];
+  }
+
+  private onAssistant(event: CursorStreamEvent): ProviderEvent[] {
+    const text = extractAssistantText(event);
+    if (text === null) return [];
+
+    if (text === this.messageText) return [];
+
+    if (!this.messageItemId) {
+      this.messageItemId = newItemId("message");
+      this.messageText = text;
+      return [
+        {
+          type: "item",
+          item: {
+            kind: "message",
+            id: this.messageItemId,
+            role: "assistant",
+            text,
+          },
+        },
+      ];
+    }
+
+    if (text.startsWith(this.messageText)) {
+      const suffix = text.slice(this.messageText.length);
+      this.messageText = text;
+      if (suffix.length === 0) return [];
+      return [{ type: "delta", itemId: this.messageItemId, text: suffix }];
+    }
+
+    this.messageText += text;
+    return [{ type: "delta", itemId: this.messageItemId, text }];
+  }
+
+  private onToolCall(event: CursorStreamEvent): ProviderEvent[] {
+    const subtype = event.subtype;
+    const callId = typeof event.call_id === "string" ? event.call_id : null;
+    if (!callId) return [];
+
+    const toolCall = event.tool_call as Record<string, unknown> | undefined;
+    if (!toolCall) return [];
+
+    if (subtype === "started") {
+      const info = classifyToolCall(toolCall);
+      const itemId = newItemId("tool");
+      this.tools.set(callId, itemId);
+      return [
+        {
+          type: "item",
+          item: {
+            kind: "tool",
+            id: itemId,
+            tool: info.kind,
+            title: info.title,
+            name: info.name,
+            status: "running",
+            files: info.files,
+          },
+        },
+      ];
+    }
+
+    if (subtype === "completed") {
+      const itemId = this.tools.get(callId);
+      if (!itemId) return [];
+      const info = classifyToolCall(toolCall);
+      const { output, failed } = extractToolOutput(toolCall);
+      return [
+        {
+          type: "item",
+          item: {
+            kind: "tool",
+            id: itemId,
+            tool: info.kind,
+            title: info.title,
+            name: info.name,
+            status: failed ? "failed" : "done",
+            output,
+            files: info.files,
+          },
+        },
+      ];
+    }
+
+    return [];
+  }
+
+  private onResult(event: CursorStreamEvent): ProviderEvent[] {
+    const out: ProviderEvent[] = [];
+    const usage = parseUsage(event.usage);
+    if (usage) out.push({ type: "usage", usage });
+
+    const isError = event.is_error === true || event.subtype === "error";
+    const errorText = isError && typeof event.result === "string" ? event.result : null;
+
+    this.doneEmitted = true;
+    out.push({
+      type: "done",
+      status: isError ? "failed" : "completed",
+      error: errorText,
+    });
+    return out;
+  }
+}
+
+function extractAssistantText(event: CursorStreamEvent): string | null {
+  const message = event.message as
+    { content?: Array<{ type?: string; text?: string }> } | undefined;
+  if (!message?.content) return null;
+  const parts = message.content
+    .filter((c) => c.type === "text" && typeof c.text === "string")
+    .map((c) => c.text as string);
+  return parts.length > 0 ? parts.join("") : null;
+}
+
+function classifyToolCall(toolCall: Record<string, unknown>): {
+  kind: ToolKind;
+  name: string;
+  title: string;
+  files?: string[];
+} {
+  const keys = Object.keys(toolCall);
+  const name = keys[0] ?? "unknown";
+  const inner = toolCall[name] as Record<string, unknown> | undefined;
+  const args = inner?.args as Record<string, unknown> | undefined;
+
+  if (name === "readToolCall") {
+    const path = typeof args?.path === "string" ? shortenPath(args.path) : "?";
+    return { kind: "read", name, title: `Read ${path}` };
+  }
+  if (name === "shellToolCall") {
+    const cmd = typeof args?.command === "string" ? args.command : "?";
+    return { kind: "command", name, title: truncate(cmd, 120) };
+  }
+  if (
+    name === "editToolCall" ||
+    name === "writeToolCall" ||
+    name === "strReplaceToolCall" ||
+    name === "applyPatchToolCall"
+  ) {
+    const path =
+      typeof args?.path === "string"
+        ? shortenPath(args.path)
+        : typeof args?.file_path === "string"
+          ? shortenPath(args.file_path)
+          : "?";
+    return { kind: "edit", name, title: `Edit ${path}`, files: [path] };
+  }
+  if (name === "grepToolCall" || name === "searchToolCall" || name === "globToolCall") {
+    const pattern =
+      typeof args?.pattern === "string"
+        ? args.pattern
+        : typeof args?.query === "string"
+          ? args.query
+          : "?";
+    return { kind: "search", name, title: `Search ${truncate(pattern, 80)}` };
+  }
+  if (name === "webToolCall" || name === "webFetchToolCall") {
+    const url = typeof args?.url === "string" ? args.url : "?";
+    return { kind: "web", name, title: truncate(url, 120) };
+  }
+  if (name === "taskToolCall") {
+    return { kind: "task", name, title: "Task" };
+  }
+  return { kind: "other", name, title: name };
+}
+
+function extractToolOutput(toolCall: Record<string, unknown>): {
+  output: string | undefined;
+  failed: boolean;
+} {
+  const keys = Object.keys(toolCall);
+  const name = keys[0];
+  if (!name) return { output: undefined, failed: false };
+
+  const inner = toolCall[name] as Record<string, unknown> | undefined;
+  const result = inner?.result as Record<string, unknown> | undefined;
+  if (!result) return { output: undefined, failed: false };
+
+  if (result.rejected || result.error) return { output: previewJson(result), failed: true };
+  if (result.success) {
+    const success = result.success as Record<string, unknown>;
+    if (typeof success.content === "string") {
+      return { output: truncate(success.content, OUTPUT_PREVIEW_MAX), failed: false };
+    }
+    if (typeof success.output === "string") {
+      return { output: truncate(success.output, OUTPUT_PREVIEW_MAX), failed: false };
+    }
+    return { output: previewJson(success), failed: false };
+  }
+
+  return { output: previewJson(result), failed: false };
+}
+
+function previewJson(value: unknown): string {
+  return truncate(JSON.stringify(value), OUTPUT_PREVIEW_MAX);
+}
+
+function parseUsage(raw: unknown): Usage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const u = raw as Record<string, unknown>;
+  const inputTokens = typeof u.inputTokens === "number" ? u.inputTokens : null;
+  const outputTokens = typeof u.outputTokens === "number" ? u.outputTokens : null;
+  if (inputTokens === null || outputTokens === null) return null;
+
+  const usage: Usage = { inputTokens, outputTokens };
+  if (typeof u.cacheReadTokens === "number") {
+    usage.cachedInputTokens = u.cacheReadTokens;
+  }
+  return usage;
+}
+
+function shortenPath(path: string): string {
+  const workspace = "/workspace/";
+  const idx = path.indexOf(workspace);
+  if (idx !== -1) return path.slice(idx + workspace.length);
+  const parts = path.split("/");
+  return parts.slice(-2).join("/");
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + "…";
+}
