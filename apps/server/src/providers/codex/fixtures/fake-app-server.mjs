@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
@@ -17,9 +18,22 @@ function readFlag(name) {
 const scenario = readFlag("--scenario") ?? "standard";
 const logFile = readFlag("--log-file");
 const pidFile = readFlag("--pid-file");
+const grandchildPidFile = readFlag("--grandchild-pid-file");
 
 if (pidFile) {
   writeFileSync(pidFile, String(process.pid), "utf8");
+}
+
+// Spawn a long-lived grandchild as an ordinary child. It is NOT detached, so
+// killing only this server's pid would orphan (not kill) it: proving the group
+// kill is what takes it down.
+function spawnGrandchild() {
+  const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1 << 30);"], {
+    stdio: "ignore",
+  });
+  if (grandchildPidFile) {
+    writeFileSync(grandchildPidFile, String(grandchild.pid), "utf8");
+  }
 }
 
 function logIncoming(frame) {
@@ -35,7 +49,18 @@ let initialized = false;
 let handshakeAcked = false;
 let currentThreadId = "thr_fake_1";
 const currentTurnId = "turn_fake_1";
+let isResumeTurn = false;
 const pendingServerRequests = new Map();
+
+// Cumulative thread totals the app-server reports. For the cumulative-usage
+// scenario the second (resumed) turn reports a strictly larger cumulative total,
+// so the adapter must emit the per-turn delta rather than the raw total.
+function cumulativeTokenUsage() {
+  if (scenario === "cumulative-usage" && isResumeTurn) {
+    return { inputTokens: 250, cachedInputTokens: 40, outputTokens: 120 };
+  }
+  return { inputTokens: 100, cachedInputTokens: 25, outputTokens: 50 };
+}
 
 // Keep stdin open during hang scenarios until closed or signaled.
 process.on("SIGTERM", () => {
@@ -140,6 +165,7 @@ function finishTurnWithDecision(decision) {
       item: { type: "agentMessage", id: "msg_1", text: replyText },
     },
   });
+  const usage = cumulativeTokenUsage();
   send({
     method: "thread/tokenUsage/updated",
     params: {
@@ -147,19 +173,19 @@ function finishTurnWithDecision(decision) {
       turnId: currentTurnId,
       tokenUsage: {
         total: {
-          totalTokens: 150,
-          inputTokens: 100,
-          cachedInputTokens: 25,
+          totalTokens: usage.inputTokens + usage.outputTokens,
+          inputTokens: usage.inputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
           cacheWriteInputTokens: 0,
-          outputTokens: 50,
+          outputTokens: usage.outputTokens,
           reasoningOutputTokens: 10,
         },
         last: {
-          totalTokens: 150,
-          inputTokens: 100,
-          cachedInputTokens: 25,
+          totalTokens: usage.inputTokens + usage.outputTokens,
+          inputTokens: usage.inputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
           cacheWriteInputTokens: 0,
-          outputTokens: 50,
+          outputTokens: usage.outputTokens,
           reasoningOutputTokens: 10,
         },
         modelContextWindow: 500000,
@@ -220,6 +246,7 @@ function handleClientRequest(msg) {
   }
 
   if (msg.method === "thread/resume") {
+    isResumeTurn = true;
     currentThreadId = msg.params?.threadId ?? "thr_resumed_fallback";
     send({
       id: msg.id,
@@ -286,6 +313,12 @@ function handleClientRequest(msg) {
     });
 
     if (scenario === "hang-mid-turn") {
+      return;
+    }
+
+    if (scenario === "spawn-grandchild") {
+      spawnGrandchild();
+      // Hang: stay alive (holding the grandchild) until the client stops us.
       return;
     }
 

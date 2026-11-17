@@ -62,6 +62,23 @@ export function truncateOutputPreview(raw: string): string {
   return prefix + chars.slice(startIndex).join("");
 }
 
+function deltaUsage(
+  cumulative: UsageTotals,
+  baseline: UsageTotals | null,
+): { inputTokens: number; outputTokens: number; cachedInputTokens?: number } {
+  const base = baseline ?? { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
+  const inputTokens = Math.max(0, cumulative.inputTokens - base.inputTokens);
+  const outputTokens = Math.max(0, cumulative.outputTokens - base.outputTokens);
+  if (typeof cumulative.cachedInputTokens === "number") {
+    const cachedInputTokens = Math.max(
+      0,
+      cumulative.cachedInputTokens - (base.cachedInputTokens ?? 0),
+    );
+    return { inputTokens, outputTokens, cachedInputTokens };
+  }
+  return { inputTokens, outputTokens };
+}
+
 function formatTurnError(err: CodexTurnError | null | undefined): string | null {
   if (!err) return null;
   const message = err.message.trim();
@@ -171,6 +188,18 @@ export interface FileChangePreview {
   diff: string;
 }
 
+/** Cumulative thread token totals, as reported by the app-server. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+}
+
+export interface CodexTranslatorOptions {
+  /** Cumulative thread usage carried over from prior turns, subtracted so AGE sees per-turn deltas. */
+  usageBaseline?: UsageTotals | null;
+}
+
 export interface CodexTranslator {
   bindSession(sessionId: string): ProviderEvent[];
   translateNotification(method: string, params: unknown): ProviderEvent[];
@@ -179,6 +208,8 @@ export interface CodexTranslator {
   getLastError(): string | null;
   getCommandForItem(itemId: string): string | undefined;
   getFileChangeForItem(itemId: string): FileChangePreview | undefined;
+  /** Latest cumulative thread total seen this turn, for carrying over as the next baseline. */
+  getCumulativeUsage(): UsageTotals | null;
 }
 
 interface CommandState {
@@ -192,10 +223,13 @@ interface FileChangeState {
   output: string;
 }
 
-export function createCodexTranslator(): CodexTranslator {
+export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTranslator {
   let emittedSessionId: string | null = null;
   let doneEmitted = false;
   let lastError: string | null = null;
+
+  const usageBaseline = options?.usageBaseline ?? null;
+  let latestCumulativeUsage: UsageTotals | null = null;
 
   const seenMessageIds = new Set<string>();
   const messageTexts = new Map<string, string>();
@@ -553,21 +587,35 @@ export function createCodexTranslator(): CodexTranslator {
       case "thread/tokenUsage/updated": {
         const parsed = ThreadTokenUsageUpdatedNotificationSchema.safeParse(params);
         if (!parsed.success) return [];
-        const breakdown = parsed.data.tokenUsage.total ?? parsed.data.tokenUsage.last;
-        if (!breakdown) return [];
-        return [
-          {
-            type: "usage",
-            usage: {
-              inputTokens: Math.max(0, Math.trunc(breakdown.inputTokens)),
-              outputTokens: Math.max(0, Math.trunc(breakdown.outputTokens)),
-              ...(typeof breakdown.cachedInputTokens === "number" &&
-              breakdown.cachedInputTokens >= 0
-                ? { cachedInputTokens: Math.trunc(breakdown.cachedInputTokens) }
-                : {}),
+        const { total, last } = parsed.data.tokenUsage;
+        // `total` is the cumulative thread total; subtract the baseline carried in
+        // from prior turns so AGE records this turn's delta, not the running total.
+        // `last` (when present without `total`) is already this turn's usage.
+        if (total) {
+          latestCumulativeUsage = {
+            inputTokens: Math.max(0, Math.trunc(total.inputTokens)),
+            outputTokens: Math.max(0, Math.trunc(total.outputTokens)),
+            ...(typeof total.cachedInputTokens === "number" && total.cachedInputTokens >= 0
+              ? { cachedInputTokens: Math.trunc(total.cachedInputTokens) }
+              : {}),
+          };
+          return [{ type: "usage", usage: deltaUsage(latestCumulativeUsage, usageBaseline) }];
+        }
+        if (last) {
+          return [
+            {
+              type: "usage",
+              usage: {
+                inputTokens: Math.max(0, Math.trunc(last.inputTokens)),
+                outputTokens: Math.max(0, Math.trunc(last.outputTokens)),
+                ...(typeof last.cachedInputTokens === "number" && last.cachedInputTokens >= 0
+                  ? { cachedInputTokens: Math.trunc(last.cachedInputTokens) }
+                  : {}),
+              },
             },
-          },
-        ];
+          ];
+        }
+        return [];
       }
 
       case "error": {
@@ -606,5 +654,6 @@ export function createCodexTranslator(): CodexTranslator {
       const entry = fileChangeStates.get(normalizeId(itemId));
       return entry ? { files: entry.files, diff: entry.diff } : undefined;
     },
+    getCumulativeUsage: () => latestCumulativeUsage,
   };
 }

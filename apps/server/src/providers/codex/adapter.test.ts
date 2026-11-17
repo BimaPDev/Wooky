@@ -18,6 +18,13 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
+/** Waits (polling the event loop, no sleep) until the given pid no longer exists. */
+async function waitForPidToExit(pid: number): Promise<void> {
+  while (isPidAlive(pid)) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 function readLoggedFrames(logPath: string): Array<Record<string, unknown>> {
   const raw = readFileSync(logPath, "utf8").trim();
   if (!raw) return [];
@@ -365,6 +372,98 @@ describe("createCodexAdapter", () => {
       threadId: "thr_started_1",
       turnId: "turn_fake_1",
     });
+  });
+
+  it("answers a pending approval with exactly one decline when the turn is interrupted mid-approval", async () => {
+    const logFile = join(workDir, "abort-approval.jsonl");
+    const controller = new AbortController();
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--log-file", logFile],
+    });
+
+    let approvalCount = 0;
+    const received: ProviderEvent[] = [];
+    for await (const event of adapter.runTurn(
+      baseInput({
+        signal: controller.signal,
+        // Interrupt while the approval is still pending; never resolve it ourselves.
+        requestApproval: () => {
+          approvalCount += 1;
+          controller.abort();
+          return new Promise<"allow" | "deny">(() => {});
+        },
+      }),
+    )) {
+      ProviderEvent.parse(event);
+      received.push(event);
+    }
+
+    expect(approvalCount).toBe(1);
+
+    const doneEvents = received.filter((ev) => ev.type === "done");
+    expect(doneEvents).toEqual([{ type: "done", status: "interrupted", error: null }]);
+    expect(received.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
+
+    const approvalReplies = readLoggedFrames(logFile).filter(
+      (f) => f.id === 500 && !("method" in f),
+    );
+    expect(approvalReplies).toHaveLength(1);
+    expect(approvalReplies[0]?.result).toEqual({ decision: "decline" });
+  });
+
+  it("reports per-turn token usage as the delta over the prior turn's cumulative total", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "cumulative-usage"],
+    });
+
+    const firstEvents = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: null })),
+    );
+    expect(firstEvents[0]).toEqual({ type: "session", sessionId: "thr_started_1" });
+    const firstUsage = firstEvents.find((ev) => ev.type === "usage");
+    if (firstUsage?.type !== "usage") throw new Error("expected a usage event in turn 1");
+    expect(firstUsage.usage).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+
+    const secondEvents = await collectEvents(
+      adapter.runTurn(baseInput({ runtimeMode: "full", resumeSessionId: "thr_started_1" })),
+    );
+    const secondUsage = secondEvents.find((ev) => ev.type === "usage");
+    if (secondUsage?.type !== "usage") throw new Error("expected a usage event in turn 2");
+    // Cumulative totals: turn 1 = 100/50, turn 2 = 250/120 -> turn 2 delta = 150/70.
+    expect(secondUsage.usage).toMatchObject({
+      inputTokens: 150,
+      outputTokens: 70,
+      cachedInputTokens: 15,
+    });
+  });
+
+  it("kills the whole process group so a grandchild does not outlive stop", async () => {
+    const gcPidFile = join(workDir, "grandchild.pid");
+    const controller = new AbortController();
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [
+        fakeServerPath,
+        "--scenario",
+        "spawn-grandchild",
+        "--grandchild-pid-file",
+        gcPidFile,
+      ],
+    });
+
+    for await (const event of adapter.runTurn(baseInput({ signal: controller.signal }))) {
+      ProviderEvent.parse(event);
+      if (event.type === "item" && event.item.kind === "reasoning" && event.item.text.length > 0) {
+        controller.abort();
+      }
+    }
+
+    const gcPid = Number(readFileSync(gcPidFile, "utf8").trim());
+    expect(Number.isInteger(gcPid)).toBe(true);
+    await waitForPidToExit(gcPid);
+    expect(isPidAlive(gcPid)).toBe(false);
   });
 
   it("emits done failed with the last 4 KB stderr tail when the app-server crashes mid-turn", async () => {
