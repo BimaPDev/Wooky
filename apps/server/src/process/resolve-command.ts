@@ -1,11 +1,4 @@
-import {
-  accessSync,
-  constants,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
+import { accessSync, constants, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 
 export type ResolvedCommand = {
@@ -17,7 +10,7 @@ export type ResolvedCommand = {
 
 const WIN = process.platform === "win32";
 
-/** Resolve a CLI name or path to something Node can spawn without `shell: true`. */
+/** Resolve a CLI name or path to something Node can spawn without a shell. */
 export function resolveCommand(
   input: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -39,9 +32,7 @@ export function resolveCommand(
 function pathCandidates(name: string, env: NodeJS.ProcessEnv): string[] {
   const pathEnv = env.PATH ?? env.Path ?? "";
   const dirs = pathEnv.split(delimiter).filter(Boolean);
-  const exts = WIN
-    ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)
-    : [""];
+  const exts = WIN ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean) : [""];
   const out: string[] = [];
   for (const dir of dirs) {
     if (WIN) {
@@ -138,12 +129,9 @@ function unwrapBatch(batchPath: string, env: NodeJS.ProcessEnv): ResolvedCommand
 }
 
 function powershellFile(script: string, env: NodeJS.ProcessEnv): ResolvedCommand | null {
-  const system =
-    env.SystemRoot ?? (WIN ? "C:\\Windows" : undefined);
+  const system = env.SystemRoot ?? (WIN ? "C:\\Windows" : undefined);
   const candidates = [
-    ...(system
-      ? [join(system, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")]
-      : []),
+    ...(system ? [join(system, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")] : []),
     "powershell.exe",
   ];
   for (const candidate of candidates) {

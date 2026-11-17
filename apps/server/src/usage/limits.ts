@@ -1,9 +1,6 @@
 import type { ProviderKind, ProviderLimits } from "@age/contracts";
 import type { SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
-import {
-  applyClaudeRateLimitEvent,
-  fetchClaudeLimits,
-} from "../providers/claude/limits.ts";
+import { applyClaudeRateLimitEvent, fetchClaudeLimits } from "../providers/claude/limits.ts";
 import { fetchCodexLimits } from "../providers/codex/limits.ts";
 
 const DEFAULT_CACHE_MS = 60_000;
@@ -23,11 +20,7 @@ export type LimitsService = {
   ingestClaudeRateLimit(info: SDKRateLimitInfo): void;
 };
 
-function unavailable(
-  provider: ProviderKind,
-  problem: string,
-  checkedAt: string,
-): ProviderLimits {
+function unavailable(provider: ProviderKind, problem: string, checkedAt: string): ProviderLimits {
   return {
     provider,
     available: false,

@@ -8,11 +8,7 @@ import {
 import type { LimitWindow, ProviderLimits } from "@age/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 
-type ClaudeWindowKey =
-  | "five_hour"
-  | "seven_day"
-  | "seven_day_opus"
-  | "seven_day_sonnet";
+type ClaudeWindowKey = "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet";
 
 type ClaudeRawWindow = {
   utilization: number | null;
