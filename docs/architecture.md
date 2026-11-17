@@ -64,3 +64,14 @@ read model. Non-git projects run without checkpoints.
 Clients call `snapshot` once, then `subscribe({ fromSeq })`. Every push is applied with
 `@age/domain`'s `applyEvent`, the same reducer the server uses. A reconnect re-subscribes
 from the last applied `seq`; duplicates are ignored by the reducer.
+
+## Process contract
+
+`age` (apps/server/src/bin.ts) accepts `--port <n>` (0 = random), `--host`, `--home <dir>`
+(default `AGE_HOME` or `~/.age`) and `--web-dist <dir>` (static UI to serve). When ready it
+prints exactly one stdout line `AGE_LISTENING http://<host>:<port>`; the desktop shell and
+dev runner wait for it. It exits cleanly on SIGINT/SIGTERM, aborting running turns.
+
+Checkpoint refs are deterministic, so `turn.started.checkpointBefore` is decided purely:
+`refs/age/checkpoints/<threadId>/<turnId>/before` (and `/after`). If the project is not a
+git repository the capture is skipped and the turn shows a notice.

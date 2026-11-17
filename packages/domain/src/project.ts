@@ -69,6 +69,9 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         providerSessionId: event.providerSessionId,
       });
 
+    case "thread.worktreeBound":
+      return patchThread(model, event.threadId, event.at, { worktree: event.worktree });
+
     case "turn.started": {
       const turn: Turn = {
         id: event.turnId,

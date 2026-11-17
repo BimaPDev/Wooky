@@ -9,6 +9,7 @@ import {
   TimelineItem,
   TurnStatus,
   Usage,
+  Worktree,
 } from "./model.ts";
 
 /**
@@ -45,6 +46,13 @@ export const AgeEvent = z.discriminatedUnion("type", [
     type: z.literal("thread.sessionBound"),
     threadId: Id,
     providerSessionId: z.string().nullable(),
+  }),
+  /** Emitted by the effect runner once an isolated thread's worktree exists. */
+  z.object({
+    ...meta,
+    type: z.literal("thread.worktreeBound"),
+    threadId: Id,
+    worktree: Worktree,
   }),
   z.object({
     ...meta,
