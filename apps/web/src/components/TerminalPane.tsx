@@ -34,24 +34,28 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
   const scrollRef = useRef<HTMLPreElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sessionRef = useRef<string | null>(null);
+  const pending = useStore((state) => state.pendingTerminalLine);
 
-  const writeTo = async (id: string, text: string) => {
-    setOutput((prev) => prev + `$ ${text}\r\n`);
-    try {
-      await backend().call("terminal.write", { sessionId: id, data: `${text}\r\n` });
-    } catch (err) {
-      setStatus("error");
-      setError(err instanceof Error ? err.message : "Write failed.");
-    }
-  };
+  const writeTo = (id: string, text: string) =>
+    backend()
+      .call("terminal.write", { sessionId: id, data: `${text}\r\n` })
+      .then(
+        () => setOutput((prev) => prev + `$ ${text}\r\n`),
+        (err: unknown) => {
+          setStatus("error");
+          setError(err instanceof Error ? err.message : "Write failed.");
+        },
+      );
 
-  // Settings → Providers Sign in queues a login command for the next ready shell.
   const onReady = useEffectEvent((id: string) => {
     sessionRef.current = id;
     setSessionId(id);
     setStatus("ready");
-    const pending = takePendingTerminalLine();
-    if (pending) void writeTo(id, pending);
+  });
+
+  const deliverPending = useEffectEvent((id: string) => {
+    const text = takePendingTerminalLine(id);
+    if (text) void writeTo(id, text);
   });
 
   const onOpenFailed = useEffectEvent((err: unknown) => {
@@ -82,6 +86,11 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
       if (id) void backend().call("terminal.close", { sessionId: id });
     };
   }, [cwd]);
+
+  // sync: send a Sign in line queued in the store to the ready server shell, once
+  useEffect(() => {
+    if (pending && sessionId && status === "ready") deliverPending(sessionId);
+  }, [pending, sessionId, status]);
 
   // sync: append terminal chunks pushed over the websocket for this session
   useEffect(() => {

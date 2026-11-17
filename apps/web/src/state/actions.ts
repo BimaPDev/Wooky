@@ -55,8 +55,9 @@ export const toggleTerminal = () =>
 export const runInTerminal = (line: string) =>
   useStore.setState({ terminalOpen: true, pendingTerminalLine: line, settingsOpen: false });
 
-export const takePendingTerminalLine = () => {
-  const line = useStore.getState().pendingTerminalLine;
+/** Take the queued line for a ready shell, once. With no ready shell it stays queued. */
+export const takePendingTerminalLine = (sessionId: string | null) => {
+  const line = sessionId ? useStore.getState().pendingTerminalLine : null;
   if (line) useStore.setState({ pendingTerminalLine: null });
   return line;
 };
