@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgeEvent, ProviderEvent, ProviderKind, RuntimeMode } from "@age/contracts";
+import type { AgeEvent, ProviderEvent, ProviderKind, RuntimeMode, Thread } from "@age/contracts";
 import { createNoopGitService } from "../git/noop.ts";
 import type { GitService } from "../git/types.ts";
 import { createDispatcher } from "../orchestrator/dispatcher.ts";
@@ -31,12 +31,19 @@ function scripted(
   };
 }
 
-async function harness(options: { adapters?: ProviderAdapter[]; git?: GitService } = {}) {
+async function harness(
+  options: {
+    adapters?: ProviderAdapter[];
+    git?: GitService;
+    wrapStore?: (store: EventStore) => EventStore;
+  } = {},
+) {
   const home = await tempDir("runner");
   const root = await tempDir("project");
   const ctx = testContext();
   const fake = createFakeGit();
-  const store = openEventStore(home, ctx.now);
+  const opened = openEventStore(home, ctx.now);
+  const store = options.wrapStore?.(opened) ?? opened;
   const providers = createProviderRegistry(options.adapters ?? [createDemoAdapter({ stepMs: 0 })]);
   const runner = createEffectRunner({
     store,
@@ -47,7 +54,7 @@ async function harness(options: { adapters?: ProviderAdapter[]; git?: GitService
   const dispatcher = createDispatcher({ store, runner, ctx });
   cleanups.push(async () => {
     await runner.shutdown();
-    store.close();
+    opened.close();
   });
 
   let commands = 0;
@@ -57,14 +64,18 @@ async function harness(options: { adapters?: ProviderAdapter[]; git?: GitService
   dispatch({ type: "project.add", root });
   const projectId = Object.keys(store.model.projects)[0] ?? "";
 
-  const createThread = (runtimeMode: RuntimeMode, provider: ProviderKind = "demo") => {
+  const createThread = (
+    runtimeMode: RuntimeMode,
+    provider: ProviderKind = "demo",
+    isolate = false,
+  ) => {
     const { seq } = dispatch({
       type: "thread.create",
       projectId,
       provider,
       model: provider,
       runtimeMode,
-      isolate: false,
+      isolate,
     });
     const created = store.eventsAfter(seq - 1)[0];
     if (created?.type !== "thread.created") throw new Error("thread not created");
@@ -78,6 +89,74 @@ async function harness(options: { adapters?: ProviderAdapter[]; git?: GitService
   };
 
   return { store, runner, dispatch, root, home, calls: fake.calls, createThread, startTurn };
+}
+
+/** Resolves when the signal aborts. */
+function aborted(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) =>
+    signal.addEventListener("abort", () => resolve(), { once: true }),
+  );
+}
+
+const at = "2026-01-01T00:00:00.000Z";
+
+/** A store holding project p1 (root `root`) and an idle thread t1, as left by a previous process. */
+function seededStore(home: string, root: string, thread: Partial<Thread> = {}): EventStore {
+  const store = openEventStore(home, () => at);
+  store.commit({
+    commandId: "seed",
+    events: [
+      {
+        type: "project.added",
+        commandId: "seed",
+        project: { id: "p1", name: "p", root, createdAt: at },
+      },
+      {
+        type: "thread.created",
+        commandId: "seed",
+        thread: {
+          id: "t1",
+          projectId: "p1",
+          title: "x",
+          provider: "demo",
+          model: "demo",
+          runtimeMode: "full",
+          worktree: null,
+          providerSessionId: null,
+          status: "idle",
+          createdAt: at,
+          updatedAt: at,
+          ...thread,
+        },
+      },
+    ],
+    effects: [],
+  });
+  return store;
+}
+
+function restart(home: string, git: GitService, adapters?: ProviderAdapter[]) {
+  const ctx = testContext();
+  const store = openEventStore(home, ctx.now);
+  const runner = createEffectRunner({
+    store,
+    providers: createProviderRegistry(adapters ?? [createDemoAdapter({ stepMs: 0 })]),
+    git,
+    newId: ctx.newId,
+  });
+  runner.recover();
+  return { store, runner };
+}
+
+function effectStatuses(home: string): string[] {
+  const db = new DatabaseSync(join(home, "state.sqlite"));
+  const rows = db.prepare("SELECT kind, status FROM effects ORDER BY id").all() as {
+    kind: string;
+    status: string;
+  }[];
+  db.close();
+  return rows.map((row) => `${row.kind}:${row.status}`);
 }
 
 function finishedFor(store: EventStore, turnId: string) {
@@ -413,7 +492,6 @@ describe("effect runner effects and recovery", () => {
     const home = await tempDir("recovery");
     const ctx = testContext();
     const store = openEventStore(home, ctx.now);
-    const at = ctx.now();
     store.commit({
       commandId: "c1",
       events: [
@@ -470,5 +548,316 @@ describe("effect runner effects and recovery", () => {
     const db = new DatabaseSync(join(home, "state.sqlite"));
     expect(db.prepare("SELECT status FROM effects").all()).toEqual([{ status: "retired" }]);
     db.close();
+  });
+
+  it("re-runs a revert that a crash left pending and records it exactly once", async () => {
+    const home = await tempDir("recovery");
+    const root = await tempDir("project");
+    const first = seededStore(home, root);
+    const turn = {
+      type: "turn.started" as const,
+      commandId: "c1",
+      threadId: "t1",
+      turnId: "u1",
+      prompt: "x",
+      provider: "demo" as const,
+      model: "demo",
+      checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+    };
+    first.commit({ commandId: "c1", events: [turn], effects: [] });
+    first.appendInternal([
+      {
+        type: "turn.finished",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u1",
+        status: "completed",
+        checkpointAfter: "refs/age/checkpoints/t1/u1/after",
+        changedFiles: [],
+        usage: null,
+        error: null,
+      },
+    ]);
+    // The revert is committed, then the process dies before the effect runs.
+    first.commit({
+      commandId: "c2",
+      events: [],
+      effects: [
+        {
+          kind: "checkpoint.restore",
+          threadId: "t1",
+          turnId: "u1",
+          cwd: root,
+          ref: "refs/age/checkpoints/t1/u1/before",
+        },
+      ],
+    });
+    first.close();
+
+    const fake = createFakeGit();
+    const second = restart(home, fake.git);
+    await second.runner.idle();
+    expect(fake.calls).toEqual(["restore refs/age/checkpoints/t1/u1/before"]);
+    expect(second.store.model.turns.t1).toEqual([]);
+    await second.runner.shutdown();
+    second.store.close();
+
+    const third = restart(home, fake.git);
+    await third.runner.idle();
+    const reverts = third.store.eventsAfter(0).filter((event) => event.type === "turn.reverted");
+    expect(reverts).toMatchObject([{ turnId: "u1" }]);
+    expect(fake.calls).toHaveLength(1);
+    await third.runner.shutdown();
+    third.store.close();
+    expect(effectStatuses(home)).toEqual(["checkpoint.restore:done"]);
+  });
+
+  it("does not record a second revert when the crash came after turn.reverted", async () => {
+    const home = await tempDir("recovery");
+    const root = await tempDir("project");
+    const first = seededStore(home, root);
+    first.commit({
+      commandId: "c1",
+      events: [
+        {
+          type: "turn.started",
+          commandId: "c1",
+          threadId: "t1",
+          turnId: "u1",
+          prompt: "x",
+          provider: "demo",
+          model: "demo",
+          checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+        },
+      ],
+      effects: [],
+    });
+    first.commit({
+      commandId: "c2",
+      events: [],
+      effects: [
+        {
+          kind: "checkpoint.restore",
+          threadId: "t1",
+          turnId: "u1",
+          cwd: root,
+          ref: "refs/age/checkpoints/t1/u1/before",
+        },
+      ],
+    });
+    first.appendInternal([
+      { type: "turn.reverted", commandId: null, threadId: "t1", turnId: "u1" },
+    ]);
+    first.close();
+
+    const second = restart(home, createFakeGit().git);
+    await second.runner.idle();
+    const reverts = second.store.eventsAfter(0).filter((event) => event.type === "turn.reverted");
+    expect(reverts).toHaveLength(1);
+    await second.runner.shutdown();
+    second.store.close();
+  });
+
+  it("re-runs a worktree removal that a crash left pending", async () => {
+    const home = await tempDir("recovery");
+    const root = await tempDir("project");
+    const worktree = { path: join(root, ".worktrees", "t1"), branch: "age/t1" };
+    const first = seededStore(home, root, { worktree });
+    first.commit({
+      commandId: "c1",
+      events: [{ type: "thread.removed", commandId: "c1", threadId: "t1" }],
+      effects: [{ kind: "worktree.remove", threadId: "t1", projectRoot: root, worktree }],
+    });
+    first.close();
+
+    const fake = createFakeGit();
+    const second = restart(home, fake.git);
+    await second.runner.idle();
+    expect(fake.calls).toEqual([`removeWorktree ${worktree.path}`]);
+    await second.runner.shutdown();
+    second.store.close();
+    expect(effectStatuses(home)).toEqual(["worktree.remove:done"]);
+  });
+
+  it("re-creates an isolated thread's worktree that a crash left pending", async () => {
+    const home = await tempDir("recovery");
+    const root = await tempDir("project");
+    const first = seededStore(home, root, { isolate: true });
+    first.commit({
+      commandId: "c1",
+      events: [],
+      effects: [{ kind: "worktree.create", threadId: "t1", projectRoot: root }],
+    });
+    first.close();
+
+    const fake = createFakeGit();
+    const second = restart(home, fake.git);
+    await second.runner.idle();
+    expect(fake.calls).toEqual(["createWorktree t1"]);
+    expect(second.store.model.threads.t1?.worktree?.path).toBe(join(root, ".worktrees", "t1"));
+    await second.runner.shutdown();
+    second.store.close();
+  });
+
+  it("creates a missing worktree before running a turn on an isolated thread", async () => {
+    const home = await tempDir("recovery");
+    const root = await tempDir("project");
+    seededStore(home, root, { isolate: true }).close();
+    const inputs: TurnInput[] = [];
+    const fake = createFakeGit();
+    const { store, runner } = restart(home, fake.git, [
+      scripted("demo", async function* (input) {
+        inputs.push(input);
+        yield { type: "done", status: "completed", error: null };
+      }),
+    ]);
+    const dispatcher = createDispatcher({ store, runner, ctx: testContext() });
+    dispatcher.dispatch({ type: "turn.start", commandId: "c1", threadId: "t1", prompt: "Go" });
+    const turnId = store.model.turns.t1?.[0]?.id ?? "";
+    expect(await finishedFor(store, turnId)).toMatchObject({ status: "completed" });
+    expect(inputs[0]?.cwd).toBe(join(root, ".worktrees", "t1"));
+    await runner.shutdown();
+    store.close();
+  });
+
+  it("fails a turn on an isolated thread whose worktree cannot be created", async () => {
+    const fake = createFakeGit();
+    const git: GitService = {
+      ...fake.git,
+      createWorktree: async () => {
+        throw new Error("disk is full");
+      },
+    };
+    const inputs: TurnInput[] = [];
+    const h = await harness({
+      git,
+      adapters: [
+        scripted("demo", async function* (input) {
+          inputs.push(input);
+          yield { type: "done", status: "completed", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full", "demo", true);
+    expect(h.store.model.threads[threadId]?.isolate).toBe(true);
+    const { turnId } = h.startTurn(threadId, "Go");
+    const finished = await finishedFor(h.store, turnId);
+    expect(finished.status).toBe("failed");
+    expect(finished.error).toContain("disk is full");
+    expect(inputs).toEqual([]);
+    expect(fake.calls).toEqual([]);
+  });
+});
+
+describe("effect runner hardening", () => {
+  it("rejects reverting a turn that has no checkpoint", async () => {
+    const h = await harness({ git: createNoopGitService() });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    await finishedFor(h.store, turnId);
+    expect(() => h.dispatch({ type: "turn.revert", threadId, turnId })).toThrow(
+      /no checkpoint, so it cannot be reverted/,
+    );
+  });
+
+  it("drops invalid adapter events instead of poisoning the log", async () => {
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* () {
+          yield {
+            type: "item",
+            item: { kind: "message", id: "m1", role: "bot", text: "hi" },
+          } as unknown as ProviderEvent;
+          yield { type: "delta", itemId: "", text: "x" };
+          yield {
+            type: "item",
+            item: { kind: "message", id: "m2", role: "assistant", text: "ok" },
+          };
+          yield { type: "done", status: "completed", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    expect(await finishedFor(h.store, turnId)).toMatchObject({ status: "completed" });
+    const items = h.store.model.turns[threadId]?.[0]?.items ?? [];
+    expect(items.some((item) => item.id === "m1")).toBe(false);
+    expect(items.some((item) => item.id === "m2")).toBe(true);
+    expect(
+      items.filter((item) => item.kind === "notice" && item.text.includes("could not read")),
+    ).toHaveLength(2);
+
+    await h.runner.shutdown();
+    const reopened = openEventStore(h.home, () => at);
+    expect(reopened.model.turns[threadId]?.[0]?.status).toBe("completed");
+    reopened.close();
+  });
+
+  it("fails the turn when an adapter keeps sending invalid events", async () => {
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* () {
+          for (let i = 0; i < 50; i++)
+            yield { type: "usage", usage: { inputTokens: -1, outputTokens: 0 } };
+          yield { type: "done", status: "completed", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    const finished = await finishedFor(h.store, turnId);
+    expect(finished).toMatchObject({ status: "failed" });
+    expect(finished.error).toMatch(/unreadable events/);
+  });
+
+  it("denies approvals in full mode once the turn is aborted", async () => {
+    const answers: string[] = [];
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* (input) {
+          yield { type: "session", sessionId: "s1" };
+          await aborted(input.signal);
+          answers.push(
+            await input.requestApproval({
+              requestId: "r1",
+              tool: "command",
+              title: "rm -rf build",
+              detail: "",
+            }),
+          );
+          yield { type: "done", status: "interrupted", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    await waitForEvent(h.store, "thread.sessionBound");
+    h.dispatch({ type: "turn.interrupt", threadId });
+    expect(await finishedFor(h.store, turnId)).toMatchObject({ status: "interrupted" });
+    expect(answers).toEqual(["deny"]);
+  });
+
+  it("retries recording the end of a turn when the first append fails", async () => {
+    let failed = false;
+    const h = await harness({
+      wrapStore: (store) => {
+        const flaky: EventStore = Object.create(store);
+        flaky.appendInternal = (events) => {
+          if (!failed && events.some((event) => event.type === "turn.finished")) {
+            failed = true;
+            throw new Error("database is locked");
+          }
+          return store.appendInternal(events);
+        };
+        return flaky;
+      },
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    await h.runner.idle();
+    expect(failed).toBe(true);
+    const finishes = h.store.eventsAfter(0).filter((event) => event.type === "turn.finished");
+    expect(finishes).toMatchObject([{ turnId, status: "completed" }]);
+    expect(h.store.model.threads[threadId]?.status).toBe("idle");
   });
 });

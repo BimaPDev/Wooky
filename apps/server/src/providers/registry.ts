@@ -20,6 +20,25 @@ export function createProviderRegistry(
 ): ProviderRegistry {
   const byKind = new Map(adapters.map((adapter) => [adapter.kind, adapter]));
   let cached: { at: number; list: Promise<ProviderStatus[]> } | null = null;
+  const unsettled = new Map<ProviderKind, Promise<ProviderStatus>>();
+
+  /** A probe that outlives its timeout is reused, never stacked under a new one. */
+  const start = (adapter: ProviderAdapter): Promise<ProviderStatus> => {
+    const running = unsettled.get(adapter.kind);
+    if (running) return running;
+    let probe: Promise<ProviderStatus>;
+    try {
+      probe = Promise.resolve(adapter.probe());
+    } catch (error) {
+      probe = Promise.reject(error);
+    }
+    const clear = () => {
+      if (unsettled.get(adapter.kind) === probe) unsettled.delete(adapter.kind);
+    };
+    probe.then(clear, clear);
+    unsettled.set(adapter.kind, probe);
+    return probe;
+  };
 
   const probe = async (adapter: ProviderAdapter): Promise<ProviderStatus> => {
     let timer: NodeJS.Timeout | undefined;
@@ -27,7 +46,7 @@ export function createProviderRegistry(
       timer = setTimeout(() => reject(new Error("did not answer in time")), probeTimeoutMs);
     });
     try {
-      return await Promise.race([adapter.probe(), timeout]);
+      return await Promise.race([start(adapter), timeout]);
     } catch (error) {
       return {
         kind: adapter.kind,

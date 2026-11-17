@@ -134,6 +134,60 @@ describe("applyEvent", () => {
     expect(done.turns.t1?.[0]?.items[0]).toMatchObject({ decision: "deny" });
   });
 
+  it("derives the thread status from the remaining last turn after a revert", () => {
+    const events = seed();
+    const finish = (turnId: string, status: "failed" | "completed") =>
+      ev({
+        type: "turn.finished",
+        commandId: null,
+        threadId: "t1",
+        turnId,
+        status,
+        checkpointAfter: null,
+        changedFiles: [],
+        usage: null,
+        error: null,
+      });
+    events.push(
+      finish("u1", "failed"),
+      ev({
+        type: "turn.started",
+        commandId: "c4",
+        threadId: "t1",
+        turnId: "u2",
+        prompt: "again",
+        provider: "demo",
+        model: "demo",
+        checkpointBefore: null,
+      }),
+      finish("u2", "completed"),
+    );
+    const before = applyEvents(emptyReadModel(), events);
+    expect(before.threads.t1?.status).toBe("idle");
+
+    const later = "2026-01-02T00:00:00.000Z";
+    const revert = (turnId: string): AgeEvent => ({
+      type: "turn.reverted",
+      commandId: null,
+      threadId: "t1",
+      turnId,
+      seq: ++seq,
+      at: later,
+    });
+    const reverted = applyEvents(before, [revert("u2")]);
+    expect(reverted.turns.t1?.map((turn) => turn.id)).toEqual(["u1"]);
+    expect(reverted.threads.t1).toMatchObject({ status: "error", updatedAt: later });
+
+    const empty = applyEvents(reverted, [revert("u1")]);
+    expect(empty.threads.t1?.status).toBe("idle");
+
+    const running = applyEvents(emptyReadModel(), [
+      ...seed(),
+      ev({ type: "turn.reverted", commandId: null, threadId: "t1", turnId: "missing" }),
+    ]);
+    expect(running.threads.t1?.status).toBe("running");
+  });
+
   it("drops a project's threads when the project is removed", () => {
     const events = seed();
     events.push(ev({ type: "project.removed", commandId: "c9", projectId: "p1" }));

@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { AGE_WS_PATH, type AgeEvent, RpcPush, RpcResponse } from "@age/contracts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
-import { startServer, type RunningServer } from "../server.ts";
-import { tempDir } from "../testing.ts";
+import { startServer, type RunningServer, type ServerOptions } from "../server.ts";
+import { openEventStore } from "../store/event-store.ts";
+import { createFakeGit, tempDir } from "../testing.ts";
 import { originAllowed } from "./ws.ts";
 
 const servers: RunningServer[] = [];
@@ -15,14 +16,15 @@ afterEach(async () => {
   for (const server of servers.splice(0)) await server.close();
 });
 
-async function boot(options: { webDist?: string } = {}) {
+async function boot(options: Partial<ServerOptions> = {}) {
   const userHome = await tempDir("user");
+  const home = await tempDir("home");
   await mkdir(join(userHome, "code"));
   await mkdir(join(userHome, "code", ".git"));
   await mkdir(join(userHome, "notes"));
   await mkdir(join(userHome, ".hidden"));
   const server = await startServer({
-    home: await tempDir("home"),
+    home,
     port: 0,
     host: "127.0.0.1",
     userHome,
@@ -30,7 +32,7 @@ async function boot(options: { webDist?: string } = {}) {
     ...options,
   });
   servers.push(server);
-  return { server, userHome };
+  return { server, userHome, home };
 }
 
 async function connect(server: RunningServer) {
@@ -124,7 +126,8 @@ describe("transport", () => {
   });
 
   it("runs a demo turn end to end", async () => {
-    const { server, userHome } = await boot();
+    const fake = createFakeGit({ changed: ["AGE_DEMO.md"] });
+    const { server, userHome } = await boot({ git: fake.git });
     const client = await connect(server);
     await client.call("subscribe", { fromSeq: 0 });
     await client.call("dispatch", { type: "project.add", commandId: "c1", root: userHome });
@@ -152,8 +155,63 @@ describe("transport", () => {
     });
     expect(await client.call("git.diff", { threadId: thread.thread.id })).toMatchObject({
       ok: true,
-      result: [],
+      result: [{ path: "AGE_DEMO.md", status: "modified" }],
     });
+    expect(fake.calls.at(-1)).toMatch(/^diff refs\/age\/checkpoints\/.+\/before null$/);
+  });
+
+  it("refuses dispatches while shutting down and finishes the running turn", async () => {
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => (started = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const { server, userHome, home } = await boot({
+      adapters: [
+        {
+          kind: "demo",
+          probe: () => Promise.reject(new Error("not probed")),
+          async *runTurn(input) {
+            started();
+            await new Promise((resolve) => input.signal.addEventListener("abort", resolve));
+            await released;
+            yield { type: "done", status: "interrupted", error: null };
+          },
+        },
+      ],
+    });
+    const client = await connect(server);
+    await client.call("dispatch", { type: "project.add", commandId: "c1", root: userHome });
+    const projectId = Object.keys(
+      ((await client.call("snapshot")) as { result: { projects: object } }).result.projects,
+    )[0];
+    const thread = {
+      type: "thread.create",
+      projectId,
+      provider: "demo",
+      model: "demo",
+      runtimeMode: "full",
+      isolate: false,
+    };
+    await client.call("dispatch", { ...thread, commandId: "c2" });
+    const snapshot = (await client.call("snapshot")) as { result: { threads: object } };
+    const threadId = Object.keys(snapshot.result.threads)[0];
+    await client.call("dispatch", { type: "turn.start", commandId: "c3", threadId, prompt: "Go" });
+    await running;
+
+    const closing = server.close();
+    expect(await client.call("dispatch", { ...thread, commandId: "c4" })).toMatchObject({
+      ok: false,
+      error: { code: "unavailable" },
+    });
+    release();
+    await closing;
+
+    const store = openEventStore(home, () => "2026-01-01T00:00:00.000Z");
+    expect(store.receipt("c4")).toBeNull();
+    expect(Object.keys(store.model.threads)).toEqual([threadId]);
+    const finished = store.eventsAfter(0).filter((event) => event.type === "turn.finished");
+    expect(finished).toMatchObject([{ threadId, status: "interrupted" }]);
+    store.close();
   });
 
   it("maps bad input and rejections to RPC error codes", async () => {

@@ -1,14 +1,29 @@
-import type { PendingEvent, ProviderEvent, ReadModel, Usage } from "@age/contracts";
+import {
+  ApprovalRequest,
+  ProviderEvent,
+  type PendingEvent,
+  type ReadModel,
+  type Usage,
+  type Worktree,
+} from "@age/contracts";
 import { activeTurn, handoffTranscript } from "@age/domain";
 import type { GitService } from "../git/types.ts";
-import { checkpointRef, type Effect, type StoredEffect } from "../orchestrator/effects.ts";
+import {
+  checkpointRef,
+  NO_CHECKPOINT_ITEM,
+  type Effect,
+  type StoredEffect,
+} from "../orchestrator/effects.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";
 import type { TurnInput } from "../providers/types.ts";
 import type { EventStore } from "../store/event-store.ts";
 
 export interface EffectRunner {
   enqueue(effects: readonly StoredEffect[]): void;
-  /** Startup recovery: retire effects from a previous process and finish its running turns. */
+  /**
+   * Startup recovery: finish turns a previous process left running and retire its turn
+   * effects (never replay turn.run), but re-run its idempotent workspace effects.
+   */
   recover(): void;
   /** Resolves once every queued effect has settled. */
   idle(): Promise<void>;
@@ -27,6 +42,13 @@ interface RunnerDeps {
 type Decision = "allow" | "deny";
 type FinishStatus = "completed" | "interrupted" | "failed";
 
+const MAX_INVALID_EVENTS = 5;
+const RECOVERABLE: ReadonlySet<Effect["kind"]> = new Set([
+  "checkpoint.restore",
+  "worktree.create",
+  "worktree.remove",
+]);
+
 /**
  * Effects run in order per thread and in parallel across threads. Control effects
  * (interrupt, approval answers) bypass the queue: they steer a turn that is already
@@ -38,7 +60,6 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
   const inflight = new Set<Promise<void>>();
   const controllers = new Map<string, AbortController>();
   const approvals = new Map<string, (decision: Decision) => void>();
-  const worktreeFailures = new Map<string, string>();
   let stopped = false;
 
   const append = (events: PendingEvent[]) => {
@@ -59,19 +80,8 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         return runTurn(effect.threadId, effect.turnId);
       case "worktree.create":
         try {
-          const worktree = await git.createWorktree(effect.projectRoot, effect.threadId);
-          worktreeFailures.delete(effect.threadId);
-          if (store.model.threads[effect.threadId])
-            append([
-              {
-                type: "thread.worktreeBound",
-                commandId: null,
-                threadId: effect.threadId,
-                worktree,
-              },
-            ]);
+          await ensureWorktree(effect.threadId, effect.projectRoot);
         } catch (error) {
-          worktreeFailures.set(effect.threadId, messageOf(error));
           console.error(`Could not create a worktree for ${effect.threadId}`, error);
         }
         return;
@@ -84,6 +94,9 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         return;
       case "checkpoint.restore": {
         const ids = { commandId: null, threadId: effect.threadId, turnId: effect.turnId };
+        // Re-run after a crash: the revert may already be recorded.
+        const turns = store.model.turns[effect.threadId] ?? [];
+        if (!turns.some((turn) => turn.id === effect.turnId)) return;
         try {
           await git.restoreCheckpoint(effect.cwd, effect.ref);
           append([{ type: "turn.reverted", ...ids }]);
@@ -109,6 +122,20 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         approvals.get(approvalKey(effect.turnId, effect.requestId))?.(effect.decision);
         return;
     }
+  }
+
+  /** Binds the thread's worktree, creating it when missing. Null when the thread is gone. */
+  async function ensureWorktree(threadId: string, projectRoot: string): Promise<Worktree | null> {
+    const thread = store.model.threads[threadId];
+    if (!thread) return null;
+    if (thread.worktree) return thread.worktree;
+    const worktree = await git.createWorktree(projectRoot, threadId);
+    if (!store.model.threads[threadId]) {
+      await git.removeWorktree(projectRoot, worktree);
+      return null;
+    }
+    append([{ type: "thread.worktreeBound", commandId: null, threadId, worktree }]);
+    return worktree;
   }
 
   async function runTurn(threadId: string, turnId: string): Promise<void> {
@@ -141,10 +168,20 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       flush();
       append(events);
     };
-    const notice = (text: string) =>
-      emit([
-        { type: "turn.itemUpserted", ...ids, item: { kind: "notice", id: newId("notice"), text } },
-      ]);
+    const notice = (text: string, id = newId("notice")) =>
+      emit([{ type: "turn.itemUpserted", ...ids, item: { kind: "notice", id, text } }]);
+    const bestEffort = (work: () => void) => {
+      try {
+        work();
+      } catch (cause) {
+        console.error(`Could not record progress of turn ${turnId}`, cause);
+      }
+    };
+    let unrevertable = false;
+    const markUnrevertable = (text: string) => {
+      unrevertable = true;
+      notice(text, NO_CHECKPOINT_ITEM);
+    };
 
     let status: FinishStatus = "failed";
     let error: string | null = null;
@@ -153,25 +190,36 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     let checkpoints = false;
 
     try {
-      const worktreeFailure = worktreeFailures.get(threadId);
       const project = model.projects[thread.projectId];
       const adapter = providers.get(turn.provider);
       if (signal.aborted) throw new Interrupted();
-      if (worktreeFailure)
-        throw new Error(`Could not create the thread's worktree: ${worktreeFailure}`);
       if (!project) throw new Error("The project no longer exists.");
       if (!adapter) throw new Error(`The ${turn.provider} provider is not available.`);
-      cwd = thread.worktree?.path ?? project.root;
+      let worktree = thread.worktree;
+      // An isolated thread never falls back to the shared project checkout.
+      if (thread.isolate && !worktree) {
+        try {
+          worktree = await ensureWorktree(threadId, project.root);
+        } catch (cause) {
+          throw new Error(`Could not create the thread's worktree: ${messageOf(cause)}`, {
+            cause,
+          });
+        }
+        if (!worktree) throw new Error("The thread no longer exists.");
+      }
+      cwd = worktree?.path ?? project.root;
 
       if (await git.isRepo(cwd)) {
         try {
           await git.captureCheckpoint(cwd, checkpointRef(threadId, turnId, "before"));
           checkpoints = true;
         } catch (cause) {
-          notice(`Checkpoint failed, so this turn cannot be reverted: ${messageOf(cause)}`);
+          markUnrevertable(
+            `Checkpoint failed, so this turn cannot be reverted: ${messageOf(cause)}`,
+          );
         }
       } else {
-        notice("Not a git repository, so this turn has no checkpoint.");
+        markUnrevertable("Not a git repository, so this turn has no checkpoint.");
       }
 
       const earlier = (model.turns[threadId] ?? []).filter((candidate) => candidate.id !== turnId);
@@ -190,9 +238,15 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         resumeSessionId: thread.providerSessionId,
         handoffContext,
         signal,
-        requestApproval: async (request) => {
-          if (thread.runtimeMode === "full") return "allow";
+        requestApproval: async (raw) => {
           if (signal.aborted) return "deny";
+          if (thread.runtimeMode === "full") return "allow";
+          const parsed = ApprovalRequest.safeParse(raw);
+          if (!parsed.success) {
+            notice("The agent asked for an approval AGE could not read, so it was denied.");
+            return "deny";
+          }
+          const request = parsed.data;
           const key = approvalKey(turnId, request.requestId);
           const answer = new Promise<Decision>((resolve) => {
             const onAbort = () => resolve("deny");
@@ -225,7 +279,19 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       };
 
       let done: Extract<ProviderEvent, { type: "done" }> | null = null;
-      for await (const event of adapter.runTurn(input)) {
+      let invalid = 0;
+      for await (const raw of adapter.runTurn(input)) {
+        const parsed = ProviderEvent.safeParse(raw);
+        if (!parsed.success) {
+          console.error(`Dropped an invalid ${turn.provider} event`, parsed.error.message);
+          if (++invalid >= MAX_INVALID_EVENTS) {
+            controller.abort();
+            throw new UnreadableStream();
+          }
+          notice("AGE could not read an event from the agent, so it was skipped.");
+          continue;
+        }
+        const event = parsed.data;
         if (event.type === "delta") {
           buffer.set(event.itemId, (buffer.get(event.itemId) ?? "") + event.text);
           timer ??= setTimeout(flush, coalesceMs);
@@ -259,8 +325,9 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         error = "The agent stopped without finishing its turn.";
       }
     } catch (cause) {
-      flush();
-      if (cause instanceof Interrupted || signal.aborted) status = "interrupted";
+      bestEffort(flush);
+      if (cause instanceof UnreadableStream) error = cause.message;
+      else if (cause instanceof Interrupted || signal.aborted) status = "interrupted";
       else error = messageOf(cause);
     }
 
@@ -275,11 +342,39 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         );
         changedFiles = (await git.diff(cwd, before, checkpointAfter)).map((file) => file.path);
       } catch (cause) {
-        notice(`Could not capture the end-of-turn checkpoint: ${messageOf(cause)}`);
+        bestEffort(() =>
+          notice(`Could not capture the end-of-turn checkpoint: ${messageOf(cause)}`),
+        );
       }
     }
-    controllers.delete(turnId);
-    emit([{ type: "turn.finished", ...ids, status, checkpointAfter, changedFiles, usage, error }]);
+    if (!checkpoints && !unrevertable)
+      bestEffort(() => markUnrevertable("This turn has no checkpoint, so it cannot be reverted."));
+
+    const finished: PendingEvent = {
+      type: "turn.finished",
+      ...ids,
+      status,
+      checkpointAfter,
+      changedFiles,
+      usage,
+      error,
+    };
+    try {
+      emit([finished]);
+    } catch (first) {
+      console.error(`Could not record the end of turn ${turnId}; retrying once`, first);
+      try {
+        append([finished]);
+      } catch (second) {
+        console.error(
+          `TURN ${turnId} IS STILL MARKED RUNNING: its finish could not be recorded. ` +
+            "It will be finished as interrupted on the next start.",
+          second,
+        );
+      }
+    } finally {
+      controllers.delete(turnId);
+    }
   }
 
   async function execute(effect: StoredEffect): Promise<void> {
@@ -296,24 +391,25 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     while (inflight.size > 0) await Promise.allSettled([...inflight]);
   }
 
-  return {
-    enqueue(effects) {
-      for (const effect of effects) {
-        if (effect.kind === "turn.interrupt" || effect.kind === "approval.resolve") {
-          track(execute(effect));
-          continue;
-        }
-        if (effect.kind === "turn.run") controllers.set(effect.turnId, new AbortController());
-        const next = (tails.get(effect.threadId) ?? Promise.resolve()).then(() => execute(effect));
-        tails.set(effect.threadId, next);
-        void next.finally(() => {
-          if (tails.get(effect.threadId) === next) tails.delete(effect.threadId);
-        });
-        track(next);
+  function enqueue(effects: readonly StoredEffect[]) {
+    for (const effect of effects) {
+      if (effect.kind === "turn.interrupt" || effect.kind === "approval.resolve") {
+        track(execute(effect));
+        continue;
       }
-    },
+      if (effect.kind === "turn.run") controllers.set(effect.turnId, new AbortController());
+      const next = (tails.get(effect.threadId) ?? Promise.resolve()).then(() => execute(effect));
+      tails.set(effect.threadId, next);
+      void next.finally(() => {
+        if (tails.get(effect.threadId) === next) tails.delete(effect.threadId);
+      });
+      track(next);
+    }
+  }
+
+  return {
+    enqueue,
     recover() {
-      store.retirePendingEffects();
       const finished: PendingEvent[] = [];
       for (const threadId of Object.keys(store.model.threads)) {
         const turn = activeTurn(store.model, threadId);
@@ -331,6 +427,12 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         });
       }
       append(finished);
+      const rerun: StoredEffect[] = [];
+      for (const effect of store.pendingEffects()) {
+        if (RECOVERABLE.has(effect.kind)) rerun.push(effect);
+        else store.markEffect(effect.id, "retired");
+      }
+      enqueue(rerun);
     },
     idle,
     async shutdown(timeoutMs = 5_000) {
@@ -347,6 +449,12 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
 }
 
 class Interrupted extends Error {}
+
+class UnreadableStream extends Error {
+  constructor() {
+    super("The agent sent too many unreadable events, so the turn was stopped.");
+  }
+}
 
 function withTurns(
   model: ReadModel,

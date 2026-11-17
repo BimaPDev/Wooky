@@ -8,6 +8,8 @@ import { decide, type DecideContext } from "./decide.ts";
 export interface Dispatcher {
   /** Records a command. Resolving means the intent is saved, not that the work finished. */
   dispatch(input: unknown): DispatchResult;
+  /** Shutdown: every later dispatch is rejected as unavailable. */
+  close(): void;
 }
 
 export function createDispatcher(deps: {
@@ -16,8 +18,13 @@ export function createDispatcher(deps: {
   ctx: DecideContext;
 }): Dispatcher {
   const { store, runner, ctx } = deps;
+  let closed = false;
   return {
+    close() {
+      closed = true;
+    },
     dispatch(input) {
+      if (closed) throw new ServiceError("unavailable", "The server is shutting down.");
       const parsed = Command.safeParse(input);
       if (!parsed.success) throw new ServiceError("bad_request", parsed.error.message);
       const command = parsed.data;

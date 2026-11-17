@@ -41,6 +41,8 @@ export const Thread = z.object({
   model: z.string(),
   runtimeMode: RuntimeMode,
   worktree: Worktree.nullable(),
+  /** True when the thread must run in its own worktree, never in the project root. */
+  isolate: z.boolean().optional(),
   /** Native session id reported by the provider, used to resume. Reset on provider switch. */
   providerSessionId: z.string().nullable(),
   status: ThreadStatus,

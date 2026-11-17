@@ -158,7 +158,11 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       if (!list) return model;
       const index = list.findIndex((turn) => turn.id === event.turnId);
       if (index < 0) return model;
-      return { ...model, turns: { ...model.turns, [event.threadId]: list.slice(0, index) } };
+      const remaining = list.slice(0, index);
+      const last = remaining.at(-1)?.status;
+      const status = last === "failed" ? "error" : last === "running" ? "running" : "idle";
+      const reverted = { ...model, turns: { ...model.turns, [event.threadId]: remaining } };
+      return patchThread(reverted, event.threadId, event.at, { status });
     }
   }
 }

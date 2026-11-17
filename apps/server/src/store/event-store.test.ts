@@ -94,7 +94,7 @@ describe("event store", () => {
     second.close();
   });
 
-  it("retires pending effects and marks finished ones", async () => {
+  it("lists pending effects in order and marks them done or retired", async () => {
     const home = await tempDir("store");
     const store = openEventStore(home, clock);
     const { effects } = store.commit({
@@ -103,12 +103,36 @@ describe("event store", () => {
       effects: [
         { kind: "turn.run", threadId: "t1", turnId: "u1" },
         { kind: "turn.run", threadId: "t2", turnId: "u2" },
+        { kind: "worktree.create", threadId: "t3", projectRoot: "/work/a" },
       ],
     });
     store.markEffect(effects[0]?.id ?? 0, "done");
-    expect(store.retirePendingEffects()).toBe(1);
+    expect(store.pendingEffects()).toEqual(effects.slice(1));
+    store.markEffect(effects[1]?.id ?? 0, "retired");
     store.close();
-    expect(effectStatuses(home)).toEqual(["done", "retired"]);
+    expect(effectStatuses(home)).toEqual(["done", "retired", "pending"]);
+  });
+
+  it("refuses to store an event that would not decode", async () => {
+    const home = await tempDir("store");
+    const store = openEventStore(home, clock);
+    const bad = {
+      type: "turn.itemUpserted",
+      commandId: null,
+      threadId: "t1",
+      turnId: "u1",
+      item: { kind: "message", id: "m1", role: "bot", text: "hi" },
+    } as unknown as PendingEvent;
+    expect(() => store.appendInternal([projectAdded("a", null), bad])).toThrow(
+      /Refusing to store an invalid turn.itemUpserted event/,
+    );
+    expect(() => store.commit({ commandId: "c1", events: [bad], effects: [] })).toThrow(
+      /Refusing to store/,
+    );
+    expect(store.eventsAfter(0)).toEqual([]);
+    expect(store.receipt("c1")).toBeNull();
+    store.close();
+    expect(openEventStore(home, clock).model.seq).toBe(0);
   });
 
   it("fails loudly when a stored event does not decode", async () => {

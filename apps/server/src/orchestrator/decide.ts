@@ -1,7 +1,7 @@
 import { basename, isAbsolute, normalize, sep } from "node:path";
 import type { Command, CommandOf, PendingEvent, ReadModel, Thread } from "@age/contracts";
 import { activeTurn, pendingApprovals } from "@age/domain";
-import { checkpointRef, type Effect } from "./effects.ts";
+import { checkpointRef, NO_CHECKPOINT_ITEM, type Effect } from "./effects.ts";
 
 export interface DecideContext {
   now(): string;
@@ -102,7 +102,8 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
       const turn = model.turns[thread.id]?.find((candidate) => candidate.id === command.turnId);
       if (!turn) return notFound("turn", command.turnId);
       if (isBusy(thread)) return reject("conflict", "Stop the running turn before reverting.");
-      if (!turn.checkpointBefore) return reject("conflict", "This turn has no checkpoint.");
+      if (!turn.checkpointBefore || turn.items.some((item) => item.id === NO_CHECKPOINT_ITEM))
+        return reject("conflict", "This turn has no checkpoint, so it cannot be reverted.");
       const cwd = workspaceOf(model, thread);
       if (!cwd) return notFound("project", thread.projectId);
       return accept(
@@ -186,6 +187,7 @@ function createThread(
           model: command.model,
           runtimeMode: command.runtimeMode,
           worktree: null,
+          ...(command.isolate ? { isolate: true } : {}),
           providerSessionId: null,
           status: "idle",
           createdAt: now,

@@ -20,8 +20,8 @@ export interface EventStore {
   receipt(commandId: string): DispatchResult | null;
   eventsAfter(seq: number): AgeEvent[];
   markEffect(id: number, status: "done" | "retired"): void;
-  /** Marks every pending effect retired (startup recovery: never replay lost work). */
-  retirePendingEffects(): number;
+  /** Effects a previous process committed but never finished, oldest first. */
+  pendingEffects(): StoredEffect[];
   subscribe(listener: Listener): () => void;
   close(): void;
 }
@@ -72,8 +72,8 @@ export function openEventStore(home: string, clock: () => string): EventStore {
   const selectReceipt = db.prepare("SELECT result FROM receipts WHERE command_id = ?");
   const selectAfter = db.prepare("SELECT seq, at, payload FROM events WHERE seq > ? ORDER BY seq");
   const updateEffect = db.prepare("UPDATE effects SET status = ? WHERE id = ?");
-  const retirePending = db.prepare(
-    "UPDATE effects SET status = 'retired' WHERE status = 'pending'",
+  const selectPending = db.prepare(
+    "SELECT id, payload FROM effects WHERE status = 'pending' ORDER BY id",
   );
 
   const decode = (row: EventRow): AgeEvent => {
@@ -108,6 +108,12 @@ export function openEventStore(home: string, clock: () => string): EventStore {
   const insertEvents = (pending: PendingEvent[]): AgeEvent[] => {
     const at = clock();
     return pending.map((event) => {
+      // Validate before writing: one undecodable row would stop the store from ever reopening.
+      const checked = AgeEvent.safeParse({ ...event, seq: model.seq + 1, at });
+      if (!checked.success)
+        throw new Error(
+          `Refusing to store an invalid ${event.type} event: ${checked.error.message}`,
+        );
       const { lastInsertRowid } = insertEvent.run(
         event.type,
         at,
@@ -162,8 +168,9 @@ export function openEventStore(home: string, clock: () => string): EventStore {
     markEffect(id, status) {
       updateEffect.run(status, id);
     },
-    retirePendingEffects() {
-      return Number(retirePending.run().changes);
+    pendingEffects() {
+      const rows = selectPending.all() as unknown as { id: number; payload: string }[];
+      return rows.map((row) => ({ ...(JSON.parse(row.payload) as Effect), id: row.id }));
     },
     subscribe(listener) {
       listeners.add(listener);

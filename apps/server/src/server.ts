@@ -72,13 +72,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     url: `http://${host}:${port}`,
     port,
     close() {
+      // Stop new work first, then drain running turns while open sockets still get their
+      // final events, and close the store last.
       closing ??= (async () => {
+        dispatcher.close();
+        const stopped = new Promise<void>((resolve) => http.close(() => resolve()));
+        http.closeIdleConnections();
         await runner.shutdown();
         closeSockets();
-        await new Promise<void>((resolve) => {
-          http.close(() => resolve());
-          http.closeAllConnections();
-        });
+        http.closeAllConnections();
+        await stopped;
         store.close();
       })();
       return closing;

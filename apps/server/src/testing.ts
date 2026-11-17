@@ -29,15 +29,19 @@ export function waitForEvent<T extends AgeEventType>(
 ): Promise<AgeEventOf<T>> {
   const matches = (event: AgeEvent): event is AgeEventOf<T> =>
     event.type === type && event.seq > afterSeq && predicate(event as AgeEventOf<T>);
-  const existing = store.eventsAfter(afterSeq).find(matches);
-  if (existing) return Promise.resolve(existing);
   return new Promise((resolve) => {
+    // Subscribe before scanning history so nothing can land in between.
     const unsubscribe = store.subscribe((events) => {
       const found = events.find(matches);
       if (!found) return;
       unsubscribe();
       resolve(found);
     });
+    const existing = store.eventsAfter(afterSeq).find(matches);
+    if (existing) {
+      unsubscribe();
+      resolve(existing);
+    }
   });
 }
 
