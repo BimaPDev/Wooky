@@ -20,14 +20,16 @@ agents on different models and harnesses). The method:
 
 ## Ledger
 
-| Unit | Station (owned paths)                                      | Cook                                        | Reviewer                                       | Status    | Evidence                                                       |
-| ---- | ---------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------- | --------- | -------------------------------------------------------------- |
-| 0    | contracts, domain, seams, checks, rules                    | head chef (Opus 5.5)                        | —                                              | merged    | `pnpm check`                                                   |
-| 1    | server core: store, orchestrator, effects, transport, demo | Opus 5.5                                    | Grok 4.6 (Cursor)                              | in review | 58 tests; manual `AGE_LISTENING` + `/healthz`                  |
-| 2    | git service                                                | Fable 5.2 → reassigned to Opus 4.8 (Cursor) | —                                              | cooking   | Fable 5.2 needed usage credits                                 |
-| 3    | Claude Code adapter                                        | Sonnet 5.5                                  | DeepSeek V4.1 Flash (OpenCode)                 | in review | 55 tests; real Haiku turns in full + approve mode              |
-| 4    | web UI                                                     | Grok 4.7 (Cursor)                           | —                                              | cooking   |                                                                |
-| 5    | Codex adapter                                              | Gemini 4 Carbon (Cursor)                    | —                                              | cooking   |                                                                |
-| 6    | desktop shell + dev runner                                 | Haiku 5.5                                   | Big Pickle (OpenCode)                          | in review | 23 tests                                                       |
-| 7    | Cursor adapter                                             | Composer 2.5 via `cursor-agent` CLI         | head chef (real-stream replay), then Haiku 5.5 | in review | 5 defects found by replaying a real stream, fixed by the cook  |
-| 8    | head-chef fixes                                            | head chef                                   | reviewers above                                | merged    | DNS-rebinding guard, symlink-aware paths, Cursor sign-in probe |
+| Unit | Station (owned paths)                   | Cook                                                 | Reviewer                           | Status                                                        | Evidence                         |
+| ---- | --------------------------------------- | ---------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------- | -------------------------------- |
+| 0    | contracts, domain, seams, checks, rules | head chef                                            | n/a                                | merged                                                        | `pnpm check`                     |
+| 1    | server core                             | Opus 5.5                                             | Grok 4.6 (Cursor)                  | merged, 12 review fixes applied                               | 240+ tests, e2e journey test     |
+| 2    | git service                             | Fable 5.2 failed (needs credits) → Opus 4.8 (Cursor) | GLM-5.3 Flash (OpenCode)           | merged, 10 review fixes applied                               | real-git tests                   |
+| 3    | Claude adapter                          | Sonnet 5.5                                           | DeepSeek V4.1 Flash (OpenCode)     | merged, 8 review fixes applied                                | real Haiku turns, approve + full |
+| 4    | web UI                                  | Grok 4.7 stalled → Opus 5.5                          | head chef (browser render)         | merged                                                        | build + live server + browser    |
+| 5    | Codex adapter                           | Gemini 4 Carbon (Cursor)                             | Composer 2.5 (Cursor CLI)          | merged, 8 review fixes NOT applied (Codex not installed here) | fake app-server tests only       |
+| 6    | desktop shell + dev runner              | Haiku 5.5                                            | Big Pickle (OpenCode)              | merged, review fixes applied                                  | 23 tests; window not launched    |
+| 7    | Cursor adapter                          | Composer 2.5 via `cursor-agent` CLI                  | Haiku 5.5, head chef (real stream) | merged, 16 fixes applied                                      | real stream replay               |
+
+Open items: Codex review findings (approval replies during abort, per-turn token usage,
+process-group kill, oversized lines) are unapplied. Fix them before relying on Codex.
