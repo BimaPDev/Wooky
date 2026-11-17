@@ -28,11 +28,13 @@ function PaletteDialog() {
   const projects = useStore((state) => state.model.projects);
   const threads = useStore((state) => state.model.threads);
   const providers = useStore((state) => state.providers);
+  const disabledProviders = useStore((state) => state.deviceSettings?.disabledProviders ?? []);
   const selected = useStore((state) => state.selectedThreadId);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 
   const actions = useMemo<PaletteAction[]>(() => {
+    const disabled = new Set(disabledProviders);
     const close = () => setPaletteOpen(false);
     const list: PaletteAction[] = [
       {
@@ -53,7 +55,8 @@ function PaletteDialog() {
       });
       const thread = threads[selected];
       for (const provider of providers) {
-        if (!thread || provider.kind === thread.provider || !isAvailable(provider)) continue;
+        if (!thread || provider.kind === thread.provider || !isAvailable(provider, disabled))
+          continue;
         list.push({
           id: `switch-${provider.kind}`,
           label: `Switch provider to ${provider.label}`,
@@ -90,7 +93,7 @@ function PaletteDialog() {
       });
     }
     return list;
-  }, [projects, threads, providers, selected]);
+  }, [projects, threads, providers, disabledProviders, selected]);
 
   const results = fuzzyFilter(actions, query, (action) => `${action.label} ${action.hint ?? ""}`);
   const index = Math.min(active, Math.max(0, results.length - 1));

@@ -1,0 +1,198 @@
+import { useEffect, useRef, useState } from "react";
+import { takePendingTerminalLine, toggleTerminal } from "../state/actions.ts";
+import { backend } from "../state/backend.ts";
+import { useStore } from "../state/store.ts";
+import { subscribeTerminal } from "../state/terminal.ts";
+import { IconClose } from "./Icons.tsx";
+
+export function TerminalPane() {
+  const thread = useStore((state) =>
+    state.selectedThreadId ? state.model.threads[state.selectedThreadId] : undefined,
+  );
+  const project = useStore((state) =>
+    thread ? state.model.projects[thread.projectId] : undefined,
+  );
+  const cwd = thread?.worktree?.path ?? project?.root ?? null;
+
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [output, setOutput] = useState("");
+  const [line, setLine] = useState("");
+  const [status, setStatus] = useState<"starting" | "ready" | "exited" | "error">("starting");
+  const [error, setError] = useState<string | null>(null);
+  const [generation, setGeneration] = useState(0);
+  const scrollRef = useRef<HTMLPreElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const sessionRef = useRef<string | null>(null);
+
+  // sync: open a shell for the active project/worktree while the pane is mounted
+  useEffect(() => {
+    let cancelled = false;
+    const open = async () => {
+      setStatus("starting");
+      setError(null);
+      setOutput("");
+      setLine("");
+      try {
+        const result = await backend().call("terminal.open", {
+          ...(cwd ? { cwd } : {}),
+        });
+        if (cancelled) {
+          void backend().call("terminal.close", { sessionId: result.sessionId });
+          return;
+        }
+        sessionRef.current = result.sessionId;
+        setSessionId(result.sessionId);
+        setStatus("ready");
+      } catch (err) {
+        if (cancelled) return;
+        setStatus("error");
+        setError(err instanceof Error ? err.message : "Could not start the shell.");
+      }
+    };
+    void open();
+    return () => {
+      cancelled = true;
+      const id = sessionRef.current;
+      sessionRef.current = null;
+      if (id) void backend().call("terminal.close", { sessionId: id });
+    };
+  }, [cwd, generation]);
+
+  // sync: append pushed terminal chunks for this session
+  useEffect(() => {
+    return subscribeTerminal((message) => {
+      if (!sessionRef.current || message.sessionId !== sessionRef.current) return;
+      if (message.kind === "data" && message.data) {
+        setOutput((prev) => prev + message.data);
+      } else if (message.kind === "exit") {
+        if (message.data) setOutput((prev) => prev + message.data);
+        setStatus("exited");
+        sessionRef.current = null;
+        setSessionId(null);
+      } else if (message.kind === "error") {
+        setStatus("error");
+        setError(message.data ?? "Shell error.");
+        sessionRef.current = null;
+        setSessionId(null);
+      }
+    });
+  }, []);
+
+  // sync: keep the output pinned to the bottom as chunks arrive
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [output]);
+
+  const writeLine = async (text: string) => {
+    if (!sessionId || status !== "ready") return;
+    setOutput((prev) => prev + `$ ${text}\r\n`);
+    try {
+      await backend().call("terminal.write", { sessionId, data: `${text}\r\n` });
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? err.message : "Write failed.");
+    }
+  };
+
+  // sync: Settings → Providers Sign in queues a login command for this shell
+  useEffect(() => {
+    if (!sessionId || status !== "ready") return;
+    const pending = takePendingTerminalLine();
+    if (pending) void writeLine(pending);
+  }, [sessionId, status]);
+
+  const sendLine = async () => {
+    if (!line) return;
+    const text = line;
+    setLine("");
+    await writeLine(text);
+  };
+
+  const sendInterrupt = async () => {
+    if (!sessionId || status !== "ready") return;
+    try {
+      await backend().call("terminal.write", { sessionId, data: "\u0003" });
+    } catch {
+      // ignore
+    }
+  };
+
+  const restart = () => {
+    const id = sessionRef.current;
+    sessionRef.current = null;
+    if (id) void backend().call("terminal.close", { sessionId: id });
+    setSessionId(null);
+    setGeneration((value) => value + 1);
+  };
+
+  return (
+    <section className="terminal-pane" aria-label="Terminal">
+      <header className="terminal-head">
+        <div className="terminal-tabs" role="tablist" aria-label="Side panel">
+          <button type="button" role="tab" className="terminal-tab active" aria-selected={true}>
+            Terminal
+          </button>
+        </div>
+        <div className="terminal-head-actions">
+          {status === "exited" || status === "error" ? (
+            <button type="button" className="ghost-button" onClick={restart}>
+              Restart
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Close terminal"
+            title="Close"
+            onClick={toggleTerminal}
+          >
+            <IconClose />
+          </button>
+        </div>
+      </header>
+      <div
+        className="terminal-scroll"
+        onClick={() => inputRef.current?.focus()}
+        onKeyDown={() => inputRef.current?.focus()}
+        role="presentation"
+      >
+        <pre className="terminal-output" ref={scrollRef}>
+          {status === "starting" ? <span className="terminal-muted">Starting shell…</span> : null}
+          {error ? <span className="terminal-error">{error}</span> : null}
+          {output}
+        </pre>
+        {status === "ready" ? (
+          <form
+            className="terminal-input-row"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendLine();
+            }}
+          >
+            <span className="terminal-prompt" aria-hidden="true">
+              $
+            </span>
+            <input
+              ref={inputRef}
+              className="terminal-input"
+              value={line}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              aria-label="Terminal input"
+              onChange={(event) => setLine(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "c" && event.ctrlKey) {
+                  event.preventDefault();
+                  void sendInterrupt();
+                }
+              }}
+            />
+          </form>
+        ) : null}
+      </div>
+    </section>
+  );
+}

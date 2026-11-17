@@ -5,22 +5,69 @@ import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
 import { Dialogs } from "./Dialogs.tsx";
 import { Palette } from "./Palette.tsx";
+import { projectMonogramIconDataUrl } from "./ProjectMonogram.tsx";
+import { Settings } from "./Settings.tsx";
 import { Sidebar } from "./Sidebar.tsx";
+import { TerminalPane } from "./TerminalPane.tsx";
 import { ThreadView } from "./ThreadView.tsx";
 import { TopBar } from "./TopBar.tsx";
+import { WindowTitlebar } from "./WindowTitlebar.tsx";
+
+const isDesktopShell =
+  typeof navigator !== "undefined" && /\belectron\b/i.test(navigator.userAgent);
 
 export function App() {
   const theme = useStore((state) => state.theme);
   const threadId = useStore((state) => state.selectedThreadId);
-  const changesOpen = useStore((state) => state.changes.open);
+  const thread = useStore((state) =>
+    state.selectedThreadId ? state.model.threads[state.selectedThreadId] : undefined,
+  );
+  const project = useStore((state) =>
+    thread ? state.model.projects[thread.projectId] : undefined,
+  );
   const notice = useStore((state) => state.notice);
-  const hasProjects = useStore((state) => Object.keys(state.model.projects).length > 0);
+  const hasProjects = useStore((state) => Object.keys(state.model.projects).length !== 0);
+  const settingsOpen = useStore((state) => state.settingsOpen);
+  const sidebarOpen = useStore((state) => state.sidebarOpen);
+  const changesOpen = useStore((state) => state.changes.open);
+  const terminalOpen = useStore((state) => state.terminalOpen);
 
-  // sync: document root attribute drives the CSS theme tokens
+  // sync: document root attribute drives the CSS theme tokens + WCO vars
   useEffect(() => {
     if (theme) document.documentElement.dataset.theme = theme;
     else delete document.documentElement.dataset.theme;
+    document.documentElement.classList.toggle("wco", isDesktopShell);
   }, [theme]);
+
+  // sync: T3-style window title + favicon monogram for the open project/thread
+  useEffect(() => {
+    const projectTitle = project?.name?.trim() ?? "";
+    const threadTitle = thread?.title?.trim() ?? "";
+    // Desktop paints the crumb in WindowTitlebar; keep native title short so it does not double.
+    const title = isDesktopShell
+      ? "Wooky"
+      : threadTitle === ""
+        ? "Wooky"
+        : projectTitle === ""
+          ? `${threadTitle} - Wooky`
+          : `${projectTitle} / ${threadTitle} - Wooky`;
+    if (document.title !== title) document.title = title;
+
+    const href = projectTitle ? projectMonogramIconDataUrl(projectTitle) : null;
+    let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+    if (!href) {
+      if (link?.dataset.wookyMonogram === "1") link.remove();
+      return;
+    }
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      link.dataset.wookyMonogram = "1";
+      document.head.append(link);
+    }
+    link.type = "image/png";
+    link.href = href;
+  }, [project?.name, thread?.title]);
 
   // sync: global keyboard shortcut for the command palette
   useEffect(() => {
@@ -34,35 +81,62 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const bodyClass = changesOpen && threadId ? "workspace-body split" : "workspace-body";
+
   return (
-    <div className={changesOpen && threadId ? "shell with-panel" : "shell"}>
-      <Sidebar />
-      <main className="main">
-        <TopBar />
-        {threadId ? (
-          <>
-            <ThreadView key={threadId} threadId={threadId} />
-            <Composer key={`composer-${threadId}`} threadId={threadId} />
-          </>
-        ) : (
-          <p className="empty-state">
-            {hasProjects
-              ? "Pick a thread or start a new one."
-              : "Add a project folder to get started."}
-          </p>
-        )}
-        {notice ? (
-          <div className="notice-bar" role="alert">
-            <span>{notice}</span>
-            <button type="button" className="link-button" onClick={dismissNotice}>
-              Dismiss
-            </button>
+    <>
+      <div
+        className={
+          sidebarOpen
+            ? isDesktopShell
+              ? "shell desktop-shell"
+              : "shell"
+            : isDesktopShell
+              ? "shell sidebar-hidden desktop-shell"
+              : "shell sidebar-hidden"
+        }
+      >
+        {isDesktopShell ? <WindowTitlebar /> : null}
+        {sidebarOpen ? <Sidebar hideBrand={isDesktopShell} /> : null}
+        <div className="workspace">
+          <TopBar desktopChrome={isDesktopShell} />
+          <div className={terminalOpen ? "workspace-stack with-terminal" : "workspace-stack"}>
+            <div className={bodyClass}>
+              <main className="main">
+                {threadId ? (
+                  <>
+                    <ThreadView key={threadId} threadId={threadId} />
+                    <Composer key={`composer-${threadId}`} threadId={threadId} />
+                  </>
+                ) : (
+                  <p className="empty-state">
+                    {hasProjects
+                      ? "Pick a thread or start a new one."
+                      : "Add a project folder to get started."}
+                  </p>
+                )}
+                {notice ? (
+                  <div className="notice-bar" role="alert">
+                    <span>{notice}</span>
+                    <button type="button" className="link-button" onClick={dismissNotice}>
+                      Dismiss
+                    </button>
+                  </div>
+                ) : null}
+              </main>
+              {changesOpen && threadId ? <ChangesPanel threadId={threadId} /> : null}
+            </div>
+            {terminalOpen ? (
+              <aside className="terminal-dock" aria-label="Terminal">
+                <TerminalPane />
+              </aside>
+            ) : null}
           </div>
-        ) : null}
-      </main>
-      {changesOpen && threadId ? <ChangesPanel threadId={threadId} /> : null}
+        </div>
+      </div>
+      {settingsOpen ? <Settings /> : null}
       <Palette />
       <Dialogs />
-    </div>
+    </>
   );
 }

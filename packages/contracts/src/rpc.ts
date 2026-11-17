@@ -1,7 +1,10 @@
 import { z } from "zod";
+import { AppearanceTheme, AppearanceThemeSummary, DeviceSettings } from "./appearance.ts";
 import { Command } from "./commands.ts";
 import { AgeEvent } from "./events.ts";
 import { FileDiff, Id, Project, ProviderStatus, Thread, Turn } from "./model.ts";
+import { TerminalPush, TerminalSessionId } from "./terminal.ts";
+import { ProviderLimits } from "./usage.ts";
 
 /**
  * Wire protocol over a single WebSocket at /ws.
@@ -44,6 +47,61 @@ export const RpcMethods = {
     params: z.object({ query: z.string().optional() }),
     result: z.array(z.object({ path: z.string(), isGitRepo: z.boolean() })),
   },
+  "settings.get": { params: z.object({}), result: DeviceSettings },
+  "settings.put": {
+    params: z.object({ settings: DeviceSettings.partial() }),
+    result: DeviceSettings,
+  },
+  "themes.list": {
+    params: z.object({}),
+    result: z.object({
+      themesDir: z.string(),
+      activeThemeId: z.string(),
+      themes: z.array(AppearanceThemeSummary),
+    }),
+  },
+  "themes.get": {
+    params: z.object({ id: z.string() }),
+    result: AppearanceTheme,
+  },
+  "themes.put": {
+    params: z.object({ theme: AppearanceTheme }),
+    result: AppearanceTheme,
+  },
+  "themes.delete": {
+    params: z.object({ id: z.string() }),
+    result: z.object({ deleted: z.boolean() }),
+  },
+  /** Start a local shell in cwd (project/worktree root). One session per call. */
+  "terminal.open": {
+    params: z.object({
+      cwd: z.string().min(1).optional(),
+      cols: z.number().int().positive().optional(),
+      rows: z.number().int().positive().optional(),
+    }),
+    result: z.object({ sessionId: TerminalSessionId, shell: z.string() }),
+  },
+  "terminal.write": {
+    params: z.object({ sessionId: TerminalSessionId, data: z.string() }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "terminal.resize": {
+    params: z.object({
+      sessionId: TerminalSessionId,
+      cols: z.number().int().positive(),
+      rows: z.number().int().positive(),
+    }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "terminal.close": {
+    params: z.object({ sessionId: TerminalSessionId }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  /** Live plan-limit meters per provider (Claude / Codex). Cached briefly server-side. */
+  "usage.limits": {
+    params: z.object({ refresh: z.boolean().optional() }),
+    result: z.array(ProviderLimits),
+  },
 } as const;
 
 export type RpcMethod = keyof typeof RpcMethods;
@@ -69,10 +127,13 @@ export const RpcResponse = z.union([
 ]);
 export type RpcResponse = z.infer<typeof RpcResponse>;
 
-export const RpcPush = z.object({
+export const RpcEventPush = z.object({
   push: z.literal("event"),
   event: AgeEvent,
 });
+export type RpcEventPush = z.infer<typeof RpcEventPush>;
+
+export const RpcPush = z.union([RpcEventPush, TerminalPush]);
 export type RpcPush = z.infer<typeof RpcPush>;
 
 export const ServerMessage = z.union([RpcResponse, RpcPush]);

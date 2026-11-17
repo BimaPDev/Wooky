@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProviderEvent, ProviderStatus } from "@age/contracts";
 import { z } from "zod";
+import { resolveCommand } from "../../process/resolve-command.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { createNdjsonSplitter } from "./ndjson.ts";
 import { isAuthFailure, parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
@@ -32,8 +33,17 @@ let modelsCache: {
 } | null = null;
 
 export function createCursorAdapter(options: CursorAdapterOptions = {}): ProviderAdapter {
-  const cursorBin = options.cursorBin ?? process.env.AGE_CURSOR_BIN ?? "cursor-agent";
-  const cursorArgsPrefix = options.cursorArgsPrefix ?? [];
+  const configuredBin = options.cursorBin ?? process.env.AGE_CURSOR_BIN ?? "cursor-agent";
+  const configuredPrefix = options.cursorArgsPrefix ?? [];
+
+  const launch = () => {
+    const resolved = resolveCommand(configuredBin);
+    if (!resolved) return { bin: configuredBin, prefix: configuredPrefix };
+    return {
+      bin: resolved.command,
+      prefix: [...resolved.prefixArgs, ...configuredPrefix],
+    };
+  };
 
   return {
     kind: "cursor",
@@ -48,6 +58,8 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
         models: [{ id: "auto", label: "Auto" }],
         problem: null,
       };
+
+      const { bin: cursorBin, prefix: cursorArgsPrefix } = launch();
 
       let version: string | null = null;
       try {
@@ -112,7 +124,8 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
     },
 
     runTurn(input: TurnInput): AsyncIterable<ProviderEvent> {
-      return runCursorTurn(cursorBin, cursorArgsPrefix, input);
+      const { bin, prefix } = launch();
+      return runCursorTurn(bin, prefix, input);
     },
   };
 }
@@ -158,6 +171,7 @@ export function runProbe(
   return new Promise((resolve, reject) => {
     const child = spawn(cursorBin, [...prefix, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
     let stdout = "";
     let stderr = "";
@@ -243,7 +257,9 @@ async function* runCursorTurn(
     child = spawn(cursorBin, argv, {
       cwd: input.cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
+      // On Windows `detached` opens a new console window; process groups are POSIX-only.
+      detached: process.platform !== "win32",
+      windowsHide: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to start Cursor Agent";

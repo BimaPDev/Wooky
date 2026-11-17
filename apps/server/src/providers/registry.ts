@@ -3,7 +3,7 @@ import type { ProviderAdapter } from "./types.ts";
 
 const LABELS: Record<ProviderKind, string> = {
   claude: "Claude Code",
-  cursor: "Cursor Agent",
+  cursor: "Cursor",
   codex: "Codex",
   demo: "Demo",
 };

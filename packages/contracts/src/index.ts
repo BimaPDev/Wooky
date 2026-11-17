@@ -2,4 +2,7 @@ export * from "./model.ts";
 export * from "./commands.ts";
 export * from "./events.ts";
 export * from "./provider.ts";
+export * from "./appearance.ts";
+export * from "./terminal.ts";
+export * from "./usage.ts";
 export * from "./rpc.ts";

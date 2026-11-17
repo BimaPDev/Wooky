@@ -134,6 +134,7 @@ function ApprovalCard({ item, threadId }: { item: Item<"approval">; threadId: st
       className={pending ? "approval pending" : "approval decided"}
       aria-label={`Approval: ${item.title}`}
     >
+      {pending ? <p className="approval-eyebrow">Approval needed</p> : null}
       <div className="approval-head">
         <ToolIcon kind={item.tool} />
         <span className="approval-title">{item.title}</span>
@@ -143,7 +144,7 @@ function ApprovalCard({ item, threadId }: { item: Item<"approval">; threadId: st
           </span>
         ) : null}
       </div>
-      {item.detail ? <p className="approval-detail">{item.detail}</p> : null}
+      {item.detail ? <p className="approval-detail mono">{item.detail}</p> : null}
       {item.diff && pending ? (
         <div className="approval-diff">
           <DiffLines patch={item.diff} />
@@ -160,7 +161,7 @@ function ApprovalCard({ item, threadId }: { item: Item<"approval">; threadId: st
             disabled={sent}
             onClick={() => decide("allow")}
           >
-            Allow <kbd>{shortcut("↵")}</kbd>
+            Approve <kbd>{shortcut("↵")}</kbd>
           </button>
         </div>
       ) : null}

@@ -1,7 +1,9 @@
 import { AGE_WS_PATH } from "@age/contracts";
 import { createFixtureBackend } from "../dev/fixture.ts";
+import { loadDeviceSettings } from "../state/appearance.ts";
 import { refreshProviders } from "../state/actions.ts";
 import { setBackend } from "../state/backend.ts";
+import { receiveTerminal } from "../state/terminal.ts";
 import { receiveEvent, receiveSnapshot, useStore } from "../state/store.ts";
 import { createRpcClient, type SocketHandlers, type SocketLike } from "./client.ts";
 
@@ -12,6 +14,7 @@ export function startConnection() {
     useStore.setState({ fixture: true, status: "open" });
     void fixture.call("snapshot", {}).then(receiveSnapshot);
     void refreshProviders();
+    void loadDeviceSettings();
     return;
   }
   let firstOpen = true;
@@ -21,11 +24,13 @@ export function startConnection() {
     getSeq: () => useStore.getState().model.seq,
     onSnapshot: receiveSnapshot,
     onEvent: receiveEvent,
+    onTerminal: receiveTerminal,
     onStatus: (status) => {
       useStore.setState({ status });
       if (status === "open" && firstOpen) {
         firstOpen = false;
         void refreshProviders();
+        void loadDeviceSettings();
       }
     },
   });

@@ -2,7 +2,7 @@ import type { ProviderKind, ProviderStatus, RuntimeMode } from "@age/contracts";
 
 export const providerLabels: Record<ProviderKind, string> = {
   claude: "Claude Code",
-  cursor: "Cursor Agent",
+  cursor: "Cursor",
   codex: "Codex",
   demo: "Demo",
 };
@@ -21,8 +21,14 @@ export function modelLabel(providers: ProviderStatus[], kind: ProviderKind, mode
   return provider?.models.find((entry) => entry.id === model)?.label ?? model;
 }
 
-export const isAvailable = (provider: ProviderStatus) =>
-  provider.installed && provider.authenticated !== false && !provider.problem;
+export const isAvailable = (
+  provider: ProviderStatus,
+  disabled: ReadonlySet<ProviderKind> = new Set(),
+) =>
+  !disabled.has(provider.kind) &&
+  provider.installed &&
+  provider.authenticated !== false &&
+  !provider.problem;
 
 export const shortcut = (key: string) => {
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);

@@ -48,9 +48,9 @@ const INHERITED_GIT_VARS = [
 ] as const;
 
 const AGE_IDENTITY = {
-  GIT_AUTHOR_NAME: "AGE",
+  GIT_AUTHOR_NAME: "Wooky",
   GIT_AUTHOR_EMAIL: "age@localhost",
-  GIT_COMMITTER_NAME: "AGE",
+  GIT_COMMITTER_NAME: "Wooky",
   GIT_COMMITTER_EMAIL: "age@localhost",
 } as const;
 
@@ -109,6 +109,7 @@ export function createGitService(options?: {
       const child = spawn(gitBin, args, {
         cwd: opts.cwd,
         env: opts.env ?? baseEnv(),
+        windowsHide: true,
       });
       const out: Buffer[] = [];
       const err: Buffer[] = [];

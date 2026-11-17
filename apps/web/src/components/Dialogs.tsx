@@ -1,5 +1,5 @@
 import type { ProviderKind, RuntimeMode } from "@age/contracts";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { addProject, closeDialog, createThread, suggestPaths } from "../state/actions.ts";
 import { useStore, type Dialog } from "../state/store.ts";
 import { isAvailable, runtimeModes } from "./labels.ts";
@@ -48,11 +48,13 @@ function ConfirmDialog({ dialog }: { dialog: Extract<Dialog, { kind: "confirm" }
 function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null }) {
   const projects = useStore((state) => state.model.projects);
   const providers = useStore((state) => state.providers);
+  const disabledProviders = useStore((state) => state.deviceSettings?.disabledProviders ?? []);
+  const disabled = useMemo(() => new Set(disabledProviders), [disabledProviders]);
   const selectedProject = useStore((state) =>
     state.selectedThreadId ? state.model.threads[state.selectedThreadId]?.projectId : undefined,
   );
   const projectList = Object.values(projects).toSorted((a, b) => a.name.localeCompare(b.name));
-  const firstAvailable = providers.find(isAvailable);
+  const firstAvailable = providers.find((entry) => isAvailable(entry, disabled));
 
   const [projectId, setProjectId] = useState(
     initialProjectId ?? selectedProject ?? projectList[0]?.id ?? "",
@@ -66,7 +68,7 @@ function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null
 
   const chosen = providers.find((entry) => entry.kind === (provider ?? firstAvailable?.kind));
   const chosenModel = model ?? chosen?.models[0]?.id ?? "";
-  const canCreate = Boolean(projectId && chosen && isAvailable(chosen) && !busy);
+  const canCreate = Boolean(projectId && chosen && isAvailable(chosen, disabled) && !busy);
 
   return (
     <Modal label="New thread" onClose={closeDialog}>
@@ -108,13 +110,13 @@ function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null
             {providers.map((entry) => (
               <label
                 key={entry.kind}
-                className={isAvailable(entry) ? "option card" : "option card disabled"}
+                className={isAvailable(entry, disabled) ? "option card" : "option card disabled"}
               >
                 <input
                   type="radio"
                   name={`${ids}-provider`}
                   checked={entry.kind === chosen?.kind}
-                  disabled={!isAvailable(entry)}
+                  disabled={!isAvailable(entry, disabled)}
                   onChange={() => {
                     setProvider(entry.kind);
                     setModel(null);

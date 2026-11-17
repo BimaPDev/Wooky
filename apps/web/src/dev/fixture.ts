@@ -1,12 +1,15 @@
-import type {
-  FileDiff,
-  ProviderStatus,
-  ReadModel,
-  RpcMethod,
-  RpcParams,
-  RpcResult,
-  Thread,
-  Turn,
+import {
+  DeviceSettings,
+  type AppearanceTheme,
+  type DeviceSettings as DeviceSettingsValue,
+  type FileDiff,
+  type ProviderStatus,
+  type ReadModel,
+  type RpcMethod,
+  type RpcParams,
+  type RpcResult,
+  type Thread,
+  type Turn,
 } from "@age/contracts";
 import type { Backend } from "../state/backend.ts";
 
@@ -414,6 +417,41 @@ const diffs: Record<string, FileDiff[]> = {
   ],
 };
 
+const fixtureThemes: AppearanceTheme[] = [
+  {
+    version: 1,
+    id: "default",
+    name: "Default",
+    appearance: "dark",
+    canvas: "#0d0d0c",
+    accent: "#d7c9a7",
+    colors: {},
+    css: "",
+    builtin: true,
+  },
+  {
+    version: 1,
+    id: "abyss",
+    name: "Abyss",
+    appearance: "dark",
+    canvas: "#0b0a12",
+    accent: "#a78bfa",
+    colors: {},
+    css: "",
+    builtin: true,
+  },
+];
+
+let fixtureSettings: DeviceSettingsValue = DeviceSettings.parse({
+  activeThemeId: "default",
+  colorMode: "system",
+  threadNotifications: "banner",
+  inAppNotifications: true,
+  projectGrouping: true,
+  confirmDelete: true,
+  confirmArchive: true,
+});
+
 function respond(method: RpcMethod, params: unknown): unknown {
   switch (method) {
     case "snapshot":
@@ -433,6 +471,114 @@ function respond(method: RpcMethod, params: unknown): unknown {
       return { accepted: true, duplicate: false, seq: fixtureModel.seq };
     case "subscribe":
       return { replayed: 0 };
+    case "settings.get":
+      return fixtureSettings;
+    case "settings.put": {
+      fixtureSettings = { ...fixtureSettings, ...(params as RpcParams<"settings.put">).settings };
+      return fixtureSettings;
+    }
+    case "themes.list":
+      return {
+        themesDir: "/tmp/age-fixture/themes",
+        activeThemeId: fixtureSettings.activeThemeId,
+        themes: fixtureThemes.map((theme) => ({
+          id: theme.id,
+          name: theme.name,
+          appearance: theme.appearance,
+          canvas: theme.canvas,
+          accent: theme.accent,
+          builtin: Boolean(theme.builtin),
+          hasCss: theme.css.length > 0,
+        })),
+      };
+    case "themes.get": {
+      const id = (params as RpcParams<"themes.get">).id;
+      const theme = fixtureThemes.find((entry) => entry.id === id);
+      if (!theme) throw new Error(`Theme "${id}" was not found.`);
+      return theme;
+    }
+    case "themes.put": {
+      const theme = { ...(params as RpcParams<"themes.put">).theme, builtin: false };
+      const index = fixtureThemes.findIndex((entry) => entry.id === theme.id);
+      if (index >= 0) fixtureThemes[index] = theme;
+      else fixtureThemes.push(theme);
+      return theme;
+    }
+    case "themes.delete": {
+      const id = (params as RpcParams<"themes.delete">).id;
+      const index = fixtureThemes.findIndex((entry) => entry.id === id && !entry.builtin);
+      if (index < 0) throw new Error(`Theme "${id}" was not found.`);
+      fixtureThemes.splice(index, 1);
+      if (fixtureSettings.activeThemeId === id) fixtureSettings.activeThemeId = "default";
+      return { deleted: true };
+    }
+    case "terminal.open":
+      return { sessionId: "term_fixture", shell: "fixture" };
+    case "terminal.write":
+    case "terminal.resize":
+    case "terminal.close":
+      return { ok: true as const };
+    case "usage.limits":
+      return [
+        {
+          provider: "claude",
+          available: true,
+          plan: "max",
+          windows: [
+            {
+              id: "five_hour",
+              label: "5-hour",
+              usedPercent: 42,
+              resetsAt: new Date(Date.now() + 2 * 60 * 60_000 + 14 * 60_000).toISOString(),
+            },
+            {
+              id: "seven_day",
+              label: "Weekly",
+              usedPercent: 81,
+              resetsAt: new Date(Date.now() + 3 * 24 * 60 * 60_000).toISOString(),
+            },
+          ],
+          checkedAt: new Date().toISOString(),
+          problem: null,
+        },
+        {
+          provider: "codex",
+          available: true,
+          plan: "plus",
+          windows: [
+            {
+              id: "primary",
+              label: "5-hour",
+              usedPercent: 18,
+              resetsAt: new Date(Date.now() + 4 * 60 * 60_000).toISOString(),
+            },
+            {
+              id: "secondary",
+              label: "Weekly",
+              usedPercent: 55,
+              resetsAt: new Date(Date.now() + 5 * 24 * 60 * 60_000).toISOString(),
+            },
+          ],
+          checkedAt: new Date().toISOString(),
+          problem: null,
+        },
+        {
+          provider: "cursor",
+          available: false,
+          plan: null,
+          windows: [],
+          checkedAt: new Date().toISOString(),
+          problem: "Cursor Agent does not report plan limits.",
+        },
+        {
+          provider: "demo",
+          available: false,
+          plan: null,
+          windows: [],
+          checkedAt: new Date().toISOString(),
+          problem: "Demo does not report plan limits.",
+        },
+      ];
   }
 }
 

@@ -1,6 +1,6 @@
-# AGE
+# Wooky
 
-A local-first workspace for coding agents. AGE drives the agent CLIs you already have
+A local-first workspace for coding agents. Wooky drives the agent CLIs you already have
 installed and signed in to (Claude Code, Cursor Agent, Codex) plus a free Demo agent. It has
 no model or account of its own. See `AGENTS.md` for the rules and `docs/architecture.md`.
 

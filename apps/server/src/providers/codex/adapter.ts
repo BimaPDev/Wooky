@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import type { ApprovalRequest, ProviderEvent, ProviderStatus } from "@age/contracts";
+import { resolveCommand } from "../../process/resolve-command.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import {
   JsonRpcClient,
@@ -89,9 +90,23 @@ function isErrnoCode(err: unknown, code: string): boolean {
 }
 
 function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<ProviderStatus> {
-  const args = extraArgs ? [...extraArgs, "--version"] : ["--version"];
+  const resolved = resolveCommand(bin);
+  const command = resolved?.command ?? bin;
+  const args = [...(resolved?.prefixArgs ?? []), ...(extraArgs ?? []), "--version"];
   return new Promise<ProviderStatus>((resolve) => {
-    execFile(bin, args, { timeout: PROBE_TIMEOUT_MS }, (err, stdout, stderr) => {
+    if (!resolved && process.platform === "win32") {
+      resolve({
+        kind: "codex",
+        label: "Codex",
+        installed: false,
+        authenticated: null,
+        version: null,
+        models: [...CODEX_MODELS],
+        problem: NOT_FOUND_PROBLEM,
+      });
+      return;
+    }
+    execFile(command, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true }, (err, stdout, stderr) => {
       if (err) {
         const notFound = isErrnoCode(err, "ENOENT");
         resolve({
@@ -221,14 +236,23 @@ async function handleApprovalRequest(
 
 export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapter {
   const envBin = process.env.AGE_CODEX_BIN?.trim();
-  const codexBin = options?.codexBin ?? (envBin && envBin.length > 0 ? envBin : "codex");
-  const codexArgs = options?.codexArgs;
+  const configuredBin = options?.codexBin ?? (envBin && envBin.length > 0 ? envBin : "codex");
+  const configuredArgs = options?.codexArgs;
+
+  const launch = () => {
+    const resolved = resolveCommand(configuredBin);
+    if (!resolved) return { bin: configuredBin, args: configuredArgs };
+    return {
+      bin: resolved.command,
+      args: [...resolved.prefixArgs, ...(configuredArgs ?? [])],
+    };
+  };
 
   return {
     kind: "codex",
 
     probe(): Promise<ProviderStatus> {
-      return probeCodex(codexBin, codexArgs);
+      return probeCodex(configuredBin, configuredArgs);
     },
 
     async *runTurn(input: TurnInput): AsyncIterable<ProviderEvent> {
@@ -260,6 +284,7 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
         }
       };
 
+      const { bin: codexBin, args: codexArgs } = launch();
       const client = new JsonRpcClient({
         bin: codexBin,
         args: codexArgs,
@@ -294,7 +319,7 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
           await client.request(
             "initialize",
             {
-              clientInfo: { name: "age", title: "AGE", version: "0.0.0" },
+              clientInfo: { name: "wooky", title: "Wooky", version: "0.0.0" },
               capabilities: null,
             },
             InitializeResponseSchema,

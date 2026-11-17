@@ -1,8 +1,8 @@
 // Pure desktop-shell logic. No Electron or Node process imports, so it runs under vitest.
 
 /** Window and page background. Keep in step with the dark surface in apps/web tokens. */
-export const WINDOW_BACKGROUND = "#141416";
-const WINDOW_TEXT = "#ece8e1";
+export const WINDOW_BACKGROUND = "#0f0e18";
+const WINDOW_TEXT = "#f3f0ff";
 
 const STDERR_TAIL_CHARS = 4_000;
 const LINE_BUFFER_CHARS = 8_192;
@@ -205,7 +205,7 @@ function page(body: string): string {
 }
 
 export function startingPage(): string {
-  return page("<p>Starting AGE…</p>");
+  return page("<p>Starting Wooky…</p>");
 }
 
 export function errorPage(title: string, detail: string, stderrTail: string): string {

@@ -15,3 +15,5 @@ coverage/
 .evidence/
 # head-chef scratch
 .kitchen/
+# local reference clones (never commit)
+.scratch/

@@ -59,7 +59,7 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
   return (
     <aside className="panel" aria-label="Changes">
       <header className="panel-head">
-        <span className="panel-title">{turnId ? "Changes in this turn" : "Changes"}</span>
+        <span className="panel-title">{turnId ? "Changes in this turn" : "Thread changes"}</span>
         {totals ? <Counts {...totals} /> : null}
         {turnId ? (
           <button type="button" className="link-button" onClick={() => openChanges(null, null)}>

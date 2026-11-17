@@ -243,7 +243,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           if (thread.runtimeMode === "full") return "allow";
           const parsed = ApprovalRequest.safeParse(raw);
           if (!parsed.success) {
-            notice("The agent asked for an approval AGE could not read, so it was denied.");
+            notice("The agent asked for an approval Wooky could not read, so it was denied.");
             return "deny";
           }
           const request = parsed.data;
@@ -288,7 +288,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
             controller.abort();
             throw new UnreadableStream();
           }
-          notice("AGE could not read an event from the agent, so it was skipped.");
+          notice("Wooky could not read an event from the agent, so it was skipped.");
           continue;
         }
         const event = parsed.data;

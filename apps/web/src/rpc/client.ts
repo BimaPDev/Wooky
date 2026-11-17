@@ -7,6 +7,7 @@ import {
   type RpcMethod,
   type RpcParams,
   type RpcResult,
+  type TerminalPush,
 } from "@age/contracts";
 
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "offline";
@@ -45,6 +46,7 @@ export interface RpcClientOptions {
   getSeq: () => number;
   onSnapshot: (model: ReadModel) => void;
   onEvent: (event: AgeEvent) => void;
+  onTerminal?: (message: TerminalPush) => void;
   onStatus?: (status: ConnectionStatus) => void;
   requestTimeoutMs?: number;
   backoffBaseMs?: number;
@@ -125,7 +127,7 @@ export function createRpcClient(options: RpcClientOptions) {
       if (!entry.sent) continue;
       clearTimeout(entry.timer);
       pending.delete(id);
-      entry.reject(new RpcCallError("disconnected", "The connection to AGE closed."));
+      entry.reject(new RpcCallError("disconnected", "The connection to Wooky closed."));
     }
     if (stopped) return;
     setStatus(attempt >= offlineAfter ? "offline" : "reconnecting");
@@ -162,7 +164,8 @@ export function createRpcClient(options: RpcClientOptions) {
     }
     const message = parsed.data;
     if ("push" in message) {
-      options.onEvent(message.event);
+      if (message.push === "terminal") options.onTerminal?.(message);
+      else options.onEvent(message.event);
       return;
     }
     const entry = pending.get(message.id);

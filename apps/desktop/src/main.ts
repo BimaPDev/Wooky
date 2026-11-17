@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   Menu,
+  nativeImage,
   session,
   shell,
   type MenuItemConstructorOptions,
@@ -64,17 +65,33 @@ function setPage(next: Page): void {
   for (const win of BrowserWindow.getAllWindows()) loadPage(win);
 }
 
+const TITLEBAR_HEIGHT = 40;
+/** Near-opaque so the custom title strip reads like T3; fully transparent breaks on some GPUs. */
+const TITLEBAR_OVERLAY_COLOR = "#0d0d0ce8";
+const TITLEBAR_SYMBOL_DARK = "#ecebe6";
+
 function createWindow(): void {
   const win = new BrowserWindow({
+    title: "Wooky",
     width: 1280,
     height: 820,
     minWidth: 900,
     minHeight: 600,
     backgroundColor: WINDOW_BACKGROUND,
     show: false,
+    autoHideMenuBar: true,
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 16 } }
-      : {}),
+      : process.platform === "win32"
+        ? {
+            titleBarStyle: "hidden" as const,
+            titleBarOverlay: {
+              color: TITLEBAR_OVERLAY_COLOR,
+              height: TITLEBAR_HEIGHT,
+              symbolColor: TITLEBAR_SYMBOL_DARK,
+            },
+          }
+        : {}),
     webPreferences: {
       preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       contextIsolation: true,
@@ -83,6 +100,18 @@ function createWindow(): void {
     },
   });
   win.once("ready-to-show", () => win.show());
+
+  // Keep the Windows titlebar icon in step with the page favicon (project monogram).
+  win.webContents.on("page-favicon-updated", (_event, urls) => {
+    const url = urls[0];
+    if (!url) return;
+    try {
+      const image = nativeImage.createFromDataURL(url);
+      if (!image.isEmpty()) win.setIcon(image);
+    } catch {
+      // Non-data favicons are fine to ignore; the default app icon stays.
+    }
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (decideNavigation(url, currentOrigin()) === "external") void shell.openExternal(url);
@@ -117,6 +146,7 @@ function spawnServer(): ChildProcess {
     cwd: launch.cwd,
     env: launch.env,
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -156,7 +186,7 @@ async function startup(): Promise<void> {
     if (quitting || page.kind !== "server") return;
     setPage({
       kind: "error",
-      title: "The AGE server stopped",
+      title: "The Wooky server stopped",
       detail: `It exited with code ${code ?? "none"}${signal ? ` (signal ${signal})` : ""}.`,
       stderrTail: runtimeTail.text(),
     });
@@ -172,7 +202,7 @@ async function startup(): Promise<void> {
     void stopServer(child);
     setPage({
       kind: "error",
-      title: "AGE could not start its server",
+      title: "Wooky could not start its server",
       detail: error instanceof Error ? error.message : String(error),
       stderrTail: error instanceof ServerStartError ? error.stderrTail : "",
     });
@@ -197,9 +227,11 @@ function stopServer(child: ChildProcess): Promise<void> {
   });
 }
 
-function buildMenu(): Menu {
+/** macOS needs an app menu for standard shortcuts; Windows/Linux show a native bar we do not want. */
+function buildMenu(): Menu | null {
+  if (process.platform !== "darwin") return null;
   const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+    { role: "appMenu" },
     { role: "editMenu" },
     {
       label: "View",
@@ -227,6 +259,8 @@ function focusWindow(): void {
 }
 
 function main(): void {
+  app.setName("Wooky");
+  if (process.platform === "win32") app.setAppUserModelId("Wooky");
   app.on("second-instance", focusWindow);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -246,6 +280,7 @@ function main(): void {
   });
 
   void app.whenReady().then(() => {
+    app.setName("Wooky");
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(isPermissionAllowed(permission));
     });

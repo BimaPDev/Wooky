@@ -16,7 +16,10 @@ import { ServiceError } from "../errors.ts";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";
 import type { Queries } from "../queries.ts";
+import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
+import type { TerminalManager } from "../terminal/session.ts";
+import type { LimitsService } from "../usage/limits.ts";
 
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -26,12 +29,16 @@ interface Services {
   dispatcher: Dispatcher;
   providers: ProviderRegistry;
   queries: Queries;
+  themes: ThemeStore;
+  terminals: TerminalManager;
+  limits: LimitsService;
 }
 
 interface Connection {
   send(message: ServerMessage): void;
   /** Replaces this connection's event subscription. */
   follow(fromSeq: number): number;
+  trackTerminal(sessionId: string): void;
 }
 
 type Handlers = {
@@ -41,7 +48,15 @@ type Handlers = {
   ) => RpcResult<M> | Promise<RpcResult<M>>;
 };
 
-function createHandlers({ store, dispatcher, providers, queries }: Services): Handlers {
+function createHandlers({
+  store,
+  dispatcher,
+  providers,
+  queries,
+  themes,
+  terminals,
+  limits,
+}: Services): Handlers {
   return {
     dispatch: (command) => dispatcher.dispatch(command),
     snapshot: () => store.model,
@@ -49,6 +64,30 @@ function createHandlers({ store, dispatcher, providers, queries }: Services): Ha
     "providers.list": () => providers.list(),
     "git.diff": ({ threadId, turnId }) => queries.diff(threadId, turnId),
     "fs.pickable": ({ query }) => queries.pickable(query),
+    "settings.get": () => themes.getSettings(),
+    "settings.put": ({ settings }) => themes.putSettings(settings),
+    "themes.list": () => themes.list(),
+    "themes.get": ({ id }) => themes.get(id),
+    "themes.put": ({ theme }) => themes.put(theme),
+    "themes.delete": ({ id }) => themes.remove(id),
+    "terminal.open": ({ cwd, cols, rows }, conn) => {
+      const opened = terminals.open({ cwd, cols, rows }, (message) => conn.send(message));
+      conn.trackTerminal(opened.sessionId);
+      return opened;
+    },
+    "terminal.write": ({ sessionId, data }) => {
+      terminals.write(sessionId, data);
+      return { ok: true as const };
+    },
+    "terminal.resize": ({ sessionId, cols, rows }) => {
+      terminals.resize(sessionId, cols, rows);
+      return { ok: true as const };
+    },
+    "terminal.close": ({ sessionId }) => {
+      terminals.close(sessionId);
+      return { ok: true as const };
+    },
+    "usage.limits": ({ refresh }) => limits.get({ refresh }),
   };
 }
 
@@ -59,7 +98,8 @@ export function attachWebSocket(
   allowedHosts: ReadonlySet<string> = new Set(),
 ): () => void {
   const handlers = createHandlers(services);
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+  // Theme files may carry an inline background image (capped at 6 MB in the contract).
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
 
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const { pathname } = new URL(req.url ?? "/", "http://localhost");
@@ -72,6 +112,7 @@ export function attachWebSocket(
   function serve(ws: WebSocket) {
     let unsubscribe: (() => void) | null = null;
     let lastSeq = 0;
+    const ownedTerminals = new Set<string>();
 
     const conn: Connection = {
       send(message) {
@@ -94,6 +135,9 @@ export function attachWebSocket(
         unsubscribe = services.store.subscribe(push);
         return history.length;
       },
+      trackTerminal(sessionId) {
+        ownedTerminals.add(sessionId);
+      },
     };
 
     ws.on("message", async (data) => {
@@ -109,13 +153,18 @@ export function attachWebSocket(
         conn.send({ id, ok: false, error: toRpcError(error) });
       }
     });
-    ws.on("close", () => unsubscribe?.());
+    ws.on("close", () => {
+      unsubscribe?.();
+      for (const sessionId of ownedTerminals) services.terminals.close(sessionId);
+      ownedTerminals.clear();
+    });
     ws.on("error", () => ws.terminate());
   }
 
   return () => {
     for (const client of wss.clients) client.close(1001, "Server is shutting down");
     wss.close();
+    services.terminals.closeAll();
   };
 }
 

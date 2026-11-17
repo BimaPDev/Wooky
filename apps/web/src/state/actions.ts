@@ -1,6 +1,7 @@
 import type { Command, FileDiff, RuntimeMode, ProviderKind } from "@age/contracts";
+import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
-import { useStore, type Dialog } from "./store.ts";
+import { useStore, type Dialog, type SettingsPage } from "./store.ts";
 
 type CommandInput = Command extends infer C
   ? C extends Command
@@ -41,8 +42,55 @@ export function suggestPaths(query: string) {
 export const selectThread = (threadId: string | null) =>
   useStore.setState((state) => ({
     selectedThreadId: threadId,
+    settingsOpen: false,
     changes: { ...state.changes, turnId: null, focusPath: null },
   }));
+
+export const toggleSidebar = () =>
+  useStore.setState((state) => ({ sidebarOpen: !state.sidebarOpen }));
+export const toggleTerminal = () =>
+  useStore.setState((state) => ({ terminalOpen: !state.terminalOpen }));
+
+export const openTerminal = () => useStore.setState({ terminalOpen: true });
+
+/** Queue a line for the docked terminal (used by Settings → Providers Sign in). */
+export const runInTerminal = (line: string) =>
+  useStore.setState({ terminalOpen: true, pendingTerminalLine: line, settingsOpen: false });
+
+export const takePendingTerminalLine = () => {
+  const line = useStore.getState().pendingTerminalLine;
+  if (line) useStore.setState({ pendingTerminalLine: null });
+  return line;
+};
+
+/** T3-style connect: enable the provider and open its CLI login in the terminal. */
+export function connectProvider(kind: ProviderKind) {
+  const command = signInCommand(kind);
+  if (!command) {
+    useStore.setState({ notice: "Demo is always connected." });
+    return;
+  }
+  const settings = useStore.getState().deviceSettings;
+  const disabled = new Set(settings?.disabledProviders ?? []);
+  if (disabled.has(kind)) {
+    disabled.delete(kind);
+    void patchDeviceSettings({ disabledProviders: [...disabled] });
+  }
+  runInTerminal(command);
+}
+
+export function signInCommand(kind: ProviderKind): string | null {
+  switch (kind) {
+    case "claude":
+      return "claude auth login";
+    case "codex":
+      return "codex login";
+    case "cursor":
+      return "agent login";
+    case "demo":
+      return null;
+  }
+}
 
 export const dismissNotice = () => useStore.setState({ notice: null });
 
@@ -50,16 +98,24 @@ export const openDialog = (dialog: Dialog) => useStore.setState({ dialog, palett
 export const closeDialog = () => useStore.setState({ dialog: null });
 export const setPaletteOpen = (paletteOpen: boolean) => useStore.setState({ paletteOpen });
 
+export const openSettings = (page: SettingsPage = "general") =>
+  useStore.setState({ settingsOpen: true, settingsPage: page, paletteOpen: false });
+export const closeSettings = () => useStore.setState({ settingsOpen: false });
+export const setSettingsPage = (settingsPage: SettingsPage) => useStore.setState({ settingsPage });
+
 export const toggleChanges = () =>
-  useStore.setState((state) => ({
-    changes: { open: !state.changes.open, turnId: null, focusPath: null },
-  }));
+  useStore.setState((state) => {
+    const open = !state.changes.open;
+    return { changes: { open, turnId: null, focusPath: null } };
+  });
 
 export const openChanges = (turnId: string | null, focusPath: string | null) =>
   useStore.setState({ changes: { open: true, turnId, focusPath } });
 
 export const closeChanges = () =>
-  useStore.setState((state) => ({ changes: { ...state.changes, open: false } }));
+  useStore.setState((state) => ({
+    changes: { ...state.changes, open: false },
+  }));
 
 export function confirm(dialog: Omit<Extract<Dialog, { kind: "confirm" }>, "kind">) {
   openDialog({ kind: "confirm", ...dialog });
@@ -71,7 +127,7 @@ export function removeProject(projectId: string) {
   const project = useStore.getState().model.projects[projectId];
   confirm({
     title: `Remove ${project?.name ?? "project"}`,
-    body: "Its threads leave AGE. Files on disk are not touched.",
+    body: "Its threads leave Wooky. Files on disk are not touched.",
     confirmLabel: "Remove project",
     onConfirm: () => void dispatch({ type: "project.remove", projectId }),
   });
@@ -100,7 +156,7 @@ export function removeThread(threadId: string) {
   const thread = useStore.getState().model.threads[threadId];
   confirm({
     title: `Remove ${thread?.title || "thread"}`,
-    body: "The conversation is removed from AGE. Files on disk are not touched.",
+    body: "The conversation is removed from Wooky. Files on disk are not touched.",
     confirmLabel: "Remove thread",
     onConfirm: () => void dispatch({ type: "thread.remove", threadId }),
   });

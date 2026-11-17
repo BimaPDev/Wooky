@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./components/App.tsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { startConnection } from "./rpc/connect.ts";
 import { useStore } from "./state/store.ts";
 import { loadTheme } from "./state/theme.ts";
@@ -14,6 +15,8 @@ const root = document.getElementById("root");
 if (root)
   createRoot(root).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   );

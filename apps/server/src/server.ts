@@ -11,9 +11,12 @@ import { builtinAdapters } from "./providers/index.ts";
 import { createProviderRegistry } from "./providers/registry.ts";
 import type { ProviderAdapter } from "./providers/types.ts";
 import { createQueries } from "./queries.ts";
+import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
+import { createTerminalManager } from "./terminal/session.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
+import { createLimitsService } from "./usage/limits.ts";
 
 export interface ServerOptions {
   home: string;
@@ -39,17 +42,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     newId: (prefix) => `${prefix}_${randomUUID()}`,
   };
   const store = openEventStore(options.home, ctx.now);
-  const providers = createProviderRegistry(options.adapters ?? builtinAdapters());
+  const limits = createLimitsService();
+  const providers = createProviderRegistry(
+    options.adapters ??
+      builtinAdapters({ onClaudeRateLimit: (info) => limits.ingestClaudeRateLimit(info) }),
+  );
   const git = options.git ?? createGitService();
   const runner = createEffectRunner({ store, providers, git, newId: ctx.newId });
   runner.recover();
   const dispatcher = createDispatcher({ store, runner, ctx });
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
+  const themes = createThemeStore(options.home);
+  const terminals = createTerminalManager();
 
   const http = createServer(createHttpHandler(options.webDist ?? null));
   const closeSockets = attachWebSocket(
     http,
-    { store, dispatcher, providers, queries },
+    { store, dispatcher, providers, queries, themes, terminals, limits },
     new Set(options.allowedHosts ?? []),
   );
   try {

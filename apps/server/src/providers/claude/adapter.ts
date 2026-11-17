@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ProviderAdapter, TurnInput } from "../types.ts";
 import type { ApprovalRequest, ProviderEvent, ProviderStatus } from "@age/contracts";
 import {
   query as sdkQuery,
@@ -8,7 +7,10 @@ import {
   type Options,
   type PermissionMode,
   type PermissionResult,
+  type SDKRateLimitInfo,
 } from "@anthropic-ai/claude-agent-sdk";
+import { resolveCommand } from "../../process/resolve-command.ts";
+import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { editPreview } from "./diff.ts";
 import { clip } from "./text.ts";
 import { describeTool, str, toolKind, type ToolInput } from "./tools.ts";
@@ -31,6 +33,8 @@ export interface ClaudeAdapterOptions {
   query?: typeof sdkQuery;
   /** Path or name of the `claude` executable. Defaults to `claude` on PATH for probing. */
   claudeBin?: string;
+  /** Passive plan-limit updates from `rate_limit_event` messages during turns. */
+  onRateLimit?: (info: SDKRateLimitInfo) => void;
 }
 
 export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): ProviderAdapter {
@@ -47,8 +51,23 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         authenticated: null,
         models: MODELS,
       };
+      const resolved = resolveCommand(bin);
+      if (!resolved && process.platform === "win32") {
+        return {
+          ...base,
+          installed: false,
+          version: null,
+          problem:
+            "Claude Code was not found on your PATH. Install it and make sure `claude` runs in a terminal.",
+        };
+      }
+      const command = resolved?.command ?? bin;
+      const args = [...(resolved?.prefixArgs ?? []), "--version"];
       try {
-        const { stdout } = await execFileAsync(bin, ["--version"], { timeout: PROBE_TIMEOUT_MS });
+        const { stdout } = await execFileAsync(command, args, {
+          timeout: PROBE_TIMEOUT_MS,
+          windowsHide: true,
+        });
         const version = /\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? null;
         return { ...base, installed: true, version, problem: null };
       } catch (error) {
@@ -81,13 +100,17 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
       input.signal.addEventListener("abort", onAbort, { once: true });
 
       let stderrTail = "";
+      const resolved = resolveCommand(bin);
+      const claudeExecutable = resolved?.prefixArgs.length
+        ? undefined
+        : (resolved?.command ?? options.claudeBin);
       const sdkOptions: Options = {
         cwd: input.cwd,
         abortController: abort,
         includePartialMessages: true,
         ...(input.model !== "default" ? { model: input.model } : {}),
         ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
-        ...(options.claudeBin ? { pathToClaudeCodeExecutable: options.claudeBin } : {}),
+        ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
         ...permissionOptions(input),
         stderr: (data) => {
           stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
@@ -104,6 +127,9 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           next.catch(() => undefined);
           const step = await Promise.race([next, aborted]);
           if (step === ABORTED || step.done) break;
+          if (step.value.type === "rate_limit_event") {
+            options.onRateLimit?.(step.value.rate_limit_info);
+          }
           for (const event of translator.push(step.value)) {
             yield event;
             if (event.type === "done") finished = true;

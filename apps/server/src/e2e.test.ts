@@ -71,10 +71,11 @@ async function connect(server: RunningServer) {
   socket.on("message", (data) => {
     const message: unknown = JSON.parse(String(data));
     const push = RpcPush.safeParse(message);
-    if (push.success) {
-      pushes.push(push.data.event);
+    if (push.success && push.data.push === "event") {
+      const event = push.data.event;
+      pushes.push(event);
       for (const waiter of waiters.splice(0)) {
-        if (waiter.match(push.data.event)) waiter.resolve(push.data.event);
+        if (waiter.match(event)) waiter.resolve(event);
         else waiters.push(waiter);
       }
       return;

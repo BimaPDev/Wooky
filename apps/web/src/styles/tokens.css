@@ -26,40 +26,53 @@
   --duration-slow: 200ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
-  --sidebar-width: 260px;
-  --panel-width: min(46vw, 640px);
-  --content-width: 760px;
+  --rail-width: 48px;
+  --sidebar-width: 280px;
+  --panel-width: min(42vw, 520px);
+  --content-width: 720px;
+  --radius-xl: 14px;
+  --appearance-contrast: 100%;
+  --glass-opacity: 80%;
+}
+
+:root[data-chat-width="wide"] {
+  --content-width: 880px;
+}
+
+:root[data-chat-width="full"] {
+  --content-width: min(1100px, 92vw);
 }
 
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg-0: #0d0d0c;
-  --bg-1: #141413;
-  --bg-2: #1b1b19;
-  --bg-3: #242421;
-  --bg-hover: #2a2a27;
-  --bg-active: #31312d;
-  --line: #2b2a27;
-  --line-strong: #3a3935;
-  --text: #ecebe6;
-  --text-2: #b4b2aa;
-  --text-3: #85837b;
-  --text-4: #5f5d57;
-  --accent: #d7c9a7;
-  --accent-ink: #1a1813;
-  --focus: #c9b98f;
-  --amber: #e2a54a;
+  --bg-0: #09080f;
+  --bg-1: #0f0e18;
+  --bg-2: #161422;
+  --bg-3: #1f1c30;
+  --bg-hover: #27233a;
+  --bg-active: #302b46;
+  --line: #2a2540;
+  --line-strong: #3d3658;
+  --text: #f3f0ff;
+  --text-2: #c4bdd9;
+  --text-3: #8f87ab;
+  --text-4: #6a6285;
+  --accent: #a78bfa;
+  --accent-ink: #160f28;
+  --focus: #c4b5fd;
+  --amber: #f0b45a;
   --amber-bg: #2a2114;
-  --red: #e5675d;
+  --red: #f07178;
   --red-bg: #2c1716;
-  --green: #7cbf86;
+  --green: #7ddea0;
   --add-bg: #15261a;
   --add-ink: #a9d8b0;
   --del-bg: #2c1716;
   --del-ink: #eba49d;
-  --scrim: #00000099;
-  --shadow: 0 12px 32px -8px #000000b3, 0 0 0 1px #3a3935;
+  --scrim: #05040acc;
+  --shadow: 0 18px 48px -16px #000000d9, 0 0 0 1px #3d3658;
+  --glow: color-mix(in srgb, var(--accent) 28%, transparent);
   --provider-claude: #d98b63;
   --provider-cursor: #b9b8b3;
   --provider-codex: #8fb3e6;
@@ -94,6 +107,7 @@
   --del-ink: #8f2a22;
   --scrim: #1d1c1a4d;
   --shadow: 0 12px 32px -10px #1d1c1a40, 0 0 0 1px #cfccc3;
+  --glow: color-mix(in srgb, var(--accent) 18%, transparent);
   --provider-claude: #b8653d;
   --provider-cursor: #55534e;
   --provider-codex: #3d6fb3;
@@ -129,6 +143,7 @@
     --del-ink: #8f2a22;
     --scrim: #1d1c1a4d;
     --shadow: 0 12px 32px -10px #1d1c1a40, 0 0 0 1px #cfccc3;
+    --glow: color-mix(in srgb, var(--accent) 18%, transparent);
     --provider-claude: #b8653d;
     --provider-cursor: #55534e;
     --provider-codex: #3d6fb3;
