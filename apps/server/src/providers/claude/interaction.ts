@@ -1,7 +1,7 @@
 import type { QuestionAnswers, UserInputRequest, UserQuestion } from "@age/contracts";
-import { lstatSync, realpathSync } from "node:fs";
+import { constants as fsConstants, lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { lstat, open, readFile } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { isInsideWorkspace } from "../paths.ts";
@@ -10,12 +10,25 @@ export const ASK_USER_QUESTION = "AskUserQuestion";
 export const EXIT_PLAN_MODE = "ExitPlanMode";
 
 const PLAN_READ_MAX_BYTES = 1 << 20;
+const SETTINGS_READ_MAX_BYTES = 1 << 20;
 
 let planUserHome: string | undefined;
 
 /** Test seam: never read the process user's real home in provider tests. */
 export function setPlanUserHomeForTests(home: string | undefined): void {
   planUserHome = home;
+}
+
+type PlanFsHooks = {
+  afterValidate?: () => void | Promise<void>;
+  beforeRead?: () => void | Promise<void>;
+};
+
+let planFsHooksForTests: PlanFsHooks | undefined;
+
+/** Test seam: deterministic swaps between validation and open/read. Not used in production. */
+export function setPlanFsHooksForTests(hooks: PlanFsHooks | undefined): void {
+  planFsHooksForTests = hooks;
 }
 
 function userHome(): string {
@@ -103,16 +116,185 @@ function realpathOrResolved(path: string): string {
   }
 }
 
+export type OpenRegularFileFailure =
+  | "not_found"
+  | "outside_roots"
+  | "symlink"
+  | "hardlink"
+  | "not_regular"
+  | "too_large"
+  | "changed"
+  | "unreadable";
+
+export type OpenRegularFileResult =
+  { ok: true; data: Uint8Array } | { ok: false; reason: OpenRegularFileFailure };
+
+function openRegularFileFlags(): number | string {
+  const O_RDONLY = fsConstants.O_RDONLY ?? 0;
+  if (process.platform === "win32") return O_RDONLY;
+  const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+  const O_NONBLOCK = fsConstants.O_NONBLOCK ?? 0;
+  return O_RDONLY | O_NOFOLLOW | O_NONBLOCK;
+}
+
+type OpenRegularFileContainment = { kind: "plan"; cwd: string } | { kind: "settings"; cwd: string };
+
+export async function openRegularFileSafely(
+  filePath: string,
+  maxBytes: number,
+  containment: OpenRegularFileContainment,
+): Promise<OpenRegularFileResult> {
+  const absolute = isAbsolute(filePath) ? resolve(filePath) : resolve(containment.cwd, filePath);
+
+  let entryStat;
+  try {
+    entryStat = await lstat(absolute);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { ok: false, reason: "not_found" };
+    return { ok: false, reason: "unreadable" };
+  }
+
+  if (containment.kind === "settings" && entryStat.isSymbolicLink()) {
+    return { ok: false, reason: "symlink" };
+  }
+  if (containment.kind === "plan" && entryStat.isSymbolicLink()) {
+    return { ok: false, reason: "symlink" };
+  }
+  if (!entryStat.isFile()) {
+    return { ok: false, reason: "not_regular" };
+  }
+
+  let firstReal: string;
+  try {
+    firstReal = realpathSync(absolute);
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+
+  const containmentFailure = await containmentFailureForRealPath(firstReal, containment);
+  if (containmentFailure) return { ok: false, reason: containmentFailure };
+
+  let identityBeforeHook: { dev: number | bigint; ino: number | bigint };
+  try {
+    const st = statSync(absolute);
+    identityBeforeHook = { dev: st.dev, ino: st.ino };
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+
+  await planFsHooksForTests?.afterValidate?.();
+
+  let openTarget: string;
+  try {
+    openTarget = realpathSync(absolute);
+  } catch {
+    return { ok: false, reason: "not_found" };
+  }
+  if (openTarget !== firstReal) return { ok: false, reason: "changed" };
+
+  try {
+    const st = statSync(absolute);
+    if (st.dev !== identityBeforeHook.dev || st.ino !== identityBeforeHook.ino) {
+      if (st.isFile() && st.nlink > 1) return { ok: false, reason: "hardlink" };
+      return { ok: false, reason: "changed" };
+    }
+  } catch {
+    return { ok: false, reason: "changed" };
+  }
+
+  const flags = openRegularFileFlags();
+  let handle;
+  try {
+    handle = await open(openTarget, flags);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { ok: false, reason: "not_found" };
+    if (code === "ELOOP" || code === "EPERM") return { ok: false, reason: "symlink" };
+    return { ok: false, reason: "unreadable" };
+  }
+
+  try {
+    const fdStat = await handle.stat();
+    if (!fdStat.isFile()) return { ok: false, reason: "not_regular" };
+    if (fdStat.nlink !== 1) return { ok: false, reason: "hardlink" };
+    if (fdStat.size > maxBytes) return { ok: false, reason: "too_large" };
+
+    const identity = { dev: fdStat.dev, ino: fdStat.ino };
+
+    await planFsHooksForTests?.beforeRead?.();
+
+    const buffer = Buffer.alloc(maxBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > maxBytes) return { ok: false, reason: "too_large" };
+
+    let afterReal: string;
+    try {
+      afterReal = realpathSync(absolute);
+    } catch {
+      return { ok: false, reason: "changed" };
+    }
+    if (afterReal !== firstReal) return { ok: false, reason: "changed" };
+
+    let afterStat;
+    try {
+      afterStat = statSync(openTarget);
+    } catch {
+      return { ok: false, reason: "changed" };
+    }
+    if (afterStat.dev !== identity.dev || afterStat.ino !== identity.ino) {
+      return { ok: false, reason: "changed" };
+    }
+
+    return { ok: true, data: buffer.subarray(0, bytesRead) };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function containmentFailureForRealPath(
+  fileReal: string,
+  containment: OpenRegularFileContainment,
+): Promise<OpenRegularFileFailure | null> {
+  if (containment.kind === "settings") {
+    const cwdReal = realpathOrResolved(containment.cwd);
+    if (!isInsideWorkspace(fileReal, cwdReal)) return "outside_roots";
+    return null;
+  }
+
+  const roots = await planFileRoots(containment.cwd);
+  for (const root of roots) {
+    const rootResolved = resolve(root);
+    const rootSymlink = isSymlink(rootResolved);
+    const rootReal = realpathOrResolved(rootResolved);
+    if (!isInsideWorkspace(fileReal, rootReal)) continue;
+    if (rootSymlink) return "outside_roots";
+    return null;
+  }
+  return "outside_roots";
+}
+
+async function readSettingsJson(cwd: string, name: "settings.local.json" | "settings.json") {
+  const path = join(cwd, ".claude", name);
+  const opened = await openRegularFileSafely(path, SETTINGS_READ_MAX_BYTES, {
+    kind: "settings",
+    cwd,
+  });
+  if (!opened.ok) return null;
+  try {
+    const text = new TextDecoder().decode(opened.data);
+    return JSON.parse(text) as { plansDirectory?: unknown };
+  } catch {
+    return null;
+  }
+}
+
 export async function plansDirectoryFromSettings(cwd: string): Promise<string | null> {
   for (const name of ["settings.local.json", "settings.json"] as const) {
-    try {
-      const text = await readFile(join(cwd, ".claude", name), "utf8");
-      const data = JSON.parse(text) as { plansDirectory?: unknown };
-      const value = data.plansDirectory;
-      if (typeof value === "string" && value.trim() !== "") return value.trim();
-    } catch {
-      // missing or unreadable settings
-    }
+    const data = await readSettingsJson(cwd, name);
+    if (!data) continue;
+    const value = data.plansDirectory;
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
   }
   return null;
 }
@@ -137,10 +319,32 @@ export type PlanReadFailure =
   | "symlink_root"
   | "unreadable"
   | "too_large"
-  | "empty";
+  | "empty"
+  | "not_regular"
+  | "changed";
 
 export type PlanReadResult =
   { ok: true; markdown: string } | { ok: false; reason: PlanReadFailure };
+
+function planFailureFromOpen(reason: OpenRegularFileFailure): PlanReadFailure {
+  switch (reason) {
+    case "not_found":
+    case "unreadable":
+      return "unreadable";
+    case "outside_roots":
+      return "outside_roots";
+    case "symlink":
+      return "symlink_file";
+    case "hardlink":
+      return "hardlink_file";
+    case "not_regular":
+      return "not_regular";
+    case "too_large":
+      return "too_large";
+    case "changed":
+      return "changed";
+  }
+}
 
 export function planDenyMessage(reason: PlanReadFailure): string {
   switch (reason) {
@@ -159,6 +363,10 @@ export function planDenyMessage(reason: PlanReadFailure): string {
       return "The plan file could not be read.";
     case "too_large":
       return "The plan file is too large (maximum 1 MiB).";
+    case "not_regular":
+      return "The plan file must be a regular file.";
+    case "changed":
+      return "The plan file changed while it was being read.";
   }
 }
 
@@ -167,14 +375,14 @@ export async function validatePlanPath(
   cwd: string,
 ): Promise<{ allowed: true; absolute: string } | { allowed: false; reason: PlanReadFailure }> {
   const absolute = isAbsolute(filePath) ? resolve(filePath) : resolve(cwd, filePath);
-  let stat;
+
   try {
-    stat = await lstat(absolute);
+    const entry = await lstat(absolute);
+    if (entry.isSymbolicLink()) return { allowed: false, reason: "symlink_file" };
+    if (entry.isFile() && entry.nlink > 1) return { allowed: false, reason: "hardlink_file" };
   } catch {
     return { allowed: false, reason: "unreadable" };
   }
-  if (stat.isSymbolicLink()) return { allowed: false, reason: "symlink_file" };
-  if (stat.isFile() && stat.nlink > 1) return { allowed: false, reason: "hardlink_file" };
 
   let fileReal: string;
   try {
@@ -198,21 +406,16 @@ export async function validatePlanPath(
 export async function readPlanFromFile(filePath: string, cwd: string): Promise<PlanReadResult> {
   const check = await validatePlanPath(filePath, cwd);
   if (!check.allowed) return { ok: false, reason: check.reason };
-  try {
-    const handle = await open(check.absolute, "r");
-    try {
-      const buffer = Buffer.alloc(PLAN_READ_MAX_BYTES + 1);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-      if (bytesRead > PLAN_READ_MAX_BYTES) return { ok: false, reason: "too_large" };
-      const text = buffer.toString("utf8", 0, bytesRead).trim();
-      if (text === "") return { ok: false, reason: "empty" };
-      return { ok: true, markdown: text };
-    } finally {
-      await handle.close();
-    }
-  } catch {
-    return { ok: false, reason: "unreadable" };
-  }
+
+  const opened = await openRegularFileSafely(check.absolute, PLAN_READ_MAX_BYTES, {
+    kind: "plan",
+    cwd,
+  });
+  if (!opened.ok) return { ok: false, reason: planFailureFromOpen(opened.reason) };
+
+  const text = new TextDecoder().decode(opened.data).trim();
+  if (text === "") return { ok: false, reason: "empty" };
+  return { ok: true, markdown: text };
 }
 
 export async function resolvePlanMarkdown(

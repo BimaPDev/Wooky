@@ -1,24 +1,32 @@
+import { execFile } from "node:child_process";
 import {
   linkSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   planDenyMessage,
+  plansDirectoryFromSettings,
   readPlanFromFile,
   resolvePlanMarkdown,
+  setPlanFsHooksForTests,
   setPlanUserHomeForTests,
   toolAnswers,
   questionRequest,
   quoteAnswerLabel,
 } from "./interaction.ts";
+
+const execFileAsync = promisify(execFile);
 
 const temps: string[] = [];
 
@@ -30,6 +38,7 @@ function tempDir(prefix: string): string {
 
 afterEach(() => {
   setPlanUserHomeForTests(undefined);
+  setPlanFsHooksForTests(undefined);
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -179,6 +188,118 @@ describe("readPlanFromFile", () => {
     const planPath = join(cwd, ".claude", "plans", "big.md");
     writeFileSync(planPath, "x".repeat((1 << 20) + 1));
     expect(await readPlanFromFile(planPath, cwd)).toEqual({ ok: false, reason: "too_large" });
+  });
+
+  it("rejects a directory at the plan path", async () => {
+    const cwd = projectWithPlans("dir-path");
+    const dirPath = join(cwd, ".claude", "plans", "not-a-file");
+    mkdirSync(dirPath);
+    expect(await readPlanFromFile(dirPath, cwd)).toEqual({ ok: false, reason: "not_regular" });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a FIFO at the plan path without blocking",
+    async () => {
+      const cwd = projectWithPlans("fifo");
+      const fifoPath = join(cwd, ".claude", "plans", "blocked.md");
+      await execFileAsync("mkfifo", [fifoPath]);
+      const result = await readPlanFromFile(fifoPath, cwd);
+      expect(result).toEqual({ ok: false, reason: "not_regular" });
+    },
+  );
+
+  it("rejects a symlink swap after validation via hook", async () => {
+    const cwd = projectWithPlans("hook-symlink");
+    const planPath = join(cwd, ".claude", "plans", "task.md");
+    const credPath = join(cwd, "credential.md");
+    writeFileSync(planPath, "safe plan");
+    writeFileSync(credPath, "CREDENTIAL_LEAK");
+    setPlanFsHooksForTests({
+      afterValidate: () => {
+        unlinkSync(planPath);
+        symlinkSync(credPath, planPath);
+      },
+    });
+    const result = await readPlanFromFile(planPath, cwd);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected rejection");
+    expect(result.reason).not.toBe("empty");
+    if ("markdown" in result) throw new Error("unexpected markdown");
+    expect(String(result)).not.toContain("CREDENTIAL_LEAK");
+  });
+
+  it("rejects a hard-link swap after validation via hook", async () => {
+    const cwd = projectWithPlans("hook-hardlink");
+    const planPath = join(cwd, ".claude", "plans", "task.md");
+    const credPath = join(cwd, "credential.md");
+    writeFileSync(planPath, "safe plan");
+    writeFileSync(credPath, "CREDENTIAL_LEAK");
+    setPlanFsHooksForTests({
+      afterValidate: () => {
+        unlinkSync(planPath);
+        linkSync(credPath, planPath);
+      },
+    });
+    const result = await readPlanFromFile(planPath, cwd);
+    expect(result).toEqual({ ok: false, reason: "hardlink_file" });
+    expect(String(result)).not.toContain("CREDENTIAL_LEAK");
+  });
+
+  it("rejects a directory-component swap after validation via hook", async () => {
+    const cwd = projectWithPlans("hook-dir-swap");
+    const plansDir = join(cwd, ".claude", "plans");
+    const plansAlt = join(cwd, ".claude", "plans-alt");
+    const planPath = join(plansDir, "task.md");
+    mkdirSync(plansAlt, { recursive: true });
+    writeFileSync(join(plansAlt, "task.md"), "ALT_PLAN");
+    writeFileSync(planPath, "safe plan");
+    setPlanFsHooksForTests({
+      afterValidate: () => {
+        renameSync(plansDir, join(cwd, ".claude", "plans-orig"));
+        renameSync(plansAlt, plansDir);
+      },
+    });
+    const result = await readPlanFromFile(planPath, cwd);
+    expect(result).toEqual({ ok: false, reason: "changed" });
+    if (result.ok) throw new Error("expected rejection");
+    expect(String(result)).not.toContain("ALT_PLAN");
+  });
+});
+
+describe("plansDirectoryFromSettings", () => {
+  it("reads plansDirectory from settings.json", async () => {
+    const cwd = tempDir("age-settings-ok-");
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".claude", "settings.json"),
+      JSON.stringify({ plansDirectory: "docs/plans" }),
+    );
+    await expect(plansDirectoryFromSettings(cwd)).resolves.toBe("docs/plans");
+  });
+
+  it("ignores a symlinked settings.json", async () => {
+    const cwd = tempDir("age-settings-symlink-");
+    const outside = join(cwd, "evil-settings.json");
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    writeFileSync(outside, JSON.stringify({ plansDirectory: "owned" }));
+    symlinkSync(outside, join(cwd, ".claude", "settings.json"));
+    await expect(plansDirectoryFromSettings(cwd)).resolves.toBeNull();
+  });
+
+  it.skipIf(process.platform === "win32")("ignores a FIFO settings.json", async () => {
+    const cwd = tempDir("age-settings-fifo-");
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    const fifo = join(cwd, ".claude", "settings.json");
+    await execFileAsync("mkfifo", [fifo]);
+    await expect(plansDirectoryFromSettings(cwd)).resolves.toBeNull();
+  });
+
+  it("ignores settings.json larger than 1 MiB", async () => {
+    const cwd = tempDir("age-settings-large-");
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    const big = JSON.stringify({ plansDirectory: "x".repeat(1 << 20) });
+    writeFileSync(join(cwd, ".claude", "settings.json"), big);
+    await expect(plansDirectoryFromSettings(cwd)).resolves.toBeNull();
   });
 });
 
