@@ -1,0 +1,348 @@
+import type { ProviderEvent, TimelineItem } from "@age/contracts";
+import { ProviderEvent as ProviderEventSchema } from "@age/contracts";
+import { describe, expect, it } from "vitest";
+import {
+  assistant,
+  blockStart,
+  init,
+  messageStart,
+  resultError,
+  resultSuccess,
+  text,
+  textDelta,
+  thinking,
+  thinkingDelta,
+  toolResult,
+  toolUse,
+  type SDKMessage,
+} from "./fixtures.ts";
+import { createTranslator } from "./translate.ts";
+
+const CWD = "/work";
+
+function run(
+  messages: SDKMessage[],
+  finish?: Parameters<ReturnType<typeof createTranslator>["finish"]>[0],
+) {
+  const translator = createTranslator({ turnId: "t1", cwd: CWD });
+  const events = messages.flatMap((message) => translator.push(message));
+  if (finish) events.push(...translator.finish(finish));
+  for (const event of events) ProviderEventSchema.parse(event);
+  return events;
+}
+
+function items(events: ProviderEvent[]): TimelineItem[] {
+  return events.flatMap((event) => (event.type === "item" ? [event.item] : []));
+}
+
+function dones(events: ProviderEvent[]) {
+  return events.filter((event) => event.type === "done");
+}
+
+function expectOneDoneLast(events: ProviderEvent[]) {
+  expect(dones(events)).toHaveLength(1);
+  expect(events.at(-1)?.type).toBe("done");
+}
+
+describe("session", () => {
+  it("emits the session id once", () => {
+    const events = run([init(), assistant("m1", [text("hi")]), resultSuccess()]);
+    expect(events.filter((event) => event.type === "session")).toEqual([
+      { type: "session", sessionId: "session-1" },
+    ]);
+  });
+});
+
+describe("streaming text and thinking", () => {
+  const streamed = [
+    init(),
+    messageStart("m1"),
+    blockStart(0, "thinking"),
+    thinkingDelta(0, "Let me "),
+    thinkingDelta(0, "look."),
+    blockStart(1, "text"),
+    textDelta(1, "Hello"),
+    textDelta(1, " world"),
+  ];
+
+  it("creates an item on first delta then streams deltas", () => {
+    const events = run(streamed);
+    expect(events.slice(1)).toEqual([
+      { type: "item", item: { kind: "reasoning", id: "t1:m1:0", text: "" } },
+      { type: "delta", itemId: "t1:m1:0", text: "Let me " },
+      { type: "delta", itemId: "t1:m1:0", text: "look." },
+      { type: "item", item: { kind: "message", id: "t1:m1:1", role: "assistant", text: "" } },
+      { type: "delta", itemId: "t1:m1:1", text: "Hello" },
+      { type: "delta", itemId: "t1:m1:1", text: " world" },
+    ]);
+  });
+
+  it("upserts the final text onto the streamed item without duplicating it", () => {
+    const events = run([
+      ...streamed,
+      assistant("m1", [thinking("Let me look.")]),
+      assistant("m1", [text("Hello world")]),
+    ]);
+    const all = items(events);
+    expect(new Set(all.map((item) => item.id))).toEqual(new Set(["t1:m1:0", "t1:m1:1"]));
+    expect(all.at(-1)).toEqual({
+      kind: "message",
+      id: "t1:m1:1",
+      role: "assistant",
+      text: "Hello world",
+    });
+  });
+
+  it("repairs a missed delta from the final message", () => {
+    const events = run([
+      init(),
+      messageStart("m1"),
+      blockStart(0, "text"),
+      textDelta(0, "Hel"),
+      assistant("m1", [text("Hello")]),
+    ]);
+    expect(items(events).at(-1)).toMatchObject({ id: "t1:m1:0", text: "Hello" });
+  });
+
+  it("creates items from final messages when nothing was streamed", () => {
+    const events = run([init(), assistant("m2", [thinking("hmm"), text("done")])]);
+    expect(items(events)).toEqual([
+      { kind: "reasoning", id: "t1:m2:f0", text: "hmm" },
+      { kind: "message", id: "t1:m2:f1", role: "assistant", text: "done" },
+    ]);
+  });
+
+  it("keeps ids distinct across separate API messages in one turn", () => {
+    const events = run([
+      init(),
+      messageStart("m1"),
+      blockStart(0, "text"),
+      textDelta(0, "a"),
+      messageStart("m2"),
+      blockStart(0, "text"),
+      textDelta(0, "b"),
+    ]);
+    expect(new Set(items(events).map((item) => item.id))).toEqual(new Set(["t1:m1:0", "t1:m2:0"]));
+  });
+});
+
+describe("tool lifecycle", () => {
+  const cases: {
+    name: string;
+    input: Record<string, unknown>;
+    kind: string;
+    title: string;
+    files?: string[];
+  }[] = [
+    {
+      name: "Read",
+      input: { file_path: "/work/src/app.ts" },
+      kind: "read",
+      title: "Read src/app.ts",
+    },
+    { name: "Glob", input: { pattern: "**/*.ts" }, kind: "search", title: "Search **/*.ts" },
+    { name: "Grep", input: { pattern: "TODO" }, kind: "search", title: "Search TODO" },
+    { name: "LS", input: { path: "/work/src" }, kind: "search", title: "List src" },
+    {
+      name: "Edit",
+      input: { file_path: "/work/src/a.ts", old_string: "a", new_string: "b" },
+      kind: "edit",
+      title: "Edit src/a.ts",
+      files: ["src/a.ts"],
+    },
+    {
+      name: "Write",
+      input: { file_path: "/work/new.ts", content: "x" },
+      kind: "edit",
+      title: "Write new.ts",
+      files: ["new.ts"],
+    },
+    {
+      name: "MultiEdit",
+      input: { file_path: "/work/m.ts", edits: [] },
+      kind: "edit",
+      title: "Edit m.ts",
+      files: ["m.ts"],
+    },
+    {
+      name: "NotebookEdit",
+      input: { notebook_path: "/work/n.ipynb", new_source: "x" },
+      kind: "edit",
+      title: "Edit n.ipynb",
+      files: ["n.ipynb"],
+    },
+    {
+      name: "Bash",
+      input: { command: "pnpm test\nsecond line" },
+      kind: "command",
+      title: "pnpm test",
+    },
+    {
+      name: "WebFetch",
+      input: { url: "https://x.dev" },
+      kind: "web",
+      title: "Fetch https://x.dev",
+    },
+    { name: "WebSearch", input: { query: "vitest" }, kind: "web", title: "Web search: vitest" },
+    { name: "Task", input: { description: "Find usages" }, kind: "task", title: "Find usages" },
+    { name: "Agent", input: { description: "Review" }, kind: "task", title: "Review" },
+    { name: "TodoWrite", input: { todos: [] }, kind: "other", title: "Update todo list" },
+    { name: "mcp__github__create_issue", input: {}, kind: "other", title: "github: create_issue" },
+  ];
+
+  it.each(cases)("maps $name to $kind", ({ name, input, kind, title, files }) => {
+    const events = run([
+      init(),
+      assistant("m1", [toolUse("tu1", name, input)]),
+      toolResult("tu1", "output"),
+    ]);
+    const [running, done] = items(events);
+    expect(running).toMatchObject({
+      kind: "tool",
+      id: "t1:tu1",
+      tool: kind,
+      title,
+      name,
+      status: "running",
+      ...(files ? { files } : {}),
+    });
+    expect(done).toMatchObject({ id: "t1:tu1", status: "done", output: "output", title });
+  });
+
+  it("keeps paths outside the workspace unchanged", () => {
+    const events = run([
+      init(),
+      assistant("m1", [toolUse("tu1", "Read", { file_path: "/etc/hosts" })]),
+    ]);
+    expect(items(events)[0]).toMatchObject({ title: "Read /etc/hosts" });
+  });
+
+  it("truncates long command titles to 120 characters", () => {
+    const events = run([
+      init(),
+      assistant("m1", [toolUse("tu1", "Bash", { command: "x".repeat(300) })]),
+    ]);
+    const item = items(events)[0];
+    expect(item?.kind === "tool" && item.title.length).toBe(120);
+  });
+
+  it("marks a failed tool and truncates output under 4 KB with an ellipsis", () => {
+    const events = run([
+      init(),
+      assistant("m1", [toolUse("tu1", "Bash", { command: "boom" })]),
+      toolResult("tu1", [{ type: "text", text: "é".repeat(5000) }], true),
+    ]);
+    const failed = items(events).at(-1);
+    expect(failed).toMatchObject({ status: "failed" });
+    const output = failed?.kind === "tool" ? (failed.output ?? "") : "";
+    expect(Buffer.byteLength(output)).toBeLessThanOrEqual(4096);
+    expect(output.endsWith("…")).toBe(true);
+  });
+
+  it("ignores results for unknown tools and repeated tool_use blocks", () => {
+    const events = run([
+      init(),
+      toolResult("ghost", "x"),
+      assistant("m1", [toolUse("tu1", "Read", { file_path: "a" })]),
+      assistant("m1", [toolUse("tu1", "Read", { file_path: "a" })]),
+    ]);
+    expect(items(events)).toHaveLength(1);
+  });
+
+  it("does not show subagent text but does show subagent tools", () => {
+    const events = run([
+      init(),
+      assistant("s1", [text("inner"), toolUse("tu9", "Read", { file_path: "a" })], {
+        parent: "tu0",
+      }),
+    ]);
+    expect(items(events).map((item) => item.kind)).toEqual(["tool"]);
+  });
+});
+
+describe("result", () => {
+  it("emits usage then a single completed done", () => {
+    const events = run([init(), assistant("m1", [text("hi")]), resultSuccess()]);
+    expect(events.slice(-2)).toEqual([
+      {
+        type: "usage",
+        usage: { inputTokens: 120, outputTokens: 45, cachedInputTokens: 30, costUsd: 0.0123 },
+      },
+      { type: "done", status: "completed", error: null },
+    ]);
+    expectOneDoneLast(events);
+  });
+
+  it.each([
+    ["error_during_execution", ["Tool crashed"], "Tool crashed"],
+    ["error_max_turns", [], "Claude Code stopped after reaching its turn limit."],
+    ["error_max_budget_usd", [], "Claude Code stopped after reaching its spending limit."],
+  ] as const)("fails on %s", (subtype, errors, message) => {
+    const events = run([init(), resultError(subtype, [...errors])]);
+    expect(events.at(-1)).toEqual({ type: "done", status: "failed", error: message });
+    expectOneDoneLast(events);
+  });
+
+  it("fails a success result flagged is_error and closes running tools", () => {
+    const events = run([
+      init(),
+      assistant("m1", [toolUse("tu1", "Bash", { command: "ls" })]),
+      resultSuccess({ is_error: true, result: "API Error: overloaded" }),
+    ]);
+    expect(items(events).at(-1)).toMatchObject({ id: "t1:tu1", status: "failed" });
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      status: "failed",
+      error: "API Error: overloaded",
+    });
+  });
+
+  it("explains a sign-in failure", () => {
+    const events = run([
+      init(),
+      assistant("m1", [text("Not logged in")], { error: "authentication_failed" }),
+      resultSuccess({ is_error: true, result: "Not logged in" }),
+    ]);
+    expect(events.at(-1)).toMatchObject({ status: "failed" });
+    expect(events.at(-1)).toMatchObject({ error: expect.stringContaining("not signed in") });
+  });
+
+  it("ignores messages after done", () => {
+    const translator = createTranslator({ turnId: "t1" });
+    translator.push(resultSuccess());
+    expect(translator.push(assistant("m1", [text("late")]))).toEqual([]);
+    expect(translator.finish({ kind: "aborted" })).toEqual([]);
+  });
+});
+
+describe("finish", () => {
+  it("abort yields done interrupted and closes running tools", () => {
+    const events = run(
+      [init(), assistant("m1", [toolUse("tu1", "Bash", { command: "sleep 9" })])],
+      {
+        kind: "aborted",
+      },
+    );
+    expect(items(events).at(-1)).toMatchObject({ id: "t1:tu1", status: "failed" });
+    expect(events.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
+    expectOneDoneLast(events);
+  });
+
+  it("an exception yields done failed with its message", () => {
+    const events = run([init()], { kind: "error", error: new Error("spawn failed") });
+    expect(events.at(-1)).toEqual({ type: "done", status: "failed", error: "spawn failed" });
+    expectOneDoneLast(events);
+  });
+
+  it("a stream that ends without a result fails", () => {
+    const events = run([init()], { kind: "ended" });
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "failed" });
+    expectOneDoneLast(events);
+  });
+
+  it("finish after a result adds nothing", () => {
+    const events = run([init(), resultSuccess()], { kind: "error", error: "late" });
+    expectOneDoneLast(events);
+    expect(events.at(-1)).toMatchObject({ status: "completed" });
+  });
+});
