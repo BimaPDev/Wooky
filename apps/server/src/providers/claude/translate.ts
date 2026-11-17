@@ -57,6 +57,7 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
   let sessionId: string | null = null;
   let authFailed = false;
   let finished = false;
+  let lastAssistantUuid: string | null = null;
 
   const stateFor = (messageId: string): MessageState => {
     let state = messages.get(messageId);
@@ -129,6 +130,9 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
   function assistant(message: SDKAssistantMessage, out: ProviderEvent[]) {
     if (message.error === "authentication_failed") authFailed = true;
     const fromSubagent = message.parent_tool_use_id !== null;
+    if (!fromSubagent) {
+      lastAssistantUuid = message.uuid;
+    }
     for (const block of message.message.content) {
       if (block.type === "text" && !fromSubagent) {
         upsertFinalText(message.message.id, "message", block.text, out);
@@ -191,7 +195,12 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
     out: ProviderEvent[],
   ): ProviderEvent[] {
     finished = true;
-    out.push({ type: "done", status, error });
+    out.push({
+      type: "done",
+      status,
+      error,
+      ...(lastAssistantUuid ? { nativeRef: lastAssistantUuid } : {}),
+    });
     return out;
   }
 

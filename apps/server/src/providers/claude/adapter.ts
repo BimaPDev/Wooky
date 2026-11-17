@@ -12,6 +12,13 @@ import {
 import { resolveCommand } from "../../process/resolve-command.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { editPreview } from "./diff.ts";
+import {
+  ASK_USER_QUESTION,
+  EXIT_PLAN_MODE,
+  planMarkdown,
+  questionRequest,
+  toolAnswers,
+} from "./interaction.ts";
 import { clip } from "./text.ts";
 import { describeTool, str, toolKind, type ToolInput } from "./tools.ts";
 import { createTranslator } from "./translate.ts";
@@ -19,6 +26,8 @@ import { createTranslator } from "./translate.ts";
 const execFileAsync = promisify(execFile);
 const PROBE_TIMEOUT_MS = 5_000;
 const STDERR_TAIL_CHARS = 2_000;
+
+const CAPABILITIES = { rewind: true, questions: true, planMode: true, queue: true };
 
 const MODELS = [
   { id: "default", label: "Default" },
@@ -43,6 +52,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
 
   return {
     kind: "claude",
+    supportsResumeAt: true,
 
     async probe(): Promise<ProviderStatus> {
       const base = {
@@ -50,6 +60,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         label: "Claude Code",
         authenticated: null,
         models: MODELS,
+        capabilities: CAPABILITIES,
       };
       const resolved = resolveCommand(bin);
       if (!resolved && process.platform === "win32") {
@@ -99,6 +110,13 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
       };
       input.signal.addEventListener("abort", onAbort, { once: true });
 
+      const side: ProviderEvent[] = [];
+      let wake: () => void = () => undefined;
+      const emit = (event: ProviderEvent) => {
+        side.push(event);
+        wake();
+      };
+
       let stderrTail = "";
       const resolved = resolveCommand(bin);
       const claudeExecutable = resolved?.prefixArgs.length
@@ -110,8 +128,11 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         includePartialMessages: true,
         ...(input.model !== "default" ? { model: input.model } : {}),
         ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
+        ...(input.resumeSessionId && input.resumeAt
+          ? { resumeSessionAt: input.resumeAt, forkSession: true }
+          : {}),
         ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
-        ...permissionOptions(input),
+        ...permissionOptions(input, emit),
         stderr: (data) => {
           stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
         },
@@ -121,11 +142,20 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
       try {
         running = runQuery({ prompt: buildPrompt(input), options: sdkOptions });
         const iterator = running[Symbol.asyncIterator]();
+        let pending: ReturnType<typeof iterator.next> | null = null;
         let finished = false;
         while (!finished) {
-          const next = iterator.next();
-          next.catch(() => undefined);
-          const step = await Promise.race([next, aborted]);
+          pending ??= iterator.next();
+          pending.catch(() => undefined);
+          const woken = new Promise<typeof WOKEN>((resolve) => {
+            wake = () => resolve(WOKEN);
+            if (side.length > 0) resolve(WOKEN);
+          });
+          const step = await Promise.race([pending, aborted, woken]);
+          wake = () => undefined;
+          for (const event of side.splice(0)) yield event;
+          if (step === WOKEN) continue;
+          pending = null;
           if (step === ABORTED || step.done) break;
           if (step.value.type === "rate_limit_event") {
             options.onRateLimit?.(step.value.rate_limit_info);
@@ -153,6 +183,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
 }
 
 const ABORTED = Symbol("aborted");
+const WOKEN = Symbol("woken");
 
 function buildPrompt(input: TurnInput): string {
   if (!input.handoffContext) return input.prompt;
@@ -166,16 +197,35 @@ function buildPrompt(input: TurnInput): string {
   ].join("\n");
 }
 
-function permissionOptions(input: TurnInput): Partial<Options> {
+function permissionOptions(
+  input: TurnInput,
+  emit: (event: ProviderEvent) => void,
+): Partial<Options> {
+  // Always installed: AskUserQuestion and ExitPlanMode need the callback in every mode.
+  const canUseTool = createPermissionHandler(input, emit);
+  if (input.interactionMode === "plan") return { permissionMode: "plan", canUseTool };
   if (input.runtimeMode === "full") {
-    return { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };
+    return {
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      canUseTool,
+    };
   }
   const permissionMode: PermissionMode =
     input.runtimeMode === "auto-edits" ? "acceptEdits" : "default";
-  return { permissionMode, canUseTool: createPermissionHandler(input) };
+  return { permissionMode, canUseTool };
 }
 
-function createPermissionHandler(input: TurnInput): CanUseTool {
+const INTERRUPTED: PermissionResult = {
+  behavior: "deny",
+  message: "The turn was interrupted.",
+  interrupt: true,
+};
+
+function createPermissionHandler(
+  input: TurnInput,
+  emit: (event: ProviderEvent) => void,
+): CanUseTool {
   return async (toolName, toolInput, context): Promise<PermissionResult> => {
     let onAbort: () => void = () => undefined;
     const aborted = new Promise<"abort">((resolve) => {
@@ -183,12 +233,20 @@ function createPermissionHandler(input: TurnInput): CanUseTool {
       if (context.signal.aborted) resolve("abort");
       else context.signal.addEventListener("abort", onAbort, { once: true });
     });
+    const requestId = `${input.turnId}:${context.toolUseID}`;
     try {
+      if (toolName === ASK_USER_QUESTION) {
+        return await answerQuestions(input, requestId, toolInput, aborted);
+      }
+      if (toolName === EXIT_PLAN_MODE) return proposePlan(requestId, toolInput, emit);
+      // Plan mode never skips the card, even in full: the agent must not change anything.
+      if (input.runtimeMode === "full" && input.interactionMode !== "plan") {
+        return { behavior: "allow", updatedInput: toolInput };
+      }
       const request = approvalRequest(input, toolName, toolInput, context.toolUseID);
       const decision = await Promise.race([input.requestApproval(request), aborted]);
       if (decision === "allow") return { behavior: "allow", updatedInput: toolInput };
-      if (decision === "abort")
-        return { behavior: "deny", message: "The turn was interrupted.", interrupt: true };
+      if (decision === "abort") return INTERRUPTED;
     } catch {
       // An approval that cannot be built or asked is treated as declined.
     } finally {
@@ -196,6 +254,41 @@ function createPermissionHandler(input: TurnInput): CanUseTool {
     }
     return { behavior: "deny", message: "The user declined this action." };
   };
+}
+
+async function answerQuestions(
+  input: TurnInput,
+  requestId: string,
+  toolInput: ToolInput,
+  aborted: Promise<"abort">,
+): Promise<PermissionResult> {
+  const request = questionRequest(requestId, toolInput);
+  if (!request) return { behavior: "deny", message: "The question could not be shown." };
+  const answers = await Promise.race([input.requestUserInput(request), aborted]);
+  if (answers === "abort") return INTERRUPTED;
+  if (answers === null) {
+    return { behavior: "deny", message: "The user dismissed the question without answering." };
+  }
+  return {
+    behavior: "allow",
+    updatedInput: { ...toolInput, answers: toolAnswers(request, answers) },
+  };
+}
+
+function proposePlan(
+  requestId: string,
+  toolInput: ToolInput,
+  emit: (event: ProviderEvent) => void,
+): PermissionResult {
+  const markdown = planMarkdown(toolInput);
+  if (!markdown) {
+    return {
+      behavior: "deny",
+      message: "Write the plan out in full, then call ExitPlanMode again.",
+    };
+  }
+  emit({ type: "plan", itemId: requestId, markdown });
+  return { behavior: "deny", message: "The user will review the plan." };
 }
 
 function approvalRequest(

@@ -302,6 +302,7 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
   const seenReasoningIds = new Set<string>();
   const reasoningTexts = new Map<string, string>();
   const pendingReasoningBreak = new Set<string>();
+  const planTexts = new Map<string, string>();
 
   const commandStates = new Map<string, CommandState>();
   const fileChangeStates = new Map<string, FileChangeState>();
@@ -361,9 +362,16 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
         return [{ type: "item", item: { kind: "message", id, role: "assistant", text } }];
       }
 
-      case "reasoning":
       case "plan": {
-        const incoming = item.type === "plan" ? (item.text ?? "") : extractReasoningText(item);
+        const incoming = item.text ?? "";
+        const text = incoming.length > 0 ? incoming : (planTexts.get(id) ?? "");
+        planTexts.set(id, text);
+        if (phase !== "completed" || text.trim().length === 0) return [];
+        return [{ type: "plan", itemId: id, markdown: text }];
+      }
+
+      case "reasoning": {
+        const incoming = extractReasoningText(item);
         const accumulated = reasoningTexts.get(id) ?? "";
         const text =
           phase === "completed" && incoming.length === 0 && accumulated.length > 0
@@ -583,8 +591,7 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
       }
 
       case "item/reasoning/summaryTextDelta":
-      case "item/reasoning/textDelta":
-      case "item/plan/delta": {
+      case "item/reasoning/textDelta": {
         const parsed = ItemTextDeltaNotificationSchema.safeParse(params);
         if (!parsed.success || parsed.data.delta.length === 0) return [];
         const id = normalizeId(parsed.data.itemId);
@@ -595,6 +602,14 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
         reasoningTexts.set(id, prev + chunk);
         events.push({ type: "delta", itemId: id, text: chunk });
         return events;
+      }
+
+      case "item/plan/delta": {
+        const parsed = ItemTextDeltaNotificationSchema.safeParse(params);
+        if (!parsed.success || parsed.data.delta.length === 0) return [];
+        const id = normalizeId(parsed.data.itemId);
+        planTexts.set(id, (planTexts.get(id) ?? "") + parsed.data.delta);
+        return [];
       }
 
       case "item/commandExecution/outputDelta": {

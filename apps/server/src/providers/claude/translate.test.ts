@@ -293,7 +293,7 @@ describe("result", () => {
         type: "usage",
         usage: { inputTokens: 120, outputTokens: 45, cachedInputTokens: 30, costUsd: 0.0123 },
       },
-      { type: "done", status: "completed", error: null },
+      { type: "done", status: "completed", error: null, nativeRef: expect.any(String) },
     ]);
     expectOneDoneLast(events);
   });
@@ -333,6 +333,7 @@ describe("result", () => {
       type: "done",
       status: "failed",
       error: "API Error: overloaded",
+      nativeRef: expect.any(String),
     });
   });
 
@@ -363,7 +364,12 @@ describe("finish", () => {
       },
     );
     expect(items(events).at(-1)).toMatchObject({ id: "t1:tu1", status: "failed" });
-    expect(events.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      status: "interrupted",
+      error: null,
+      nativeRef: expect.any(String),
+    });
     expectOneDoneLast(events);
   });
 

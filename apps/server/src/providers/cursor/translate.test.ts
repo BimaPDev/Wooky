@@ -243,6 +243,22 @@ describe("CursorTranslator real-read-shell.ndjson", () => {
     expect(read?.kind === "tool" && read.title).toBe("Read package.json");
   });
 
+  it("puts the stream's request_id on done as nativeRef", async () => {
+    const events = await realEvents();
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      status: "completed",
+      nativeRef: "fddff4f7-a193-4027-bb37-086a2a80a96c",
+    });
+  });
+
+  it("omits nativeRef when the result carries no request_id", async () => {
+    const events = await translateFixture("turn-complete.ndjson", "turn-test", "/workspace");
+    const done = events.at(-1);
+    expect(done).toMatchObject({ type: "done", status: "completed" });
+    expect(done).not.toHaveProperty("nativeRef");
+  });
+
   it("uses turn-scoped deterministic item ids", async () => {
     const events = await realEvents();
     const ids = finalItems(events).map((i) => i.id);

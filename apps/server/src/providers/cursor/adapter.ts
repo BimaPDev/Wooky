@@ -32,6 +32,9 @@ let modelsCache: {
   models: Array<{ id: string; label: string }>;
 } | null = null;
 
+/** cursor-agent offers no rewind, structured questions or plan mode; queuing is runner-side. */
+const CAPABILITIES = { rewind: false, questions: false, planMode: false, queue: true };
+
 export function createCursorAdapter(options: CursorAdapterOptions = {}): ProviderAdapter {
   const configuredBin = options.cursorBin ?? process.env.AGE_CURSOR_BIN ?? "cursor-agent";
   const configuredPrefix = options.cursorArgsPrefix ?? [];
@@ -57,6 +60,7 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
         version: null,
         models: [{ id: "auto", label: "Auto" }],
         problem: null,
+        capabilities: CAPABILITIES,
       };
 
       const { bin: cursorBin, prefix: cursorArgsPrefix } = launch();
@@ -120,6 +124,7 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
         version,
         models,
         problem,
+        capabilities: CAPABILITIES,
       };
     },
 

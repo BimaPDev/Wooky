@@ -81,6 +81,21 @@ describe("createCodexAdapter", () => {
     expect(status.models.length).toBeGreaterThan(1);
   });
 
+  it("probe reports queue only: rewind, questions and plan mode are off", async () => {
+    const expected = { rewind: false, questions: false, planMode: false, queue: true };
+    const missing = await createCodexAdapter({
+      codexBin: join(workDir, "definitely-missing-codex-binary"),
+    }).probe();
+    const present = await createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath],
+    }).probe();
+    expect(missing.capabilities).toEqual(expected);
+    expect(present.capabilities).toEqual(expected);
+    expect(createCodexAdapter({}).rewind).toBeUndefined();
+    expect(createCodexAdapter({}).supportsResumeAt).toBeUndefined();
+  });
+
   it("probe extracts version when codexBin responds to --version", async () => {
     const adapter = createCodexAdapter({
       codexBin: process.execPath,
@@ -93,6 +108,20 @@ describe("createCodexAdapter", () => {
     expect(status.authenticated).toBeNull();
     expect(status.version).toBe("0.160.0");
     expect(status.problem).toBeNull();
+  });
+
+  it("puts the Codex turn id on done as nativeRef", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath],
+    });
+    const events = await collectEvents(adapter.runTurn(baseInput()));
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      status: "completed",
+      error: null,
+      nativeRef: "turn_fake_1",
+    });
   });
 
   it("runs a full turn on the allow approval path and emits one terminal done event", async () => {
@@ -144,8 +173,12 @@ describe("createCodexAdapter", () => {
     expect(events.some((ev) => ev.type === "usage" && ev.usage.inputTokens === 100)).toBe(true);
 
     const doneEvents = events.filter((ev) => ev.type === "done");
-    expect(doneEvents).toEqual([{ type: "done", status: "completed", error: null }]);
-    expect(events.at(-1)).toEqual({ type: "done", status: "completed", error: null });
+    expect(doneEvents).toEqual([
+      expect.objectContaining({ type: "done", status: "completed", error: null }),
+    ]);
+    expect(events.at(-1)).toEqual(
+      expect.objectContaining({ type: "done", status: "completed", error: null }),
+    );
 
     const frames = readLoggedFrames(logFile);
     expect(frames.map((f) => f.method).filter(Boolean)).toEqual([
@@ -208,7 +241,9 @@ describe("createCodexAdapter", () => {
           ev.item.status === "failed",
       ),
     ).toBe(true);
-    expect(events.at(-1)).toEqual({ type: "done", status: "completed", error: null });
+    expect(events.at(-1)).toEqual(
+      expect.objectContaining({ type: "done", status: "completed", error: null }),
+    );
   });
 
   it("forwards diff preview for fileChange approvals in approve mode and auto-accepts in auto-edits mode", async () => {
@@ -255,7 +290,9 @@ describe("createCodexAdapter", () => {
     );
 
     expect(autoEditSpy).not.toHaveBeenCalled();
-    expect(autoEvents.at(-1)).toEqual({ type: "done", status: "completed", error: null });
+    expect(autoEvents.at(-1)).toEqual(
+      expect.objectContaining({ type: "done", status: "completed", error: null }),
+    );
 
     const threadStart = readLoggedFrames(logFile).find((f) => f.method === "thread/start");
     expect(threadStart?.params).toMatchObject({
@@ -283,7 +320,9 @@ describe("createCodexAdapter", () => {
     );
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(events.at(-1)).toEqual({ type: "done", status: "completed", error: null });
+    expect(events.at(-1)).toEqual(
+      expect.objectContaining({ type: "done", status: "completed", error: null }),
+    );
 
     const frames = readLoggedFrames(logFile);
     const threadStart = frames.find((f) => f.method === "thread/start");
@@ -317,7 +356,9 @@ describe("createCodexAdapter", () => {
     );
 
     expect(events[0]).toEqual({ type: "session", sessionId: "thr_existing_42" });
-    expect(events.at(-1)).toEqual({ type: "done", status: "completed", error: null });
+    expect(events.at(-1)).toEqual(
+      expect.objectContaining({ type: "done", status: "completed", error: null }),
+    );
 
     const frames = readLoggedFrames(logFile);
     expect(frames.some((f) => f.method === "thread/start")).toBe(false);
@@ -359,8 +400,12 @@ describe("createCodexAdapter", () => {
     expect(isPidAlive(spawnedPid)).toBe(false);
 
     const doneEvents = received.filter((ev) => ev.type === "done");
-    expect(doneEvents).toEqual([{ type: "done", status: "interrupted", error: null }]);
-    expect(received.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
+    expect(doneEvents).toEqual([
+      expect.objectContaining({ type: "done", status: "interrupted", error: null }),
+    ]);
+    expect(received.at(-1)).toEqual(
+      expect.objectContaining({ type: "done", status: "interrupted", error: null }),
+    );
 
     const frames = readLoggedFrames(logFile);
     const interruptFrame = frames.find((f) => f.method === "turn/interrupt");
@@ -398,8 +443,12 @@ describe("createCodexAdapter", () => {
     expect(approvalCount).toBe(1);
 
     const doneEvents = received.filter((ev) => ev.type === "done");
-    expect(doneEvents).toEqual([{ type: "done", status: "interrupted", error: null }]);
-    expect(received.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
+    expect(doneEvents).toEqual([
+      expect.objectContaining({ type: "done", status: "interrupted", error: null }),
+    ]);
+    expect(received.at(-1)).toEqual(
+      expect.objectContaining({ type: "done", status: "interrupted", error: null }),
+    );
 
     const approvalReplies = readLoggedFrames(logFile).filter(
       (f) => f.id === 500 && !("method" in f),

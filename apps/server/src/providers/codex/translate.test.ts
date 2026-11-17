@@ -537,4 +537,41 @@ describe("createCodexTranslator", () => {
     expect(t.bindSession("thr_late")).toEqual([]);
     expect(t.finish("interrupted", null)).toEqual([]);
   });
+
+  describe("plan items", () => {
+    it("emits one plan event when the plan item completes", () => {
+      const t = createCodexTranslator();
+      const started = t.translateNotification("item/started", {
+        item: { type: "plan", id: "plan_1", text: "" },
+      });
+      const completed = t.translateNotification("item/completed", {
+        item: { type: "plan", id: "plan_1", text: "1. Add field\n2. Test" },
+      });
+      expect(started).toEqual([]);
+      expect(completed).toEqual([
+        { type: "plan", itemId: "plan_1", markdown: "1. Add field\n2. Test" },
+      ]);
+      for (const ev of completed) expect(() => ProviderEvent.parse(ev)).not.toThrow();
+    });
+
+    it("builds the plan from deltas when the completed item carries no text", () => {
+      const t = createCodexTranslator();
+      const deltas = [
+        t.translateNotification("item/plan/delta", { itemId: "plan_1", delta: "1. Add" }),
+        t.translateNotification("item/plan/delta", { itemId: "plan_1", delta: " field" }),
+      ];
+      const completed = t.translateNotification("item/completed", {
+        item: { type: "plan", id: "plan_1", text: "" },
+      });
+      expect(deltas).toEqual([[], []]);
+      expect(completed).toEqual([{ type: "plan", itemId: "plan_1", markdown: "1. Add field" }]);
+    });
+
+    it("emits nothing for an empty plan", () => {
+      const t = createCodexTranslator();
+      expect(
+        t.translateNotification("item/completed", { item: { type: "plan", id: "p", text: " " } }),
+      ).toEqual([]);
+    });
+  });
 });
