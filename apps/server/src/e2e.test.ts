@@ -222,6 +222,110 @@ describe("end-to-end: isolated demo turn with approvals, diff, revert, restart",
   });
 });
 
+describe("end-to-end: plan, queue, question, conversation-only revert", () => {
+  it("resumes the kept demo session after the journey", async () => {
+    const root = await makeRepo();
+    const home = await tempDir("e2e-p0");
+    cleanup.push(() => rm(home, { recursive: true, force: true }));
+    const server = await boot(home);
+    const client = await connect(server);
+    await client.call("subscribe", { fromSeq: 0 });
+
+    await client.dispatch({ type: "project.add", root });
+    const project = (await client.next("project.added")).project;
+    await client.dispatch({
+      type: "thread.create",
+      projectId: project.id,
+      provider: "demo",
+      model: "demo",
+      runtimeMode: "full",
+      isolate: false,
+    });
+    const threadId = (await client.next("thread.created")).thread.id;
+
+    await client.dispatch({ type: "thread.configure", threadId, interactionMode: "plan" });
+    await client.next("thread.configured", (event) => event.interactionMode === "plan");
+    await client.dispatch({ type: "turn.start", threadId, prompt: "Sketch the work" });
+    const planned = await client.next("turn.finished", (event) => event.threadId === threadId);
+    expect(planned.status).toBe("completed");
+    expect(planned.nativeRef).toBe(`demo:${planned.turnId}`);
+
+    await client.dispatch({ type: "thread.configure", threadId, interactionMode: "default" });
+    await client.next("thread.configured", (event) => event.interactionMode === "default");
+
+    const implemented = client.next(
+      "turn.finished",
+      (event) => event.threadId === threadId && event.turnId !== planned.turnId,
+    );
+    await client.dispatch({
+      type: "turn.start",
+      threadId,
+      prompt: "Implement the plan above.\n/ask",
+    });
+    const asked = await client.next("question.requested", (event) => event.threadId === threadId);
+    await client.next(
+      "turn.itemUpserted",
+      (event) => event.item.kind === "plan" && event.item.status === "accepted",
+    );
+    await client.dispatch({
+      type: "turn.start",
+      threadId,
+      prompt: "Queued follow-up",
+      whenBusy: "queue",
+    });
+    const queued = await client.next("queue.added", (event) => event.threadId === threadId);
+    await client.dispatch({
+      type: "question.respond",
+      threadId,
+      requestId: asked.requestId,
+      answers: { confirm: ["Yes"] },
+    });
+    const implementDone = await implemented;
+    expect(implementDone.status).toBe("completed");
+    expect(existsSync(join(root, "AGE_DEMO.md"))).toBe(true);
+
+    const followUp = await client.next(
+      "turn.started",
+      (event) => event.fromQueueId === queued.item.id,
+    );
+    const followDone = await client.next(
+      "turn.finished",
+      (event) => event.turnId === followUp.turnId,
+    );
+    expect(followDone.status).toBe("completed");
+
+    await client.dispatch({
+      type: "turn.revert",
+      threadId,
+      turnId: followUp.turnId,
+      restoreFiles: false,
+    });
+    await client.next(
+      "turn.reverted",
+      (event) => event.turnId === followUp.turnId && event.restoredFiles === false,
+    );
+    expect(existsSync(join(root, "AGE_DEMO.md"))).toBe(true);
+    const kept = implementDone.nativeRef;
+    const bound = await client.next(
+      "thread.sessionBound",
+      (event) => event.providerSessionId === `demo:${threadId}:kept:${kept}:drop:1`,
+    );
+
+    await client.dispatch({ type: "turn.start", threadId, prompt: "Continue from the kept turn" });
+    const resumed = await client.next("turn.finished", (event) => event.seq > bound.seq);
+    expect(resumed.status).toBe("completed");
+    const snapshot = await client.call<ReadModel>("snapshot");
+    expect(snapshot.threads[threadId]?.providerSessionId).toBe(bound.providerSessionId);
+    const prompts = snapshot.turns[threadId]?.map((turn) => turn.prompt) ?? [];
+    expect(prompts).toContain("Continue from the kept turn");
+    expect(prompts).not.toContain("Queued follow-up");
+    const answer = snapshot.turns[threadId]
+      ?.find((turn) => turn.id === implementDone.turnId)
+      ?.items.find((item) => item.kind === "message");
+    expect(answer).toMatchObject({ text: expect.stringContaining("Yes") });
+  });
+});
+
 /** Worktree removal is an effect after the event; probe via a cheap RPC round-trip each time. */
 async function waitUntilGone(path: string, client: Awaited<ReturnType<typeof connect>>) {
   for (let i = 0; i < 5000 && existsSync(path); i++) await client.call("providers.list");

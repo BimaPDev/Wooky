@@ -1,11 +1,29 @@
 import { basename, isAbsolute, normalize, sep } from "node:path";
-import type { Command, CommandOf, PendingEvent, ReadModel, Thread } from "@age/contracts";
-import { activeTurn, pendingApprovals, pendingQuestions } from "@age/domain";
+import type {
+  Command,
+  CommandOf,
+  PendingEvent,
+  ProviderCapabilities,
+  ProviderKind,
+  QuestionAnswers,
+  ReadModel,
+  Thread,
+  UserQuestion,
+} from "@age/contracts";
+import {
+  activeTurn,
+  pendingApprovals,
+  pendingQuestions,
+  resumePoint,
+  threadsSharingWorkspace,
+} from "@age/domain";
 import { checkpointRef, NO_CHECKPOINT_ITEM, type Effect } from "./effects.ts";
 
 export interface DecideContext {
   now(): string;
   newId(prefix: string): string;
+  /** Known provider capabilities. A missing flag means the provider cannot do that. */
+  capabilities(provider: ProviderKind): ProviderCapabilities | undefined;
 }
 
 export type Rejection = {
@@ -57,6 +75,9 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
       if (!thread) return notFound("thread", command.threadId);
       if (isBusy(thread)) return reject("conflict", "Stop the running turn before reconfiguring.");
       const provider = command.provider ?? thread.provider;
+      const interactionMode = command.interactionMode ?? thread.interactionMode ?? "default";
+      if (interactionMode === "plan" && !supportsPlan(ctx, provider))
+        return reject("bad_request", "This provider does not support plan mode.");
       return accept(command, [
         {
           type: "thread.configured",
@@ -65,6 +86,7 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
           model: command.model ?? thread.model,
           runtimeMode: command.runtimeMode ?? thread.runtimeMode,
           handoff: provider !== thread.provider,
+          ...(command.interactionMode ? { interactionMode: command.interactionMode } : {}),
         },
       ]);
     }
@@ -99,34 +121,11 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
     case "question.respond":
       return respondToQuestion(model, command);
     case "queue.remove":
+      return removeQueued(model, command);
     case "queue.promote":
-      return reject("bad_request", `${command.type} is not supported yet.`);
-    case "turn.revert": {
-      const thread = model.threads[command.threadId];
-      if (!thread) return notFound("thread", command.threadId);
-      const turn = model.turns[thread.id]?.find((candidate) => candidate.id === command.turnId);
-      if (!turn) return notFound("turn", command.turnId);
-      if (isBusy(thread)) return reject("conflict", "Stop the running turn before reverting.");
-      if (command.restoreFiles === false)
-        return reject("bad_request", "conversation-only revert not supported yet");
-      if (!turn.checkpointBefore || turn.items.some((item) => item.id === NO_CHECKPOINT_ITEM))
-        return reject("conflict", "This turn has no checkpoint, so it cannot be reverted.");
-      const cwd = workspaceOf(model, thread);
-      if (!cwd) return notFound("project", thread.projectId);
-      return accept(
-        command,
-        [],
-        [
-          {
-            kind: "checkpoint.restore",
-            threadId: thread.id,
-            turnId: turn.id,
-            cwd,
-            ref: turn.checkpointBefore,
-          },
-        ],
-      );
-    }
+      return promoteQueued(model, command, ctx);
+    case "turn.revert":
+      return revertTurn(model, command);
   }
 }
 
@@ -138,10 +137,14 @@ function respondToQuestion(model: ReadModel, command: CommandOf<"question.respon
   );
   if (!asked) return notFound("question", command.requestId);
   const turn = activeTurn(model, thread.id);
-  const open = pendingQuestions(model, thread.id).some(
+  const open = pendingQuestions(model, thread.id).find(
     (item) => item.requestId === command.requestId,
   );
   if (!turn || !open) return reject("conflict", "This question was already answered or dismissed.");
+  if (command.answers !== null) {
+    const problem = invalidAnswers(open.questions, command.answers);
+    if (problem) return reject("bad_request", problem);
+  }
   const ids = { threadId: thread.id, turnId: turn.id, requestId: command.requestId };
   return accept(
     command,
@@ -234,24 +237,173 @@ function startTurn(
 ): Decision {
   const thread = model.threads[command.threadId];
   if (!thread) return notFound("thread", command.threadId);
+  if (isBusy(thread)) {
+    if (command.whenBusy !== "queue")
+      return reject("conflict", "A turn is already running on this thread.");
+    return accept(command, [
+      {
+        type: "queue.added",
+        threadId: thread.id,
+        item: { id: ctx.newId("queue"), prompt: command.prompt, queuedAt: ctx.now() },
+      },
+    ]);
+  }
+  const started = beginTurn(model, thread, command.prompt, ctx);
+  if (!started.ok) return started;
+  return accept(command, started.events, started.effects);
+}
+
+function removeQueued(model: ReadModel, command: CommandOf<"queue.remove">): Decision {
+  const thread = model.threads[command.threadId];
+  if (!thread) return notFound("thread", command.threadId);
+  if (!thread.queue?.some((item) => item.id === command.queueId))
+    return notFound("queued prompt", command.queueId);
+  return accept(command, [
+    { type: "queue.removed", threadId: thread.id, queueId: command.queueId, reason: "removed" },
+  ]);
+}
+
+function promoteQueued(
+  model: ReadModel,
+  command: CommandOf<"queue.promote">,
+  ctx: DecideContext,
+): Decision {
+  const thread = model.threads[command.threadId];
+  if (!thread) return notFound("thread", command.threadId);
   if (isBusy(thread)) return reject("conflict", "A turn is already running on this thread.");
+  const item = thread.queue?.find((queued) => queued.id === command.queueId);
+  if (!item) return notFound("queued prompt", command.queueId);
+  const started = beginTurn(model, thread, item.prompt, ctx, item.id);
+  if (!started.ok) return started;
+  return accept(
+    command,
+    [
+      { type: "queue.removed", threadId: thread.id, queueId: item.id, reason: "started" },
+      ...started.events,
+    ],
+    started.effects,
+  );
+}
+
+function beginTurn(
+  model: ReadModel,
+  thread: Thread,
+  prompt: string,
+  ctx: DecideContext,
+  fromQueueId?: string,
+): { ok: true; events: Draft[]; effects: Effect[] } | Rejection {
+  if ((thread.interactionMode ?? "default") === "plan" && !supportsPlan(ctx, thread.provider))
+    return reject("bad_request", "This provider does not support plan mode.");
   const turnId = ctx.newId("turn");
   const events: Draft[] = [];
   const firstTurn = (model.turns[thread.id] ?? []).length === 0;
   if (firstTurn && thread.title === DEFAULT_TITLE) {
-    const title = titleFromPrompt(command.prompt);
+    const title = titleFromPrompt(prompt);
     if (title) events.push({ type: "thread.renamed", threadId: thread.id, title });
   }
   events.push({
     type: "turn.started",
     threadId: thread.id,
     turnId,
-    prompt: command.prompt,
+    prompt,
     provider: thread.provider,
     model: thread.model,
     checkpointBefore: checkpointRef(thread.id, turnId, "before"),
+    interactionMode: thread.interactionMode ?? "default",
+    ...(fromQueueId ? { fromQueueId } : {}),
   });
-  return accept(command, events, [{ kind: "turn.run", threadId: thread.id, turnId }]);
+  return { ok: true, events, effects: [{ kind: "turn.run", threadId: thread.id, turnId }] };
+}
+
+function revertTurn(model: ReadModel, command: CommandOf<"turn.revert">): Decision {
+  const thread = model.threads[command.threadId];
+  if (!thread) return notFound("thread", command.threadId);
+  const turns = model.turns[thread.id] ?? [];
+  const turn = turns.find((candidate) => candidate.id === command.turnId);
+  if (!turn) return notFound("turn", command.turnId);
+  if (isBusy(thread)) return reject("conflict", "Stop the running turn before reverting.");
+  const index = turns.findIndex((candidate) => candidate.id === turn.id);
+  const rewind: Effect = {
+    kind: "session.rewind",
+    threadId: thread.id,
+    turnId: turn.id,
+    keepNativeRef: resumePoint(model, thread.id, turn.id),
+    dropTurns: Math.max(1, turns.length - index),
+  };
+  if (command.restoreFiles === false) {
+    return accept(
+      command,
+      [
+        {
+          type: "turn.reverted",
+          threadId: thread.id,
+          turnId: turn.id,
+          restoredFiles: false,
+        },
+      ],
+      [rewind],
+    );
+  }
+  if (sharedWorkspaceBlocksRestore(model, thread.id, turn.startedAt)) {
+    return reject(
+      "conflict",
+      "Another thread is using this folder, so files were not restored. Conversation-only revert is available.",
+    );
+  }
+  if (!turn.checkpointBefore || turn.items.some((item) => item.id === NO_CHECKPOINT_ITEM))
+    return reject("conflict", "This turn has no checkpoint, so it cannot be reverted.");
+  const cwd = workspaceOf(model, thread);
+  if (!cwd) return notFound("project", thread.projectId);
+  return accept(
+    command,
+    [],
+    [
+      {
+        kind: "checkpoint.restore",
+        threadId: thread.id,
+        turnId: turn.id,
+        cwd,
+        ref: turn.checkpointBefore,
+      },
+      rewind,
+    ],
+  );
+}
+
+function sharedWorkspaceBlocksRestore(
+  model: ReadModel,
+  threadId: string,
+  startedAt: string,
+): boolean {
+  return threadsSharingWorkspace(model, threadId).some((other) => {
+    if (other.status === "running" || other.status === "waiting") return true;
+    return (model.turns[other.id] ?? []).some((turn) => turn.startedAt > startedAt);
+  });
+}
+
+function supportsPlan(ctx: DecideContext, provider: ProviderKind): boolean {
+  return ctx.capabilities(provider)?.planMode === true;
+}
+
+function invalidAnswers(
+  questions: readonly UserQuestion[],
+  answers: QuestionAnswers,
+): string | null {
+  const known = new Map(questions.map((question) => [question.id, question]));
+  const entries = Object.entries(answers);
+  if (entries.length === 0) return "Answer the question before sending.";
+  for (const [id, chosen] of entries) {
+    const question = known.get(id);
+    if (!question) return `Unknown question ${id}.`;
+    if (chosen.length === 0) return "Choose an answer.";
+    if (!question.multiSelect && chosen.length > 1) return "This question accepts one answer.";
+    if (!question.allowCustom) {
+      const labels = new Set(question.options.map((option) => option.label));
+      if (chosen.some((answer) => !labels.has(answer)))
+        return "That answer is not one of the options.";
+    }
+  }
+  return null;
 }
 
 function titleFromPrompt(prompt: string): string {

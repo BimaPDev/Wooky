@@ -12,11 +12,14 @@ export function tempDir(label: string): Promise<string> {
 }
 
 /** Deterministic ids and clock for tests. */
-export function testContext(): DecideContext {
+export function testContext(
+  capabilities: DecideContext["capabilities"] = () => undefined,
+): DecideContext {
   let counter = 0;
   return {
     now: () => "2026-01-01T00:00:00.000Z",
     newId: (prefix) => `${prefix}-${++counter}`,
+    capabilities,
   };
 }
 

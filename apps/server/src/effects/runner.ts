@@ -2,13 +2,14 @@ import {
   ApprovalRequest,
   ProviderEvent,
   UserInputRequest,
+  type Command,
   type PendingEvent,
   type QuestionAnswers,
   type ReadModel,
   type Usage,
   type Worktree,
 } from "@age/contracts";
-import { activeTurn, handoffTranscript } from "@age/domain";
+import { activeTurn, handoffTranscript, latestPlan } from "@age/domain";
 import type { GitService } from "../git/types.ts";
 import {
   checkpointRef,
@@ -31,6 +32,8 @@ export interface EffectRunner {
   idle(): Promise<void>;
   /** Aborts running turns and waits (bounded) for them to record their finish. */
   shutdown(timeoutMs?: number): Promise<void>;
+  /** Approval and question resolvers still waiting. Zero after a turn settles. */
+  pendingRequests(): number;
 }
 
 interface RunnerDeps {
@@ -39,6 +42,8 @@ interface RunnerDeps {
   git: GitService;
   newId(prefix: string): string;
   coalesceMs?: number;
+  /** Starts a queued prompt. Injected so the runner does not import the dispatcher. */
+  dispatch?: (command: Command) => void;
 }
 
 type Decision = "allow" | "deny";
@@ -49,6 +54,7 @@ const RECOVERABLE: ReadonlySet<Effect["kind"]> = new Set([
   "checkpoint.restore",
   "worktree.create",
   "worktree.remove",
+  "session.rewind",
 ]);
 
 /**
@@ -57,7 +63,7 @@ const RECOVERABLE: ReadonlySet<Effect["kind"]> = new Set([
  * already occupying its thread's queue.
  */
 export function createEffectRunner(deps: RunnerDeps): EffectRunner {
-  const { store, providers, git, newId, coalesceMs = 30 } = deps;
+  const { store, providers, git, newId, coalesceMs = 30, dispatch } = deps;
   const tails = new Map<string, Promise<void>>();
   const inflight = new Set<Promise<void>>();
   const controllers = new Map<string, AbortController>();
@@ -77,7 +83,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
   };
   const requestKey = (turnId: string, requestId: string) => `${turnId}\u0000${requestId}`;
 
-  async function perform(effect: Effect): Promise<void> {
+  async function perform(effect: Effect): Promise<void | "hold"> {
     switch (effect.kind) {
       case "turn.run":
         return runTurn(effect.threadId, effect.turnId);
@@ -128,8 +134,105 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         questions.get(requestKey(effect.turnId, effect.requestId))?.(effect.answers);
         return;
       case "session.rewind":
-        throw new Error("session.rewind is not implemented yet.");
+        return rewindSession(effect);
     }
+  }
+
+  /**
+   * The reverted turn must already be gone. If it is still in the model the restore
+   * failed, and rewinding would desync the native session. A provider that can only
+   * resume at a message keeps this effect pending until the next turn reads it.
+   */
+  async function rewindSession(
+    effect: Extract<Effect, { kind: "session.rewind" }>,
+  ): Promise<void | "hold"> {
+    const turns = store.model.turns[effect.threadId] ?? [];
+    if (turns.some((turn) => turn.id === effect.turnId)) return;
+    const thread = store.model.threads[effect.threadId];
+    if (!thread) return;
+    const adapter = providers.get(thread.provider);
+    const cwd = thread.worktree?.path ?? store.model.projects[thread.projectId]?.root ?? "";
+    if (adapter?.rewind && thread.providerSessionId) {
+      if (effect.dropTurns < 1) return;
+      const result = await adapter.rewind({
+        threadId: effect.threadId,
+        sessionId: thread.providerSessionId,
+        keepNativeRef: effect.keepNativeRef,
+        dropTurns: effect.dropTurns,
+        cwd,
+      });
+      append([
+        {
+          type: "thread.sessionBound",
+          commandId: null,
+          threadId: effect.threadId,
+          providerSessionId: result.sessionId,
+        },
+      ]);
+      return;
+    }
+    if (adapter?.supportsResumeAt) return "hold";
+    if (thread.providerSessionId !== null) {
+      append([
+        {
+          type: "thread.sessionBound",
+          commandId: null,
+          threadId: effect.threadId,
+          providerSessionId: null,
+        },
+      ]);
+    }
+  }
+
+  function consumeResumeAt(threadId: string): string | null {
+    const pending = store
+      .pendingEffects()
+      .filter(
+        (effect): effect is StoredEffect & Extract<Effect, { kind: "session.rewind" }> =>
+          effect.kind === "session.rewind" && effect.threadId === threadId,
+      );
+    const keep = pending.at(-1)?.keepNativeRef ?? null;
+    for (const effect of pending) markEffect(effect, "done");
+    return pending.length > 0 ? keep : null;
+  }
+
+  function promoteHead(threadId: string): void {
+    if (!dispatch) return;
+    const thread = store.model.threads[threadId];
+    const head = thread?.status === "idle" ? thread.queue?.[0] : undefined;
+    if (!head) return;
+    try {
+      dispatch({
+        commandId: `queue:${head.id}`,
+        type: "queue.promote",
+        threadId,
+        queueId: head.id,
+      });
+    } catch (error) {
+      console.error(`Could not start queued prompt ${head.id}`, error);
+    }
+  }
+
+  function acceptProposedPlan(threadId: string, turnId: string): void {
+    const thread = store.model.threads[threadId];
+    const turn = store.model.turns[threadId]?.find((candidate) => candidate.id === turnId);
+    const mode = turn?.interactionMode ?? thread?.interactionMode ?? "default";
+    if (mode !== "default") return;
+    const plan = latestPlan(store.model, threadId);
+    if (!plan || plan.status !== "proposed") return;
+    const owner = (store.model.turns[threadId] ?? []).find((candidate) =>
+      candidate.items.some((item) => item.id === plan.id),
+    );
+    if (!owner || owner.id === turnId) return;
+    append([
+      {
+        type: "turn.itemUpserted",
+        commandId: null,
+        threadId,
+        turnId: owner.id,
+        item: { ...plan, status: "accepted" },
+      },
+    ]);
   }
 
   /** Binds the thread's worktree, creating it when missing. Null when the thread is gone. */
@@ -149,6 +252,21 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
   async function runTurn(threadId: string, turnId: string): Promise<void> {
     const controller = controllers.get(turnId) ?? new AbortController();
     const { signal } = controller;
+    try {
+      await runTurnBody(threadId, turnId, controller, signal);
+    } finally {
+      // A throw after questions.set never reaches the promise's finally; abort settles it.
+      controller.abort();
+      controllers.delete(turnId);
+    }
+  }
+
+  async function runTurnBody(
+    threadId: string,
+    turnId: string,
+    controller: AbortController,
+    signal: AbortSignal,
+  ): Promise<void> {
     const model = store.model;
     const thread = model.threads[threadId];
     const turn = activeTurn(model, threadId);
@@ -231,11 +349,17 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         markUnrevertable("Not a git repository, so this turn has no checkpoint.");
       }
 
-      const earlier = (model.turns[threadId] ?? []).filter((candidate) => candidate.id !== turnId);
+      acceptProposedPlan(threadId, turnId);
+      const live = store.model.threads[threadId] ?? thread;
+      const earlier = (store.model.turns[threadId] ?? []).filter(
+        (candidate) => candidate.id !== turnId,
+      );
       const handoffContext =
-        thread.providerSessionId === null && earlier.length > 0
-          ? handoffTranscript(withTurns(model, threadId, earlier), threadId)
+        live.providerSessionId === null && earlier.length > 0
+          ? handoffTranscript(withTurns(store.model, threadId, earlier), threadId)
           : null;
+      const resumeAt =
+        adapter.supportsResumeAt && !adapter.rewind ? consumeResumeAt(threadId) : null;
 
       const input: TurnInput = {
         threadId,
@@ -243,15 +367,15 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         cwd,
         prompt: turn.prompt,
         model: turn.model,
-        runtimeMode: thread.runtimeMode,
-        resumeSessionId: thread.providerSessionId,
-        resumeAt: null,
-        interactionMode: thread.interactionMode ?? "default",
+        runtimeMode: live.runtimeMode,
+        resumeSessionId: live.providerSessionId,
+        resumeAt,
+        interactionMode: turn.interactionMode ?? live.interactionMode ?? "default",
         handoffContext,
         signal,
         requestApproval: async (raw) => {
           if (signal.aborted) return "deny";
-          if (thread.runtimeMode === "full") return "allow";
+          if (live.runtimeMode === "full") return "allow";
           const parsed = ApprovalRequest.safeParse(raw);
           if (!parsed.success) {
             notice("The agent asked for an approval Wooky could not read, so it was denied.");
@@ -259,11 +383,30 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           }
           const request = parsed.data;
           const key = requestKey(turnId, request.requestId);
+          let settled = false;
           const answer = new Promise<Decision>((resolve) => {
-            const onAbort = () => resolve("deny");
+            const onAbort = () => {
+              if (settled) return;
+              settled = true;
+              approvals.delete(key);
+              bestEffort(() =>
+                emit([
+                  {
+                    type: "approval.resolved",
+                    ...ids,
+                    requestId: request.requestId,
+                    decision: "deny",
+                  },
+                ]),
+              );
+              resolve("deny");
+            };
             signal.addEventListener("abort", onAbort, { once: true });
             approvals.set(key, (decision) => {
+              if (settled) return;
+              settled = true;
               signal.removeEventListener("abort", onAbort);
+              approvals.delete(key);
               resolve(decision);
             });
           });
@@ -296,11 +439,30 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           }
           const request = parsed.data;
           const key = requestKey(turnId, request.requestId);
+          let settled = false;
           const answer = new Promise<QuestionAnswers | null>((resolve) => {
-            const onAbort = () => resolve(null);
+            const onAbort = () => {
+              if (settled) return;
+              settled = true;
+              questions.delete(key);
+              bestEffort(() =>
+                emit([
+                  {
+                    type: "question.resolved",
+                    ...ids,
+                    requestId: request.requestId,
+                    answers: null,
+                  },
+                ]),
+              );
+              resolve(null);
+            };
             signal.addEventListener("abort", onAbort, { once: true });
             questions.set(key, (answers) => {
+              if (settled) return;
+              settled = true;
               signal.removeEventListener("abort", onAbort);
+              questions.delete(key);
               resolve(answers);
             });
           });
@@ -426,21 +588,21 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           second,
         );
       }
-    } finally {
-      controllers.delete(turnId);
     }
+    const recorded = store.model.turns[threadId]?.find((candidate) => candidate.id === turnId);
+    if (recorded?.status === "completed") promoteHead(threadId);
   }
 
   async function execute(effect: StoredEffect): Promise<void> {
-    let status: "done" | "retired" = "done";
+    let status: "done" | "retired" | "hold" = "done";
     try {
-      await perform(effect);
+      if ((await perform(effect)) === "hold") status = "hold";
     } catch (error) {
       console.error(`Effect ${effect.kind} failed`, error);
       // The store has no failed status; retired keeps a failure from reading as done.
       status = "retired";
     }
-    markEffect(effect, status);
+    if (status !== "hold") markEffect(effect, status);
   }
 
   async function idle(): Promise<void> {
@@ -493,8 +655,23 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         else store.markEffect(effect.id, "retired");
       }
       enqueue(rerun);
+      const busyRewind = new Set(
+        store
+          .pendingEffects()
+          .filter(
+            (effect) => effect.kind === "checkpoint.restore" || effect.kind === "session.rewind",
+          )
+          .map((effect) => effect.threadId),
+      );
+      for (const threadId of Object.keys(store.model.threads)) {
+        if (busyRewind.has(threadId)) continue;
+        const last = store.model.turns[threadId]?.at(-1);
+        if (store.model.threads[threadId]?.status === "idle" && last?.status === "completed")
+          promoteHead(threadId);
+      }
     },
     idle,
+    pendingRequests: () => approvals.size + questions.size,
     async shutdown(timeoutMs = 5_000) {
       for (const controller of controllers.values()) controller.abort();
       let timer: NodeJS.Timeout | undefined;

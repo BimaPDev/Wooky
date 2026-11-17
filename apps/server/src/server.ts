@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
+import type { Command, ProviderCapabilities, ProviderKind } from "@age/contracts";
 import { createEffectRunner } from "./effects/runner.ts";
 import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
@@ -37,20 +38,51 @@ export interface RunningServer {
 }
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
+  const limits = createLimitsService();
+  const adapters =
+    options.adapters ??
+    builtinAdapters({ onClaudeRateLimit: (info) => limits.ingestClaudeRateLimit(info) });
+  const registry = createProviderRegistry(adapters);
+  const capabilities = new Map<ProviderKind, ProviderCapabilities>();
+  const demo = registry.get("demo");
+  if (demo) {
+    try {
+      const status = await demo.probe();
+      if (status.capabilities) capabilities.set(demo.kind, status.capabilities);
+    } catch (error) {
+      console.error("Could not read the demo provider's capabilities", error);
+    }
+  }
+  const providers = {
+    get: (kind: ProviderKind) => registry.get(kind),
+    async list() {
+      const statuses = await registry.list();
+      for (const status of statuses) {
+        if (status.capabilities) capabilities.set(status.kind, status.capabilities);
+      }
+      return statuses;
+    },
+  };
   const ctx: DecideContext = {
     now: () => new Date().toISOString(),
     newId: (prefix) => `${prefix}_${randomUUID()}`,
+    capabilities: (kind) => capabilities.get(kind),
   };
   const store = openEventStore(options.home, ctx.now);
-  const limits = createLimitsService();
-  const providers = createProviderRegistry(
-    options.adapters ??
-      builtinAdapters({ onClaudeRateLimit: (info) => limits.ingestClaudeRateLimit(info) }),
-  );
   const git = options.git ?? createGitService();
-  const runner = createEffectRunner({ store, providers, git, newId: ctx.newId });
-  runner.recover();
+  let dispatchCommand: (command: Command) => void = () => {};
+  const runner = createEffectRunner({
+    store,
+    providers,
+    git,
+    newId: ctx.newId,
+    dispatch: (command) => dispatchCommand(command),
+  });
   const dispatcher = createDispatcher({ store, runner, ctx });
+  dispatchCommand = (command) => {
+    dispatcher.dispatch(command);
+  };
+  runner.recover();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
   const themes = createThemeStore(options.home);
   const terminals = createTerminalManager();
