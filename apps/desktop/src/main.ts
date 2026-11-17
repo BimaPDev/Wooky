@@ -52,7 +52,11 @@ function loadPage(win: BrowserWindow): void {
             ? errorPage(page.title, page.detail, page.stderrTail)
             : startingPage(),
         );
-  win.loadURL(target).catch((error: unknown) => console.error("Failed to load page", error));
+  win.loadURL(target).catch((error: unknown) => {
+    // ERR_ABORTED (-3): a newer loadURL superseded this one; not a failure.
+    if ((error as { errno?: number }).errno === -3) return;
+    console.error("Failed to load page", error);
+  });
 }
 
 function setPage(next: Page): void {
