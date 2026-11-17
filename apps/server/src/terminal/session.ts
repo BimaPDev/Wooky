@@ -13,7 +13,10 @@ interface Session {
 }
 
 export interface TerminalManager {
-  open(input: { cwd?: string; cols?: number; rows?: number }, sink: TerminalSink): { sessionId: string; shell: string };
+  open(
+    input: { cwd?: string; cols?: number; rows?: number },
+    sink: TerminalSink,
+  ): { sessionId: string; shell: string };
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
   close(sessionId: string): void;
@@ -67,7 +70,9 @@ export function createTerminalManager(): TerminalManager {
         sessionId: id,
         kind: "exit",
         code: code ?? (signal ? 1 : 0),
-        data: signal ? `\r\n[process exited via ${signal}]\r\n` : `\r\n[process exited with code ${code ?? 0}]\r\n`,
+        data: signal
+          ? `\r\n[process exited via ${signal}]\r\n`
+          : `\r\n[process exited with code ${code ?? 0}]\r\n`,
       });
     });
 
@@ -83,7 +88,8 @@ export function createTerminalManager(): TerminalManager {
 
   function write(sessionId: string, data: string) {
     const session = sessions.get(sessionId);
-    if (!session) throw new ServiceError("not_found", `Terminal session "${sessionId}" is not open.`);
+    if (!session)
+      throw new ServiceError("not_found", `Terminal session "${sessionId}" is not open.`);
     if (session.child.killed || session.child.stdin.destroyed) {
       throw new ServiceError("conflict", "The shell is no longer accepting input.");
     }

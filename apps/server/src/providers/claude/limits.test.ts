@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  applyClaudeRateLimitEvent,
-  normalizeClaudeUsage,
-  type ClaudeUsageRaw,
-} from "./limits.ts";
+import { applyClaudeRateLimitEvent, normalizeClaudeUsage, type ClaudeUsageRaw } from "./limits.ts";
 
 const checkedAt = "2026-11-17T12:00:00.000Z";
 

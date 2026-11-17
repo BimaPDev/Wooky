@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,7 +14,10 @@ describe("resolveCommand", () => {
     mkdirSync(root, { recursive: true });
     const exe = join(root, process.platform === "win32" ? "tool.exe" : "tool");
     writeFileSync(exe, "");
-    expect(resolveCommand(exe)).toEqual({ command: exe, prefixArgs: [] });
+    expect(resolveCommand(exe)).toEqual({
+      command: realpathSync(exe),
+      prefixArgs: [],
+    });
   });
 
   it("unwraps a Windows .cmd that points at an .exe", () => {
