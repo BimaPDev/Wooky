@@ -20,6 +20,14 @@ agents on different models and harnesses). The method:
 
 ## Ledger
 
-| Unit | Station (owned paths)                   | Cook      | Reviewer | Status | Evidence     |
-| ---- | --------------------------------------- | --------- | -------- | ------ | ------------ |
-| 0    | contracts, domain, seams, checks, rules | head chef | —        | done   | `pnpm check` |
+| Unit | Station (owned paths)                                      | Cook                                        | Reviewer                                       | Status    | Evidence                                                       |
+| ---- | ---------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------- | --------- | -------------------------------------------------------------- |
+| 0    | contracts, domain, seams, checks, rules                    | head chef (Opus 5.5)                        | —                                              | merged    | `pnpm check`                                                   |
+| 1    | server core: store, orchestrator, effects, transport, demo | Opus 5.5                                    | Grok 4.6 (Cursor)                              | in review | 58 tests; manual `AGE_LISTENING` + `/healthz`                  |
+| 2    | git service                                                | Fable 5.2 → reassigned to Opus 4.8 (Cursor) | —                                              | cooking   | Fable 5.2 needed usage credits                                 |
+| 3    | Claude Code adapter                                        | Sonnet 5.5                                  | DeepSeek V4.1 Flash (OpenCode)                 | in review | 55 tests; real Haiku turns in full + approve mode              |
+| 4    | web UI                                                     | Grok 4.7 (Cursor)                           | —                                              | cooking   |                                                                |
+| 5    | Codex adapter                                              | Gemini 4 Carbon (Cursor)                    | —                                              | cooking   |                                                                |
+| 6    | desktop shell + dev runner                                 | Haiku 5.5                                   | Big Pickle (OpenCode)                          | in review | 23 tests                                                       |
+| 7    | Cursor adapter                                             | Composer 2.5 via `cursor-agent` CLI         | head chef (real-stream replay), then Haiku 5.5 | in review | 5 defects found by replaying a real stream, fixed by the cook  |
+| 8    | head-chef fixes                                            | head chef                                   | reviewers above                                | merged    | DNS-rebinding guard, symlink-aware paths, Cursor sign-in probe |
