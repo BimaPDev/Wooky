@@ -76,4 +76,6 @@ export interface ProviderAdapter {
    * at a message via TurnInput.resumeAt, or, if they cannot, get the handoff transcript.
    */
   rewind?(input: RewindInput): Promise<{ sessionId: string | null }>;
+  /** True when the adapter honours TurnInput.resumeAt (resume the native session at a message). */
+  supportsResumeAt?: boolean;
 }

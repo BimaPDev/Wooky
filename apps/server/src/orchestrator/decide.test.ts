@@ -87,6 +87,44 @@ function finished(model: ReadModel): ReadModel {
   ]);
 }
 
+function applyAt(model: ReadModel, events: PendingEvent[], time: string): ReadModel {
+  let seq = model.seq;
+  return applyEvents(
+    model,
+    events.map((event) => ({ ...event, seq: ++seq, at: time }) as AgeEvent),
+  );
+}
+
+function finishAt(
+  model: ReadModel,
+  turnId: string,
+  nativeRef: string | null,
+  time: string,
+): ReadModel {
+  const threadId =
+    Object.entries(model.turns).find(([, turns]) =>
+      turns.some((turn) => turn.id === turnId),
+    )?.[0] ?? "t1";
+  return applyAt(
+    model,
+    [
+      {
+        type: "turn.finished",
+        commandId: null,
+        threadId,
+        turnId,
+        status: "completed",
+        checkpointAfter: `refs/age/checkpoints/${threadId}/${turnId}/after`,
+        changedFiles: [],
+        usage: null,
+        error: null,
+        ...(nativeRef === null ? {} : { nativeRef }),
+      },
+    ],
+    time,
+  );
+}
+
 const run = (model: ReadModel, cmd: Command) => decide(model, cmd, testContext());
 
 describe("decide project.add", () => {
@@ -248,6 +286,48 @@ describe("decide thread.configure", () => {
     );
     expect(events[0]).toMatchObject({ provider: "demo", runtimeMode: "full", handoff: false });
   });
+
+  it("records interactionMode when the provider can plan", () => {
+    const ctx = testContext((provider) => (provider === "demo" ? { planMode: true } : undefined));
+    const { events } = accepted(
+      decide(seed(), command("thread.configure", { threadId: "t1", interactionMode: "plan" }), ctx),
+    );
+    expect(events[0]).toMatchObject({
+      provider: "demo",
+      interactionMode: "plan",
+      handoff: false,
+    });
+  });
+
+  it("rejects plan mode when the provider cannot plan", () => {
+    const plan = command("thread.configure", { threadId: "t1", interactionMode: "plan" });
+    expect(run(seed(), plan)).toMatchObject({
+      code: "bad_request",
+      message: "This provider does not support plan mode.",
+    });
+    const cursor = apply(seed(), [
+      {
+        type: "thread.configured",
+        commandId: "seed",
+        threadId: "t1",
+        provider: "cursor",
+        model: "auto",
+        runtimeMode: "full",
+        handoff: true,
+      },
+    ]);
+    const ctx = testContext((provider) =>
+      provider === "cursor" ? { planMode: false } : { planMode: true },
+    );
+    expect(decide(cursor, plan, ctx)).toMatchObject({ code: "bad_request" });
+  });
+
+  it("rejects a turn that would run in plan mode on a provider that cannot plan", () => {
+    const planned = apply(seed({ interactionMode: "plan", provider: "cursor" }), []);
+    expect(
+      run(planned, command("turn.start", { threadId: "t1", prompt: "Plan it" })),
+    ).toMatchObject({ code: "bad_request", message: "This provider does not support plan mode." });
+  });
 });
 
 describe("decide turn.start", () => {
@@ -279,6 +359,7 @@ describe("decide turn.start", () => {
       provider: "demo",
       model: "demo",
       checkpointBefore: "refs/age/checkpoints/t1/turn-1/before",
+      interactionMode: "default",
     });
     expect(effects).toEqual([{ kind: "turn.run", threadId: "t1", turnId: "turn-1" }]);
   });
@@ -409,7 +490,47 @@ describe("decide turn.revert", () => {
         cwd: "/wt/t1",
         ref: "refs/age/checkpoints/t1/u1/before",
       },
+      {
+        kind: "session.rewind",
+        threadId: "t1",
+        turnId: "u1",
+        keepNativeRef: null,
+        dropTurns: 1,
+      },
     ]);
+  });
+
+  it("rewinds to the last kept nativeRef and counts every dropped turn", () => {
+    const first = finishAt(running(), "u1", "msg-1", "2026-01-01T00:00:00.000Z");
+    const second = applyAt(
+      first,
+      [
+        {
+          type: "turn.started",
+          commandId: "seed",
+          threadId: "t1",
+          turnId: "u2",
+          prompt: "next",
+          provider: "demo",
+          model: "demo",
+          checkpointBefore: "refs/age/checkpoints/t1/u2/before",
+        },
+      ],
+      "2026-01-02T00:00:00.000Z",
+    );
+    const both = finishAt(second, "u2", "msg-2", "2026-01-02T00:00:01.000Z");
+    const { effects } = accepted(
+      run(both, command("turn.revert", { threadId: "t1", turnId: "u2" })),
+    );
+    expect(effects[1]).toEqual({
+      kind: "session.rewind",
+      threadId: "t1",
+      turnId: "u2",
+      keepNativeRef: "msg-1",
+      dropTurns: 1,
+    });
+    const dropped = accepted(run(both, command("turn.revert", { threadId: "t1", turnId: "u1" })));
+    expect(dropped.effects[1]).toMatchObject({ keepNativeRef: null, dropTurns: 2 });
   });
 });
 
@@ -481,30 +602,279 @@ describe("decide question.respond", () => {
   });
 });
 
+describe("decide question answers", () => {
+  const choice = {
+    id: "db",
+    question: "Which?",
+    options: [{ label: "SQLite" }, { label: "Postgres" }],
+    multiSelect: false,
+    allowCustom: false,
+  };
+  const asking = () =>
+    apply(running(), [
+      {
+        type: "question.requested",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u1",
+        itemId: "q1",
+        requestId: "r1",
+        questions: [choice],
+      },
+    ]);
+  const respond = (answers: Record<string, string[]> | null) =>
+    command("question.respond", { threadId: "t1", requestId: "r1", answers });
+
+  it("rejects an empty answer set, an empty list, an unknown id, free text, and extra picks", () => {
+    expect(run(asking(), respond({}))).toMatchObject({ code: "bad_request" });
+    expect(run(asking(), respond({ db: [] }))).toMatchObject({ code: "bad_request" });
+    expect(run(asking(), respond({ other: ["SQLite"] }))).toMatchObject({
+      code: "bad_request",
+      message: "Unknown question other.",
+    });
+    expect(run(asking(), respond({ db: ["MySQL"] }))).toMatchObject({
+      code: "bad_request",
+      message: "That answer is not one of the options.",
+    });
+    expect(run(asking(), respond({ db: ["SQLite", "Postgres"] }))).toMatchObject({
+      code: "bad_request",
+      message: "This question accepts one answer.",
+    });
+  });
+
+  it("accepts one listed option, and free text only when the question allows it", () => {
+    expect(accepted(run(asking(), respond({ db: ["SQLite"] }))).events).toMatchObject([
+      { answers: { db: ["SQLite"] } },
+    ]);
+    const custom = apply(running(), [
+      {
+        type: "question.requested",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u1",
+        itemId: "q1",
+        requestId: "r1",
+        questions: [{ ...choice, allowCustom: true, multiSelect: true }],
+      },
+    ]);
+    expect(
+      accepted(run(custom, respond({ db: ["SQLite", "Somewhere else"] }))).effects,
+    ).toMatchObject([{ answers: { db: ["SQLite", "Somewhere else"] } }]);
+  });
+});
+
 describe("decide queue commands", () => {
-  it("rejects queue.promote and queue.remove until Station 1", () => {
-    for (const type of ["queue.promote", "queue.remove"] as const)
-      expect(run(seed(), command(type, { threadId: "t1", queueId: "q1" }))).toMatchObject({
-        ok: false,
-        code: "bad_request",
-        message: `${type} is not supported yet.`,
-      });
+  function queued(model: ReadModel = running()): ReadModel {
+    return apply(model, [
+      {
+        type: "queue.added",
+        commandId: "seed",
+        threadId: "t1",
+        item: { id: "q1", prompt: "follow up", queuedAt: at },
+      },
+    ]);
+  }
+
+  it("queues a prompt while a turn is running and still rejects by default", () => {
+    expect(run(running(), command("turn.start", { threadId: "t1", prompt: "x" }))).toMatchObject({
+      code: "conflict",
+    });
+    const cmd = command("turn.start", { threadId: "t1", prompt: "later", whenBusy: "queue" });
+    const { events, effects } = accepted(run(running(), cmd));
+    expect(events).toEqual([
+      {
+        type: "queue.added",
+        commandId: cmd.commandId,
+        threadId: "t1",
+        item: { id: "queue-1", prompt: "later", queuedAt: at },
+      },
+    ]);
+    expect(effects).toEqual([]);
+  });
+
+  it("starts a turn when whenBusy is queue but the thread is idle", () => {
+    const { events } = accepted(
+      run(seed(), command("turn.start", { threadId: "t1", prompt: "now", whenBusy: "queue" })),
+    );
+    expect(events.map((event) => event.type)).toEqual(["thread.renamed", "turn.started"]);
+  });
+
+  it("removes a queued prompt", () => {
+    const cmd = command("queue.remove", { threadId: "t1", queueId: "q1" });
+    expect(accepted(run(queued(), cmd)).events).toMatchObject([
+      { type: "queue.removed", queueId: "q1", reason: "removed" },
+    ]);
+    expect(run(seed(), cmd)).toMatchObject({ code: "not_found" });
+  });
+
+  it("promotes the queued prompt only while the thread is idle", () => {
+    const cmd = command("queue.promote", { threadId: "t1", queueId: "q1" });
+    expect(run(queued(), cmd)).toMatchObject({ code: "conflict" });
+    const idle = queued(finished(running({ title: "Mine" })));
+    const { events, effects } = accepted(run(idle, cmd));
+    expect(events).toMatchObject([
+      { type: "queue.removed", queueId: "q1", reason: "started" },
+      {
+        type: "turn.started",
+        prompt: "follow up",
+        fromQueueId: "q1",
+        interactionMode: "default",
+      },
+    ]);
+    expect(effects).toEqual([{ kind: "turn.run", threadId: "t1", turnId: "turn-1" }]);
+    expect(run(seed(), cmd)).toMatchObject({ code: "not_found" });
   });
 });
 
 describe("decide turn.revert restoreFiles", () => {
-  it("rejects a conversation-only revert until Station 1", () => {
+  it("rewinds the conversation without restoring files", () => {
     const cmd = command("turn.revert", { threadId: "t1", turnId: "u1", restoreFiles: false });
-    expect(run(finished(running()), cmd)).toMatchObject({
-      code: "bad_request",
-      message: "conversation-only revert not supported yet",
-    });
+    const { events, effects } = accepted(run(finished(running()), cmd));
+    expect(events).toEqual([
+      {
+        type: "turn.reverted",
+        commandId: cmd.commandId,
+        threadId: "t1",
+        turnId: "u1",
+        restoredFiles: false,
+      },
+    ]);
+    expect(effects).toEqual([
+      {
+        kind: "session.rewind",
+        threadId: "t1",
+        turnId: "u1",
+        keepNativeRef: null,
+        dropTurns: 1,
+      },
+    ]);
   });
 
   it("still restores files when restoreFiles is true", () => {
     const cmd = command("turn.revert", { threadId: "t1", turnId: "u1", restoreFiles: true });
     expect(accepted(run(finished(running()), cmd)).effects).toMatchObject([
       { kind: "checkpoint.restore" },
+      { kind: "session.rewind" },
     ]);
+  });
+
+  it("rejects a file restore when another root thread is running or started later", () => {
+    const shared = apply(finished(running()), [
+      { type: "thread.created", commandId: "seed", thread: thread({ id: "t2", title: "Other" }) },
+    ]);
+    const later = applyAt(
+      shared,
+      [
+        {
+          type: "turn.started",
+          commandId: "seed",
+          threadId: "t2",
+          turnId: "u2",
+          prompt: "later",
+          provider: "demo",
+          model: "demo",
+          checkpointBefore: "refs/age/checkpoints/t2/u2/before",
+        },
+      ],
+      "2026-01-02T00:00:00.000Z",
+    );
+    const idleLater = finishAt(later, "u2", null, "2026-01-02T00:00:01.000Z");
+    const fileRestore = command("turn.revert", { threadId: "t1", turnId: "u1" });
+    expect(run(idleLater, fileRestore)).toMatchObject({
+      code: "conflict",
+      message: expect.stringContaining("Conversation-only revert is available."),
+    });
+
+    const busy = apply(shared, [
+      {
+        type: "turn.started",
+        commandId: "seed",
+        threadId: "t2",
+        turnId: "u2",
+        prompt: "now",
+        provider: "demo",
+        model: "demo",
+        checkpointBefore: null,
+      },
+    ]);
+    expect(run(busy, fileRestore).ok).toBe(false);
+
+    const conversation = command("turn.revert", {
+      threadId: "t1",
+      turnId: "u1",
+      restoreFiles: false,
+    });
+    expect(accepted(run(idleLater, conversation)).effects).toEqual([
+      {
+        kind: "session.rewind",
+        threadId: "t1",
+        turnId: "u1",
+        keepNativeRef: null,
+        dropTurns: 1,
+      },
+    ]);
+  });
+
+  it("restores files when the other thread's turn is older, or this thread has its own worktree", () => {
+    const older = applyAt(
+      seed(),
+      [
+        { type: "thread.created", commandId: "seed", thread: thread({ id: "t2", title: "Other" }) },
+        {
+          type: "turn.started",
+          commandId: "seed",
+          threadId: "t2",
+          turnId: "u2",
+          prompt: "earlier",
+          provider: "demo",
+          model: "demo",
+          checkpointBefore: "refs/age/checkpoints/t2/u2/before",
+        },
+      ],
+      "2025-12-01T00:00:00.000Z",
+    );
+    const withOlder = finishAt(older, "u2", null, "2025-12-01T00:00:01.000Z");
+    const mine = applyAt(
+      withOlder,
+      [
+        {
+          type: "turn.started",
+          commandId: "seed",
+          threadId: "t1",
+          turnId: "u1",
+          prompt: "hi",
+          provider: "demo",
+          model: "demo",
+          checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+        },
+      ],
+      "2026-01-01T00:00:00.000Z",
+    );
+    const ready = finishAt(mine, "u1", null, "2026-01-01T00:00:01.000Z");
+    expect(
+      accepted(run(ready, command("turn.revert", { threadId: "t1", turnId: "u1" }))).effects[0],
+    ).toMatchObject({ kind: "checkpoint.restore" });
+
+    const own = finished(running({ worktree: { path: "/wt/t1", branch: "age/t1" } }));
+    const crowded = applyAt(
+      own,
+      [
+        { type: "thread.created", commandId: "seed", thread: thread({ id: "t2", title: "Other" }) },
+        {
+          type: "turn.started",
+          commandId: "seed",
+          threadId: "t2",
+          turnId: "u2",
+          prompt: "later",
+          provider: "demo",
+          model: "demo",
+          checkpointBefore: null,
+        },
+      ],
+      "2026-02-01T00:00:00.000Z",
+    );
+    expect(
+      accepted(run(crowded, command("turn.revert", { threadId: "t1", turnId: "u1" }))).effects[0],
+    ).toMatchObject({ kind: "checkpoint.restore", cwd: "/wt/t1" });
   });
 });

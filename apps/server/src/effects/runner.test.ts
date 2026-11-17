@@ -1,10 +1,18 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgeEvent, ProviderEvent, ProviderKind, RuntimeMode, Thread } from "@age/contracts";
+import { afterEach, describe, expect, it } from "vitest";
+import type {
+  AgeEvent,
+  Command,
+  ProviderEvent,
+  ProviderKind,
+  RuntimeMode,
+  Thread,
+} from "@age/contracts";
 import { createNoopGitService } from "../git/noop.ts";
 import type { GitService } from "../git/types.ts";
+import type { DecideContext } from "../orchestrator/decide.ts";
 import { createDispatcher } from "../orchestrator/dispatcher.ts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { createProviderRegistry } from "../providers/registry.ts";
@@ -36,22 +44,26 @@ async function harness(
     adapters?: ProviderAdapter[];
     git?: GitService;
     wrapStore?: (store: EventStore) => EventStore;
+    capabilities?: DecideContext["capabilities"];
   } = {},
 ) {
   const home = await tempDir("runner");
   const root = await tempDir("project");
-  const ctx = testContext();
+  const ctx = testContext(options.capabilities);
   const fake = createFakeGit();
   const opened = openEventStore(home, ctx.now);
   const store = options.wrapStore?.(opened) ?? opened;
   const providers = createProviderRegistry(options.adapters ?? [createDemoAdapter({ stepMs: 0 })]);
+  let send: (command: Command) => void = () => {};
   const runner = createEffectRunner({
     store,
     providers,
     git: options.git ?? fake.git,
     newId: ctx.newId,
+    dispatch: (command) => send(command),
   });
   const dispatcher = createDispatcher({ store, runner, ctx });
+  send = (command) => dispatcher.dispatch(command);
   cleanups.push(async () => {
     await runner.shutdown();
     opened.close();
@@ -140,14 +152,18 @@ function seededStore(home: string, root: string, thread: Partial<Thread> = {}): 
 function restart(home: string, git: GitService, adapters?: ProviderAdapter[]) {
   const ctx = testContext();
   const store = openEventStore(home, ctx.now);
+  let send: (command: Command) => void = () => {};
   const runner = createEffectRunner({
     store,
     providers: createProviderRegistry(adapters ?? [createDemoAdapter({ stepMs: 0 })]),
     git,
     newId: ctx.newId,
+    dispatch: (command) => send(command),
   });
+  const dispatcher = createDispatcher({ store, runner, ctx });
+  send = (command) => dispatcher.dispatch(command);
   runner.recover();
-  return { store, runner };
+  return { store, runner, dispatcher };
 }
 
 function effectStatuses(home: string): string[] {
@@ -199,6 +215,7 @@ describe("effect runner with the demo adapter", () => {
       changedFiles: ["AGE_DEMO.md"],
       usage: { inputTokens: "Add a line".length, outputTokens: 12 },
       error: null,
+      nativeRef: `demo:${turnId}`,
     });
     expect(h.calls).toEqual([
       `capture refs/age/checkpoints/${threadId}/${turnId}/before`,
@@ -896,7 +913,13 @@ describe("effect runner seams for revert rewind and questions", () => {
   });
 
   it("leaves nativeRef out when the adapter reports none", async () => {
-    const h = await harness();
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* () {
+          yield { type: "done", status: "completed", error: null };
+        }),
+      ],
+    });
     const threadId = h.createThread("full");
     const { turnId } = h.startTurn(threadId, "Go");
     expect(await finishedFor(h.store, turnId)).not.toHaveProperty("nativeRef");
@@ -961,24 +984,456 @@ describe("effect runner seams for revert rewind and questions", () => {
     expect(await finishedFor(h.store, turnId)).toMatchObject({ status: "interrupted" });
   });
 
-  it("fails session.rewind loudly instead of marking it done", async () => {
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const h = await harness();
-      const threadId = h.createThread("full");
-      const { effects } = h.store.commit({
-        commandId: "rewind",
-        events: [],
-        effects: [
-          { kind: "session.rewind", threadId, turnId: "u1", keepNativeRef: null, dropTurns: 1 },
-        ],
+  it("does nothing when the reverted turn is still in the model", async () => {
+    const rewound: unknown[] = [];
+    const adapter = scripted("demo", async function* () {
+      yield { type: "session", sessionId: "s1" };
+      yield { type: "done", status: "completed", error: null, nativeRef: "msg-1" };
+    });
+    adapter.rewind = async (input) => {
+      rewound.push(input);
+      return { sessionId: "rewound" };
+    };
+    const h = await harness({ adapters: [adapter] });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    await finishedFor(h.store, turnId);
+    const { effects } = h.store.commit({
+      commandId: "rewind",
+      events: [],
+      effects: [{ kind: "session.rewind", threadId, turnId, keepNativeRef: null, dropTurns: 1 }],
+    });
+    h.runner.enqueue(effects);
+    await h.runner.idle();
+    expect(rewound).toEqual([]);
+    expect(effectStatuses(h.home).at(-1)).toBe("session.rewind:done");
+    expect(h.store.model.turns[threadId]).toHaveLength(1);
+  });
+});
+
+describe("effect runner rewind, questions, queue and plans", () => {
+  function recording(nativeRefFor: (input: TurnInput) => string) {
+    const inputs: TurnInput[] = [];
+    const adapter = scripted("demo", async function* (input) {
+      inputs.push(input);
+      yield { type: "session", sessionId: input.resumeSessionId ?? "native" };
+      yield {
+        type: "item",
+        item: {
+          kind: "message",
+          id: `${input.turnId}-a`,
+          role: "assistant",
+          text: input.prompt,
+        },
+      };
+      yield { type: "done", status: "completed", error: null, nativeRef: nativeRefFor(input) };
+    });
+    return { adapter, inputs };
+  }
+
+  it("calls rewind with the kept ref and resumes that session", async () => {
+    const { adapter, inputs } = recording(() => `ref-${inputs.length}`);
+    const rewound: { keepNativeRef: string | null; dropTurns: number; sessionId: string }[] = [];
+    let secondId = "";
+    let turnWasGone = false;
+    let readTurns: () => readonly { id: string }[] = () => [];
+    adapter.rewind = async (input) => {
+      rewound.push({
+        keepNativeRef: input.keepNativeRef,
+        dropTurns: input.dropTurns,
+        sessionId: input.sessionId,
       });
-      h.runner.enqueue(effects);
-      await h.runner.idle();
-      expect(effectStatuses(h.home).at(-1)).toBe("session.rewind:retired");
-      expect(errors).toHaveBeenCalledWith("Effect session.rewind failed", expect.any(Error));
-    } finally {
-      errors.mockRestore();
-    }
+      turnWasGone = !readTurns().some((turn) => turn.id === secondId);
+      return { sessionId: "rewound" };
+    };
+    const h = await harness({ adapters: [adapter] });
+    const threadId = h.createThread("full");
+    readTurns = () => h.store.model.turns[threadId] ?? [];
+    await finishedFor(h.store, h.startTurn(threadId, "first").turnId);
+    const second = h.startTurn(threadId, "second");
+    secondId = second.turnId;
+    await finishedFor(h.store, second.turnId);
+    h.dispatch({ type: "turn.revert", threadId, turnId: second.turnId });
+    await waitForEvent(
+      h.store,
+      "thread.sessionBound",
+      (event) => event.providerSessionId === "rewound",
+    );
+    expect(turnWasGone).toBe(true);
+    expect(h.store.model.turns[threadId]?.some((turn) => turn.id === second.turnId)).toBe(false);
+    expect(rewound).toEqual([{ keepNativeRef: "ref-1", dropTurns: 1, sessionId: "native" }]);
+    expect(h.calls.some((call) => call.startsWith("restore "))).toBe(true);
+
+    await finishedFor(h.store, h.startTurn(threadId, "third").turnId);
+    expect(inputs.at(-1)).toMatchObject({ resumeSessionId: "rewound", resumeAt: null });
+  });
+
+  it("clears the session when the adapter cannot rewind", async () => {
+    const { adapter, inputs } = recording(() => "ref");
+    const h = await harness({ adapters: [adapter] });
+    const threadId = h.createThread("full");
+    await finishedFor(h.store, h.startTurn(threadId, "first").turnId);
+    const second = h.startTurn(threadId, "second");
+    await finishedFor(h.store, second.turnId);
+    h.dispatch({ type: "turn.revert", threadId, turnId: second.turnId, restoreFiles: false });
+    await waitForEvent(h.store, "thread.sessionBound", (event) => event.providerSessionId === null);
+    expect(h.calls.some((call) => call.startsWith("restore "))).toBe(false);
+    await finishedFor(h.store, h.startTurn(threadId, "third").turnId);
+    expect(inputs.at(-1)?.resumeSessionId).toBeNull();
+    expect(inputs.at(-1)?.resumeAt).toBeNull();
+    expect(inputs.at(-1)?.handoffContext).toContain("User: first");
+    expect(inputs.at(-1)?.handoffContext).not.toContain("second");
+  });
+
+  it("passes resumeAt once when the adapter supports resume-at", async () => {
+    const { adapter, inputs } = recording(() => `ref-${inputs.length}`);
+    adapter.supportsResumeAt = true;
+    const h = await harness({ adapters: [adapter] });
+    const threadId = h.createThread("full");
+    await finishedFor(h.store, h.startTurn(threadId, "first").turnId);
+    const second = h.startTurn(threadId, "second");
+    await finishedFor(h.store, second.turnId);
+    h.dispatch({ type: "turn.revert", threadId, turnId: second.turnId, restoreFiles: false });
+    await h.runner.idle();
+    expect(effectStatuses(h.home)).toContain("session.rewind:pending");
+
+    await finishedFor(h.store, h.startTurn(threadId, "third").turnId);
+    expect(inputs.at(-1)?.resumeAt).toBe("ref-1");
+    await finishedFor(h.store, h.startTurn(threadId, "fourth").turnId);
+    expect(inputs.at(-1)?.resumeAt).toBeNull();
+    expect(effectStatuses(h.home)).toContain("session.rewind:done");
+    expect(effectStatuses(h.home)).not.toContain("session.rewind:pending");
+  });
+
+  it("still resumes at the kept message after a restart", async () => {
+    const home = await tempDir("resume-at");
+    const root = await tempDir("project");
+    const seeded = seededStore(home, root, { providerSessionId: "native" });
+    const started = {
+      type: "turn.started" as const,
+      commandId: "c1",
+      threadId: "t1",
+      turnId: "u1",
+      prompt: "first",
+      provider: "demo" as const,
+      model: "demo",
+      checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+    };
+    seeded.commit({ commandId: "c1", events: [started], effects: [] });
+    seeded.appendInternal([
+      {
+        type: "turn.finished",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u1",
+        status: "completed",
+        checkpointAfter: null,
+        changedFiles: [],
+        usage: null,
+        error: null,
+        nativeRef: "ref-1",
+      },
+    ]);
+    seeded.commit({
+      commandId: "c2",
+      events: [{ ...started, commandId: "c2", turnId: "u2", prompt: "second" }],
+      effects: [],
+    });
+    seeded.appendInternal([
+      {
+        type: "turn.finished",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u2",
+        status: "completed",
+        checkpointAfter: null,
+        changedFiles: [],
+        usage: null,
+        error: null,
+        nativeRef: "ref-2",
+      },
+    ]);
+    seeded.commit({
+      commandId: "revert",
+      events: [
+        {
+          type: "turn.reverted",
+          commandId: "revert",
+          threadId: "t1",
+          turnId: "u2",
+          restoredFiles: false,
+        },
+      ],
+      effects: [
+        {
+          kind: "session.rewind",
+          threadId: "t1",
+          turnId: "u2",
+          keepNativeRef: "ref-1",
+          dropTurns: 1,
+        },
+      ],
+    });
+    seeded.close();
+
+    const inputs: TurnInput[] = [];
+    const adapter = scripted("demo", async function* (input) {
+      inputs.push(input);
+      yield { type: "done", status: "completed", error: null };
+    });
+    adapter.supportsResumeAt = true;
+    const second = restart(home, createFakeGit().git, [adapter]);
+    await second.runner.idle();
+    second.dispatcher.dispatch({
+      type: "turn.start",
+      commandId: "c3",
+      threadId: "t1",
+      prompt: "third",
+    });
+    const thirdId = second.store.model.turns.t1?.at(-1)?.id ?? "";
+    await finishedFor(second.store, thirdId);
+    expect(inputs[0]?.resumeAt).toBe("ref-1");
+    second.dispatcher.dispatch({
+      type: "turn.start",
+      commandId: "c4",
+      threadId: "t1",
+      prompt: "fourth",
+    });
+    const fourthId = second.store.model.turns.t1?.at(-1)?.id ?? "";
+    await finishedFor(second.store, fourthId);
+    expect(inputs[1]?.resumeAt).toBeNull();
+    await second.runner.shutdown();
+    second.store.close();
+
+    const again: TurnInput[] = [];
+    const later = scripted("demo", async function* (input) {
+      again.push(input);
+      yield { type: "done", status: "completed", error: null };
+    });
+    later.supportsResumeAt = true;
+    const third = restart(home, createFakeGit().git, [later]);
+    third.dispatcher.dispatch({
+      type: "turn.start",
+      commandId: "c5",
+      threadId: "t1",
+      prompt: "fifth",
+    });
+    await third.runner.idle();
+    expect(again[0]?.resumeAt).toBeNull();
+    await third.runner.shutdown();
+    third.store.close();
+  });
+
+  it("clears question listeners when the adapter throws mid-question", async () => {
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* (input) {
+          void input.requestUserInput({ requestId: "r1", questions: [dbQuestion] });
+          if (input.turnId) throw new Error("mid-question");
+          yield { type: "done", status: "failed", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "Go");
+    expect(await finishedFor(h.store, turnId)).toMatchObject({ status: "failed" });
+    await h.runner.idle();
+    expect(h.runner.pendingRequests()).toBe(0);
+  });
+
+  it("resolves open questions and approvals on abort, before the turn finishes", async () => {
+    const received = deferred<{ question: unknown; approval: unknown }>();
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* (input) {
+          const question = input.requestUserInput({ requestId: "rq", questions: [dbQuestion] });
+          const approval = input.requestApproval({
+            requestId: "ra",
+            tool: "command",
+            title: "run",
+            detail: "",
+          });
+          received.resolve({ question: await question, approval: await approval });
+          yield { type: "done", status: "interrupted", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("approve");
+    const { turnId } = h.startTurn(threadId, "Go");
+    await waitForEvent(h.store, "question.requested", (event) => event.requestId === "rq");
+    await waitForEvent(h.store, "approval.requested", (event) => event.requestId === "ra");
+    h.dispatch({ type: "turn.interrupt", threadId });
+    expect(await received.promise).toEqual({ question: null, approval: "deny" });
+    const finished = await finishedFor(h.store, turnId);
+    const question = h.store.eventsAfter(0).find((event) => event.type === "question.resolved");
+    const approval = h.store.eventsAfter(0).find((event) => event.type === "approval.resolved");
+    expect(question).toMatchObject({ answers: null, requestId: "rq" });
+    expect(approval).toMatchObject({ decision: "deny", requestId: "ra" });
+    expect(question && question.seq).toBeLessThan(finished.seq);
+    expect(approval && approval.seq).toBeLessThan(finished.seq);
+    expect(() =>
+      h.dispatch({
+        type: "question.respond",
+        threadId,
+        requestId: "rq",
+        answers: { db: ["SQLite"] },
+      }),
+    ).toThrow(/already answered or dismissed/);
+    expect(h.runner.pendingRequests()).toBe(0);
+  });
+
+  it("starts a queued prompt once, and not again after a restart", async () => {
+    const home = await tempDir("queue-once");
+    const root = await tempDir("project");
+    const seeded = seededStore(home, root);
+    seeded.commit({
+      commandId: "c1",
+      events: [
+        {
+          type: "turn.started",
+          commandId: "c1",
+          threadId: "t1",
+          turnId: "u1",
+          prompt: "first",
+          provider: "demo",
+          model: "demo",
+          checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+        },
+      ],
+      effects: [],
+    });
+    seeded.appendInternal([
+      {
+        type: "turn.finished",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u1",
+        status: "completed",
+        checkpointAfter: null,
+        changedFiles: [],
+        usage: null,
+        error: null,
+      },
+    ]);
+    seeded.commit({
+      commandId: "q",
+      events: [
+        {
+          type: "queue.added",
+          commandId: "q",
+          threadId: "t1",
+          item: { id: "q1", prompt: "second", queuedAt: at },
+        },
+      ],
+      effects: [],
+    });
+    seeded.close();
+
+    const prompts: string[] = [];
+    const adapter = scripted("demo", async function* (input) {
+      prompts.push(input.prompt);
+      yield { type: "done", status: "completed", error: null };
+    });
+    const second = restart(home, createFakeGit().git, [adapter]);
+    const started = await waitForEvent(
+      second.store,
+      "turn.started",
+      (event) => event.fromQueueId === "q1",
+    );
+    await finishedFor(second.store, started.turnId);
+    expect(prompts).toEqual(["second"]);
+    await second.runner.shutdown();
+    second.store.close();
+
+    const third = restart(home, createFakeGit().git, [adapter]);
+    await third.runner.idle();
+    const queuedStarts = third.store
+      .eventsAfter(0)
+      .filter((event) => event.type === "turn.started" && event.fromQueueId === "q1");
+    expect(queuedStarts).toHaveLength(1);
+    expect(prompts).toEqual(["second"]);
+    await third.runner.shutdown();
+    third.store.close();
+  });
+
+  it("auto-advances a queue after a completed turn and holds it after failure or interrupt", async () => {
+    const release = deferred();
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* (input) {
+          if (input.prompt === "wait") await Promise.race([release.promise, aborted(input.signal)]);
+          const failed = input.prompt === "fail";
+          yield {
+            type: "done",
+            status: failed ? "failed" : input.signal.aborted ? "interrupted" : "completed",
+            error: failed ? "no" : null,
+          };
+        }),
+      ],
+    });
+    const failedId = h.createThread("full");
+    h.startTurn(failedId, "fail");
+    h.dispatch({ type: "turn.start", threadId: failedId, prompt: "later", whenBusy: "queue" });
+    await h.runner.idle();
+    expect(h.store.model.threads[failedId]?.queue).toMatchObject([{ prompt: "later" }]);
+    expect(
+      h.store.eventsAfter(0).some((event) => event.type === "turn.started" && event.fromQueueId),
+    ).toBe(false);
+
+    const heldId = h.createThread("full");
+    const held = h.startTurn(heldId, "wait");
+    h.dispatch({ type: "turn.start", threadId: heldId, prompt: "stay", whenBusy: "queue" });
+    h.dispatch({ type: "turn.interrupt", threadId: heldId });
+    expect(await finishedFor(h.store, held.turnId)).toMatchObject({ status: "interrupted" });
+    await h.runner.idle();
+    expect(h.store.model.threads[heldId]?.queue).toMatchObject([{ prompt: "stay" }]);
+
+    const threadId = h.createThread("full");
+    const waiting = h.startTurn(threadId, "wait");
+    h.dispatch({ type: "turn.start", threadId, prompt: "queued", whenBusy: "queue" });
+    const queuedId = h.store.model.threads[threadId]?.queue[0]?.id ?? "";
+    release.resolve();
+    await finishedFor(h.store, waiting.turnId);
+    const promoted = await waitForEvent(
+      h.store,
+      "turn.started",
+      (event) => event.fromQueueId === queuedId,
+    );
+    await finishedFor(h.store, promoted.turnId);
+    expect(h.store.model.threads[threadId]?.queue).toEqual([]);
+  });
+
+  it("accepts a proposed plan when the next turn runs in default mode", async () => {
+    const modes: string[] = [];
+    const h = await harness({
+      capabilities: (provider) => (provider === "demo" ? { planMode: true } : undefined),
+      adapters: [
+        scripted("demo", async function* (input) {
+          modes.push(input.interactionMode);
+          if (input.interactionMode === "plan")
+            yield { type: "plan", itemId: "plan-1", markdown: "# Ship it\n" };
+          yield { type: "done", status: "completed", error: null };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    h.dispatch({ type: "thread.configure", threadId, interactionMode: "plan" });
+    await finishedFor(h.store, h.startTurn(threadId, "Plan the work").turnId);
+    const plan = () =>
+      h.store.model.turns[threadId]
+        ?.flatMap((turn) => turn.items)
+        .find((item) => item.kind === "plan");
+    expect(plan()).toMatchObject({ id: "plan-1", status: "proposed" });
+
+    h.dispatch({ type: "thread.configure", threadId, interactionMode: "default" });
+    const started = h.startTurn(threadId, "Implement the plan above.");
+    await waitForEvent(
+      h.store,
+      "turn.itemUpserted",
+      (event) => event.item.kind === "plan" && event.item.status === "accepted",
+    );
+    expect(plan()).toMatchObject({ id: "plan-1", status: "accepted" });
+    await finishedFor(h.store, started.turnId);
+    expect(modes).toEqual(["plan", "default"]);
   });
 });
