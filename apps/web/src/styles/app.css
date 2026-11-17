@@ -104,7 +104,8 @@ dialog * {
   -webkit-app-region: no-drag;
 }
 
-.desktop-darwin .sidebar-head.desktop-traffic-inset {
+.desktop-darwin .sidebar-head.desktop-traffic-inset,
+.desktop-darwin .shell.sidebar-hidden .topbar-lead.desktop-traffic-inset {
   padding-left: 78px;
 }
 

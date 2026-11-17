@@ -94,7 +94,7 @@ export function App() {
       <div className={shellClass}>
         {sidebarOpen ? <Sidebar macDesktop={macDesktop} /> : null}
         <div className="workspace">
-          <TopBar />
+          <TopBar macDesktop={macDesktop} />
           <div className={terminalOpen ? "workspace-stack with-terminal" : "workspace-stack"}>
             <div className={bodyClass}>
               <main className="main">
@@ -113,7 +113,7 @@ export function App() {
                     </p>
                     <button
                       type="button"
-                      className="primary-button"
+                      className="button primary"
                       onClick={() => openDialog({ kind: "addProject" })}
                     >
                       Add a project folder

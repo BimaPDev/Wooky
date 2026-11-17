@@ -16,6 +16,9 @@ export function startConnection() {
     useStore.setState({ fixture: true, status: "open" });
     void fixture.call("snapshot", {}).then((model) => {
       receiveSnapshot(params.has("empty") ? emptyReadModel() : model);
+      if (params.get("sidebar") === "closed") {
+        useStore.setState({ sidebarOpen: false });
+      }
     });
     void refreshProviders();
     void loadDeviceSettings();

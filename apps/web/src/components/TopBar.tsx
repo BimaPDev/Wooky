@@ -28,7 +28,7 @@ import { InlineRename } from "./InlineRename.tsx";
 import { modelLabel, providerLabels, runtimeLabel } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
 
-export function TopBar() {
+export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
   const thread = useStore((state) =>
     state.selectedThreadId ? state.model.threads[state.selectedThreadId] : undefined,
   );
@@ -43,19 +43,24 @@ export function TopBar() {
   const hasProjects = useStore((state) => Object.keys(state.model.projects).length > 0);
   const [editing, setEditing] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const leadClass = ["topbar-lead", !sidebarOpen && macDesktop ? "desktop-traffic-inset" : null]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <header className="topbar">
-      <div className="topbar-lead">
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-          title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-          onClick={toggleSidebar}
-        >
-          <IconSidebar />
-        </button>
+      <div className={leadClass}>
+        {!sidebarOpen ? (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Show sidebar"
+            title="Show sidebar"
+            onClick={toggleSidebar}
+          >
+            <IconSidebar />
+          </button>
+        ) : null}
         <button
           type="button"
           className="icon-button"
