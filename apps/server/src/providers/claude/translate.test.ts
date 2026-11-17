@@ -104,6 +104,31 @@ describe("streaming text and thinking", () => {
     expect(items(events).at(-1)).toMatchObject({ id: "t1:m1:0", text: "Hello" });
   });
 
+  it("upserts the same item when no message_start was seen", () => {
+    const events = run([
+      init(),
+      blockStart(0, "text"),
+      textDelta(0, "Hel"),
+      assistant("m1", [text("Hello")]),
+    ]);
+    const all = items(events);
+    expect(new Set(all.map((item) => item.id)).size).toBe(1);
+    expect(all.at(-1)).toMatchObject({ kind: "message", text: "Hello" });
+  });
+
+  it("drops a late delta after the final text closed the block", () => {
+    const events = run([
+      init(),
+      messageStart("m1"),
+      blockStart(0, "text"),
+      textDelta(0, "Hel"),
+      assistant("m1", [text("Hello")]),
+      textDelta(0, " late"),
+    ]);
+    expect(events.filter((event) => event.type === "delta" && event.text === " late")).toEqual([]);
+    expect(events.at(-1)).toMatchObject({ type: "item", item: { id: "t1:m1:0", text: "Hello" } });
+  });
+
   it("creates items from final messages when nothing was streamed", () => {
     const events = run([init(), assistant("m2", [thinking("hmm"), text("done")])]);
     expect(items(events)).toEqual([
@@ -283,6 +308,20 @@ describe("result", () => {
     expectOneDoneLast(events);
   });
 
+  it("settles a still-running tool as done before a successful done", () => {
+    const events = run([
+      init(),
+      assistant("m1", [toolUse("tu1", "Bash", { command: "ls" })]),
+      resultSuccess(),
+    ]);
+    const settled = events.findIndex(
+      (event) =>
+        event.type === "item" && event.item.kind === "tool" && event.item.status === "done",
+    );
+    expect(settled).toBeGreaterThan(-1);
+    expect(settled).toBeLessThan(events.findIndex((event) => event.type === "done"));
+  });
+
   it("fails a success result flagged is_error and closes running tools", () => {
     const events = run([
       init(),
@@ -338,6 +377,21 @@ describe("finish", () => {
     const events = run([init()], { kind: "ended" });
     expect(events.at(-1)).toMatchObject({ type: "done", status: "failed" });
     expectOneDoneLast(events);
+  });
+
+  it("an ended stream prefers the sign-in sentence, then the last stderr line", () => {
+    const stderr = "warming up\nfatal: boom\n\n";
+    const plain = run([init()], { kind: "ended", stderr });
+    expect(plain.at(-1)).toEqual({ type: "done", status: "failed", error: "fatal: boom" });
+
+    const auth = run([init(), assistant("m1", [text("x")], { error: "authentication_failed" })], {
+      kind: "ended",
+      stderr,
+    });
+    expect(auth.at(-1)).toMatchObject({ error: expect.stringContaining("not signed in") });
+
+    const blank = run([init()], { kind: "ended", stderr: "  \n" });
+    expect(blank.at(-1)).toMatchObject({ error: "Claude Code stopped before finishing the turn." });
   });
 
   it("finish after a result adds nothing", () => {

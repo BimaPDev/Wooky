@@ -10,8 +10,9 @@ import type {
 
 /**
  * Hand-written SDK messages for tests. The SDK types carry dozens of fields a
- * translator never reads, so each builder fills only what the shapes need and
- * is checked against the real message type through `Pick`.
+ * translator never reads, so each builder fills only the fields the adapter
+ * reads and casts the result to the SDK type. The casts are unchecked: a renamed
+ * or removed SDK field will not fail here, only in the adapter's own typecheck.
  */
 const SESSION = "session-1";
 let counter = 0;

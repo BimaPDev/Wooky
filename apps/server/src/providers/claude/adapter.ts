@@ -52,24 +52,33 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         const version = /\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? null;
         return { ...base, installed: true, version, problem: null };
       } catch (error) {
-        const missing = (error as { code?: unknown }).code === "ENOENT";
-        const problem = missing
-          ? "Claude Code was not found on your PATH. Install it and make sure `claude` runs in a terminal."
-          : "Claude Code is installed but `claude --version` did not finish; check that it starts in a terminal.";
-        return { ...base, installed: false, version: null, problem };
+        if ((error as { code?: unknown }).code === "ENOENT") {
+          const problem =
+            "Claude Code was not found on your PATH. Install it and make sure `claude` runs in a terminal.";
+          return { ...base, installed: false, version: null, problem };
+        }
+        const problem =
+          "Claude Code is installed but `claude --version` failed or timed out; check that it starts in a terminal.";
+        return { ...base, installed: true, version: null, problem };
       }
     },
 
     async *runTurn(input: TurnInput): AsyncGenerator<ProviderEvent> {
+      if (input.signal.aborted) {
+        yield { type: "done", status: "interrupted", error: null };
+        return;
+      }
       const translator = createTranslator({ turnId: input.turnId, cwd: input.cwd });
       const abort = new AbortController();
-      const onAbort = () => abort.abort();
+      let settleAborted: (value: typeof ABORTED) => void = () => undefined;
       const aborted = new Promise<typeof ABORTED>((resolve) => {
-        if (input.signal.aborted) resolve(ABORTED);
-        else input.signal.addEventListener("abort", () => resolve(ABORTED), { once: true });
+        settleAborted = resolve;
       });
-      if (input.signal.aborted) abort.abort();
-      else input.signal.addEventListener("abort", onAbort, { once: true });
+      const onAbort = () => {
+        abort.abort();
+        settleAborted(ABORTED);
+      };
+      input.signal.addEventListener("abort", onAbort, { once: true });
 
       let stderrTail = "";
       const sdkOptions: Options = {
@@ -100,7 +109,9 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
             if (event.type === "done") finished = true;
           }
         }
-        yield* translator.finish(input.signal.aborted ? { kind: "aborted" } : { kind: "ended" });
+        yield* translator.finish(
+          input.signal.aborted ? { kind: "aborted" } : { kind: "ended", stderr: stderrTail },
+        );
       } catch (error) {
         yield* translator.finish(
           input.signal.aborted
@@ -140,18 +151,22 @@ function permissionOptions(input: TurnInput): Partial<Options> {
 
 function createPermissionHandler(input: TurnInput): CanUseTool {
   return async (toolName, toolInput, context): Promise<PermissionResult> => {
-    const request = approvalRequest(input, toolName, toolInput, context.toolUseID);
+    let onAbort: () => void = () => undefined;
     const aborted = new Promise<"abort">((resolve) => {
+      onAbort = () => resolve("abort");
       if (context.signal.aborted) resolve("abort");
-      else context.signal.addEventListener("abort", () => resolve("abort"), { once: true });
+      else context.signal.addEventListener("abort", onAbort, { once: true });
     });
     try {
+      const request = approvalRequest(input, toolName, toolInput, context.toolUseID);
       const decision = await Promise.race([input.requestApproval(request), aborted]);
       if (decision === "allow") return { behavior: "allow", updatedInput: toolInput };
       if (decision === "abort")
         return { behavior: "deny", message: "The turn was interrupted.", interrupt: true };
     } catch {
-      // An approval that cannot be asked is treated as declined.
+      // An approval that cannot be built or asked is treated as declined.
+    } finally {
+      context.signal.removeEventListener("abort", onAbort);
     }
     return { behavior: "deny", message: "The user declined this action." };
   };

@@ -1,5 +1,8 @@
 import type { ApprovalRequest, ProviderEvent } from "@age/contracts";
 import type { Options, query } from "@anthropic-ai/claude-agent-sdk";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { TurnInput } from "../types.ts";
 import { createClaudeAdapter } from "./adapter.ts";
@@ -120,14 +123,39 @@ describe("permission modes", () => {
     expect(requestApproval).not.toHaveBeenCalled();
   });
 
-  it("auto-edits accepts edits and keeps the callback for everything else", async () => {
-    const { fake, calls } = fakeQuery(simple);
+  it("auto-edits accepts edits itself and still asks for a command", async () => {
+    const requestApproval = vi.fn<TurnInput["requestApproval"]>(async () => "allow");
+    const results: unknown[] = [];
+    const { fake, calls } = fakeQuery(async function* (params) {
+      yield init();
+      const context = { signal: new AbortController().signal, requestId: "r" };
+      // acceptEdits makes the SDK approve edits itself, so only other tools reach the callback.
+      const asked: [string, Record<string, unknown>][] = [
+        ["Bash", { command: "pnpm test" }],
+        ["Edit", { file_path: "/work/a.ts", old_string: "a", new_string: "b" }],
+      ].filter(([tool]) => params.options?.permissionMode !== "acceptEdits" || tool !== "Edit") as [
+        string,
+        Record<string, unknown>,
+      ][];
+      for (const [tool, toolInput] of asked) {
+        results.push(
+          await params.options?.canUseTool?.(tool, toolInput, { ...context, toolUseID: tool }),
+        );
+      }
+      yield resultSuccess();
+    });
     await collect(
-      createClaudeAdapter({ query: fake }).runTurn(turnInput({ runtimeMode: "auto-edits" })),
+      createClaudeAdapter({ query: fake }).runTurn(
+        turnInput({ runtimeMode: "auto-edits", requestApproval }),
+      ),
     );
-    const options = calls[0]?.options as Options;
-    expect(options.permissionMode).toBe("acceptEdits");
-    expect(options.canUseTool).toBeTypeOf("function");
+    expect(calls[0]?.options).toMatchObject({ permissionMode: "acceptEdits" });
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(requestApproval.mock.calls[0]?.[0]).toMatchObject({
+      tool: "command",
+      detail: "pnpm test",
+    });
+    expect(results).toEqual([{ behavior: "allow", updatedInput: { command: "pnpm test" } }]);
   });
 
   async function askPermission(
@@ -211,6 +239,26 @@ describe("permission modes", () => {
     expect(diff.endsWith("… diff truncated")).toBe(true);
   });
 
+  it("fails closed when the approval request cannot be built", async () => {
+    const requestApproval = vi.fn<TurnInput["requestApproval"]>(async () => "allow");
+    let result: unknown;
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      result = await params.options?.canUseTool?.(
+        "Mystery",
+        { size: 10n },
+        { signal: new AbortController().signal, toolUseID: "tu1", requestId: "r1" },
+      );
+      yield resultSuccess();
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(turnInput({ requestApproval })),
+    );
+    expect(result).toEqual({ behavior: "deny", message: "The user declined this action." });
+    expect(requestApproval).not.toHaveBeenCalled();
+    expectOneDoneLast(events);
+  });
+
   it("treats a failing approval as declined", async () => {
     let result: unknown;
     const { fake } = fakeQuery(async function* (params) {
@@ -262,7 +310,7 @@ describe("abort and failure", () => {
 
   it("abort still ends the turn when the SDK never responds", async () => {
     const controller = new AbortController();
-    const { fake } = fakeQuery(async function* () {
+    const { fake, close } = fakeQuery(async function* () {
       yield init();
       await new Promise<never>(() => undefined);
     });
@@ -274,12 +322,13 @@ describe("abort and failure", () => {
     );
     expect(events.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
     expectOneDoneLast(events);
+    expect(close).toHaveBeenCalled();
   });
 
   it("an already aborted signal interrupts without waiting", async () => {
     const controller = new AbortController();
     controller.abort();
-    const { fake } = fakeQuery(async function* () {
+    const { fake, calls } = fakeQuery(async function* () {
       await new Promise<never>(() => undefined);
       yield init();
     });
@@ -287,6 +336,28 @@ describe("abort and failure", () => {
       createClaudeAdapter({ query: fake }).runTurn(turnInput({ signal: controller.signal })),
     );
     expect(events).toEqual([{ type: "done", status: "interrupted", error: null }]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("removes every abort listener it added once the turn is over", async () => {
+    const signal = new AbortController().signal;
+    const live = new Set<unknown>();
+    const add = signal.addEventListener.bind(signal);
+    const remove = signal.removeEventListener.bind(signal);
+    signal.addEventListener = (...args: Parameters<AbortSignal["addEventListener"]>) => {
+      live.add(args[1]);
+      add(...args);
+    };
+    signal.removeEventListener = (...args: Parameters<AbortSignal["removeEventListener"]>) => {
+      live.delete(args[1]);
+      remove(...args);
+    };
+    const { fake } = fakeQuery(simple);
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(turnInput({ signal })),
+    );
+    expect(events.at(-1)).toMatchObject({ status: "completed" });
+    expect(live.size).toBe(0);
   });
 
   it("an iterator that throws yields done failed", async () => {
@@ -320,6 +391,19 @@ describe("abort and failure", () => {
     expect(events.at(-1)).toMatchObject({ type: "done", status: "failed" });
     expectOneDoneLast(events);
   });
+
+  it("a stream that ends without a result reports the last stderr line", async () => {
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      params.options?.stderr?.("starting\nError: credit balance too low\n\n");
+    });
+    const events = await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput()));
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      status: "failed",
+      error: "Error: credit balance too low",
+    });
+  });
 });
 
 describe("probe", () => {
@@ -335,6 +419,16 @@ describe("probe", () => {
     });
     expect(status.problem).toMatch(/not found/i);
     expect(status.models.map((model) => model.id)).toContain("default");
+  });
+
+  it("still reports installed when --version exits non-zero", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "age-claude-probe-"));
+    const bin = join(dir, "claude");
+    await writeFile(bin, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    const status = await createClaudeAdapter({ claudeBin: bin }).probe();
+    expect(status).toMatchObject({ installed: true, version: null });
+    expect(status.problem).toMatch(/installed/i);
+    expect(status.problem).not.toMatch(/not found/i);
   });
 
   it("reads the version from a working executable", async () => {

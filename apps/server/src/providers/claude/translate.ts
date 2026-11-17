@@ -6,13 +6,13 @@ import type {
   SDKUserMessage,
   SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { truncateBytes } from "./text.ts";
+import { clip, truncateBytes } from "./text.ts";
 import { describeTool } from "./tools.ts";
 
 const OUTPUT_MAX_BYTES = 4 * 1024;
 
 export type FinishReason =
-  { kind: "aborted" } | { kind: "error"; error: unknown } | { kind: "ended" };
+  { kind: "aborted" } | { kind: "error"; error: unknown } | { kind: "ended"; stderr?: string };
 
 export interface Translator {
   push(message: SDKMessage): ProviderEvent[];
@@ -35,6 +35,7 @@ interface StreamBlock {
   kind: TextKind;
   id: string;
   started: boolean;
+  /** The final text arrived; later deltas for this block are dropped. */
   consumed: boolean;
 }
 
@@ -69,14 +70,15 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
   const textItem = (kind: TextKind, id: string, text: string): TimelineItem =>
     kind === "message" ? { kind, id, role: "assistant", text } : { kind, id, text };
 
-  function register(messageId: string, index: number, kind: TextKind): StreamBlock {
+  function register(messageId: string, index: number, kind: TextKind, opened = false): StreamBlock {
     const state = stateFor(messageId);
     const known = state.blocks.find((block) => block.index === index);
-    if (known) return known;
+    if (known && !(opened && known.consumed)) return known;
+    const generation = state.blocks.filter((block) => block.index === index).length;
     const block: StreamBlock = {
       index,
       kind,
-      id: `${turnId}:${messageId}:${index}`,
+      id: `${turnId}:${messageId}:${index}${generation > 0 ? `.${generation}` : ""}`,
       started: false,
       consumed: false,
     };
@@ -91,8 +93,8 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
       streamMessageId = event.message.id;
     } else if (event.type === "content_block_start") {
       const type = event.content_block.type;
-      if (type === "text") register(streamMessageId, event.index, "message");
-      else if (type === "thinking") register(streamMessageId, event.index, "reasoning");
+      if (type === "text") register(streamMessageId, event.index, "message", true);
+      else if (type === "thinking") register(streamMessageId, event.index, "reasoning", true);
     } else if (event.type === "content_block_delta") {
       const delta = event.delta;
       const [kind, text] =
@@ -103,6 +105,7 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
             : ([null, ""] as const);
       if (!kind || text === "") return;
       const block = register(streamMessageId, event.index, kind);
+      if (block.consumed) return;
       if (!block.started) {
         block.started = true;
         out.push({ type: "item", item: textItem(kind, block.id, "") });
@@ -113,7 +116,9 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
 
   function upsertFinalText(messageId: string, kind: TextKind, text: string, out: ProviderEvent[]) {
     const state = stateFor(messageId);
-    const streamed = state.blocks.find((block) => !block.consumed && block.kind === kind);
+    const open = (block: StreamBlock) => !block.consumed && block.started && block.kind === kind;
+    const streamed =
+      state.blocks.find(open) ?? [...messages.values()].flatMap((other) => other.blocks).find(open);
     const ordinal = state.finals++;
     if (streamed) streamed.consumed = true;
     if (text === "") return;
@@ -171,10 +176,10 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
     }
   }
 
-  function closeRunningTools(out: ProviderEvent[]) {
+  function settleRunningTools(status: "done" | "failed", out: ProviderEvent[]) {
     for (const [id, item] of tools) {
       if (item.status !== "running") continue;
-      const closed: ToolItem = { ...item, status: "failed" };
+      const closed: ToolItem = { ...item, status };
       tools.set(id, closed);
       out.push({ type: "item", item: closed });
     }
@@ -192,8 +197,11 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
 
   function result(message: SDKResultMessage, out: ProviderEvent[]): ProviderEvent[] {
     out.push({ type: "usage", usage: usageOf(message) });
-    if (message.subtype === "success" && !message.is_error) return done("completed", null, out);
-    closeRunningTools(out);
+    if (message.subtype === "success" && !message.is_error) {
+      settleRunningTools("done", out);
+      return done("completed", null, out);
+    }
+    settleRunningTools("failed", out);
     return done("failed", resultError(message, authFailed), out);
   }
 
@@ -227,10 +235,22 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
     finish(reason) {
       if (finished) return [];
       const out: ProviderEvent[] = [];
-      closeRunningTools(out);
+      settleRunningTools("failed", out);
       if (reason.kind === "aborted") return done("interrupted", null, out);
       if (reason.kind === "error") return done("failed", errorText(reason.error), out);
-      return done("failed", "Claude Code stopped before finishing the turn.", out);
+      const lastLine = reason.stderr
+        ?.split("\n")
+        .map((line) => line.trim())
+        .findLast((line) => line !== "");
+      return done(
+        "failed",
+        authFailed
+          ? NOT_SIGNED_IN
+          : lastLine
+            ? clip(lastLine, 300)
+            : "Claude Code stopped before finishing the turn.",
+        out,
+      );
     },
   };
 }
