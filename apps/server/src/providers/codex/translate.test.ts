@@ -395,6 +395,28 @@ describe("createCodexTranslator", () => {
       expect(t.getCumulativeUsage()).toEqual(tokens(60, 20, 10));
     });
 
+    it("carries usage emitted before a mid-turn counter reset into the turn's total", () => {
+      const t = createCodexTranslator({ usageBaseline: tokens(900, 90), resumed: true });
+      t.beginTurn();
+      expect(
+        t.translateNotification(
+          ...usageNotification({ total: tokens(1000, 100), last: tokens(100, 10) }),
+        ),
+      ).toEqual([{ type: "usage", usage: { inputTokens: 100, outputTokens: 10 } }]);
+      // The counter resets: 100 input was already counted, 50 more arrived after.
+      expect(
+        t.translateNotification(
+          ...usageNotification({ total: tokens(50, 5), last: tokens(50, 5) }),
+        ),
+      ).toEqual([{ type: "usage", usage: { inputTokens: 150, outputTokens: 15 } }]);
+      expect(
+        t.translateNotification(
+          ...usageNotification({ total: tokens(80, 8), last: tokens(30, 3) }),
+        ),
+      ).toEqual([{ type: "usage", usage: { inputTokens: 180, outputTokens: 18 } }]);
+      expect(t.getCumulativeUsage()).toEqual(tokens(80, 8));
+    });
+
     it("re-baselines to zero when the total drops and no last is present", () => {
       const t = createCodexTranslator({ usageBaseline: tokens(500, 200), resumed: true });
       t.beginTurn();

@@ -18,13 +18,6 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-/** Waits (polling the event loop, no sleep) until the given pid no longer exists. */
-async function waitForPidToExit(pid: number): Promise<void> {
-  while (isPidAlive(pid)) {
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-}
-
 function readLoggedFrames(logPath: string): Array<Record<string, unknown>> {
   const raw = readFileSync(logPath, "utf8").trim();
   if (!raw) return [];
@@ -538,7 +531,7 @@ describe("createCodexAdapter", () => {
 
     const gcPid = Number(readFileSync(gcPidFile, "utf8").trim());
     expect(Number.isInteger(gcPid)).toBe(true);
-    await waitForPidToExit(gcPid);
+    // The turn's final event is pushed only after the client has torn the group down.
     expect(isPidAlive(gcPid)).toBe(false);
   });
 

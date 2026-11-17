@@ -291,6 +291,10 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
   let turnStarted = false;
   let latestCumulativeUsage: UsageTotals | null = null;
   let accumulatedLastUsage: UsageTotals | null = null;
+  // Usage already emitted for this turn from counters that have since been reset. The
+  // runner keeps only the latest usage event, so it must carry the whole turn.
+  let carriedUsage: UsageTotals | null = null;
+  let lastEmittedUsage: UsageTotals | null = null;
 
   const seenMessageIds = new Set<string>();
   const messageTexts = new Map<string, string>();
@@ -669,10 +673,15 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
             usageBaseline = last ? subtractUsage(total, last) : total;
             usageNeedsSeed = false;
           } else if (usageBaseline && isBelowBaseline(total, usageBaseline)) {
+            // The counter restarted mid-turn: keep what this turn already reported.
+            carriedUsage = lastEmittedUsage;
             usageBaseline = last ? subtractUsage(total, last) : null;
           }
           latestCumulativeUsage = total;
-          return [{ type: "usage", usage: deltaUsage(total, usageBaseline) }];
+          const delta = deltaUsage(total, usageBaseline);
+          const emitted = carriedUsage ? addUsage(carriedUsage, delta) : delta;
+          lastEmittedUsage = emitted;
+          return [{ type: "usage", usage: emitted }];
         }
 
         if (last) {

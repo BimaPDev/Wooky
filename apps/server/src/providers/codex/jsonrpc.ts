@@ -9,7 +9,23 @@ const SIGKILL_GRACE_MS = 3_000;
 // can inherit them) before we destroy them so the close event still fires.
 const STDIO_CLOSE_GRACE_MS = 250;
 const GROUP_POLL_MS = 20;
+// Polls allowed after SIGKILL before we stop waiting for an unreaped group member.
 const GROUP_POLL_ATTEMPTS = 100;
+
+// One `exit` listener serves every live client, so many concurrent clients never
+// trip MaxListenersExceededWarning. It is installed while any client is live.
+const liveExitGuards = new Set<() => void>();
+function killLiveGroupsOnExit(): void {
+  for (const guard of liveExitGuards) guard();
+}
+function trackExitGuard(guard: () => void): void {
+  if (liveExitGuards.size === 0) process.on("exit", killLiveGroupsOnExit);
+  liveExitGuards.add(guard);
+}
+function untrackExitGuard(guard: () => void): void {
+  if (!liveExitGuards.delete(guard)) return;
+  if (liveExitGuards.size === 0) process.off("exit", killLiveGroupsOnExit);
+}
 // Largest single JSONL line we will buffer from the app-server's stdout, measured
 // in UTF-16 code units. A line longer than this is dropped (we resync at the next
 // newline) so a runaway or hostile stream cannot grow the read buffer without bound.
@@ -95,7 +111,10 @@ export class JsonRpcClient {
   private readonly stdioGraceMs: number;
   private processAlive = true;
   private closing = false;
+  // Polls the group during teardown. Kept ref'd on purpose: if nothing else holds the
+  // event loop open, a pending close() must still reach SIGKILL and resolve.
   private killTimer: ReturnType<typeof setTimeout> | null = null;
+  private watchingGroup = false;
   private exitInfo: ProcessExitInfo | null = null;
   // The group outlives the app-server whenever a grandchild is still running, so
   // its liveness is tracked apart from the child's own exit.
@@ -139,7 +158,7 @@ export class JsonRpcClient {
     });
     this.pid = this.child.pid;
     if (typeof this.pid === "number") {
-      process.on("exit", this.exitGuard);
+      trackExitGuard(this.exitGuard);
     } else {
       this.markGroupGone();
     }
@@ -388,7 +407,7 @@ export class JsonRpcClient {
     }
 
     this.signalGroup("SIGTERM");
-    this.armKillTimer();
+    this.watchGroup();
 
     const [info] = await Promise.all([this.closed, this.groupGonePromise]);
     return info;
@@ -423,7 +442,7 @@ export class JsonRpcClient {
     if (this.groupGone) return;
     this.groupGone = true;
     this.clearKillTimer();
-    process.off("exit", this.exitGuard);
+    untrackExitGuard(this.exitGuard);
     this.resolveGroupGone();
   }
 
@@ -440,28 +459,38 @@ export class JsonRpcClient {
     }
   }
 
-  // Escalate to SIGKILL unless the whole group is gone within the grace window.
-  // The timer is cleared only when the group is gone, not when the child exits.
-  private armKillTimer(): void {
-    if (this.killTimer !== null || !this.refreshGroup()) return;
-    this.killTimer = setTimeout(() => {
+  // After SIGTERM, poll the group so teardown ends as soon as it is gone, and escalate
+  // to SIGKILL only if something is still running when the grace runs out. A
+  // grandchild that outlives the app-server by a few ms must not cost the full grace.
+  private watchGroup(): void {
+    if (this.watchingGroup || !this.refreshGroup()) return;
+    this.watchingGroup = true;
+    const deadline = performance.now() + this.killGraceMs;
+    let killed = false;
+    let killedPolls = 0;
+    const tick = (): void => {
       this.killTimer = null;
       if (!this.refreshGroup()) return;
-      this.signalGroup("SIGKILL");
-      this.pollGroupGone(0);
-    }, this.killGraceMs);
-    this.killTimer.unref();
-  }
-
-  private pollGroupGone(attempt: number): void {
-    if (!this.refreshGroup()) return;
-    if (attempt >= GROUP_POLL_ATTEMPTS) {
-      // A SIGKILLed member that is not reaped must not hang teardown forever.
-      this.markGroupGone();
-      return;
-    }
-    const timer = setTimeout(() => this.pollGroupGone(attempt + 1), GROUP_POLL_MS);
-    timer.unref();
+      let delay = GROUP_POLL_MS;
+      if (!killed) {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) {
+          killed = true;
+          this.signalGroup("SIGKILL");
+        } else {
+          delay = Math.min(GROUP_POLL_MS, remaining);
+        }
+      } else {
+        killedPolls += 1;
+        if (killedPolls > GROUP_POLL_ATTEMPTS) {
+          // A SIGKILLed member that is not reaped must not hang teardown forever.
+          this.markGroupGone();
+          return;
+        }
+      }
+      this.killTimer = setTimeout(tick, delay);
+    };
+    this.killTimer = setTimeout(tick, Math.min(GROUP_POLL_MS, this.killGraceMs));
   }
 
   private async cancelPendingServerRequests(): Promise<void> {

@@ -25,16 +25,6 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-/** Polls the event loop (no sleep) until the pid is gone or the deadline passes. */
-async function waitForPidToExit(pid: number, timeoutMs = 8_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (isPidAlive(pid)) {
-    if (Date.now() > deadline) return false;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  return true;
-}
-
 function readLoggedFrames(logPath: string): Array<Record<string, unknown>> {
   const raw = readFileSync(logPath, "utf8").trim();
   if (!raw) return [];
@@ -49,16 +39,26 @@ const STUBBORN_GRANDCHILD = [
   "setInterval(() => {}, 1 << 30);",
 ].join("\n");
 
+// A grandchild that shuts down about 30 ms after SIGTERM, like a tool finishing its cleanup.
+const GRACEFUL_GRANDCHILD = [
+  'process.on("SIGTERM", () => { setTimeout(() => process.exit(0), 30); });',
+  'process.stdout.write(JSON.stringify({ method: "grandchild", params: { pid: process.pid } }) + "\\n");',
+  "setInterval(() => {}, 1 << 30);",
+].join("\n");
+
 /**
- * Stand-in app-server that starts a SIGTERM-ignoring grandchild.
+ * Stand-in app-server that starts a grandchild (SIGTERM-ignoring unless noted).
  * - "quiet": the grandchild's stdio is not shared with us; we idle until signalled.
  * - "shared-stdio": the grandchild inherits our stdout/stderr and so holds them open.
  * - "exit-early": like quiet, but we exit by ourselves once the grandchild is up.
+ * - "graceful": like quiet, but the grandchild exits ~30 ms after SIGTERM.
  */
-function appServerWithGrandchild(mode: "quiet" | "shared-stdio" | "exit-early"): string[] {
+function appServerWithGrandchild(
+  mode: "quiet" | "shared-stdio" | "exit-early" | "graceful",
+): string[] {
   const script = [
     'const { spawn } = require("node:child_process");',
-    `const gcSource = ${JSON.stringify(STUBBORN_GRANDCHILD)};`,
+    `const gcSource = ${JSON.stringify(mode === "graceful" ? GRACEFUL_GRANDCHILD : STUBBORN_GRANDCHILD)};`,
     `const mode = ${JSON.stringify(mode)};`,
     'if (mode === "shared-stdio") {',
     '  spawn(process.execPath, ["-e", gcSource], { stdio: "inherit" });',
@@ -214,7 +214,10 @@ describe("JsonRpcClient", () => {
   }, 30_000);
 
   describe("process-group teardown", () => {
-    function startStubbornClient(mode: "quiet" | "shared-stdio" | "exit-early") {
+    function startStubbornClient(
+      mode: "quiet" | "shared-stdio" | "exit-early" | "graceful",
+      grace: "short" | "default" = "short",
+    ) {
       let resolvePid: ((pid: number) => void) | undefined;
       const grandchildPid = new Promise<number>((resolve) => {
         resolvePid = resolve;
@@ -223,7 +226,8 @@ describe("JsonRpcClient", () => {
         bin: process.execPath,
         args: appServerWithGrandchild(mode),
         cwd: workDir,
-        killGraceMs: 100,
+        // "default" leaves killGraceMs unset so the client's own 3 s default applies.
+        ...(grace === "short" ? { killGraceMs: 100 } : {}),
         stdioGraceMs: 50,
         onNotification: (n) => {
           if (n.method === "grandchild") {
@@ -240,7 +244,8 @@ describe("JsonRpcClient", () => {
       const gcPid = await grandchildPid;
       try {
         await client.close();
-        expect(await waitForPidToExit(gcPid)).toBe(true);
+        // close() resolves only once the whole group is gone.
+        expect(isPidAlive(gcPid)).toBe(false);
       } finally {
         if (isPidAlive(gcPid)) process.kill(gcPid, "SIGKILL");
       }
@@ -251,7 +256,8 @@ describe("JsonRpcClient", () => {
       const gcPid = await grandchildPid;
       try {
         await client.close();
-        expect(await waitForPidToExit(gcPid)).toBe(true);
+        // close() resolves only once the whole group is gone.
+        expect(isPidAlive(gcPid)).toBe(false);
       } finally {
         if (isPidAlive(gcPid)) process.kill(gcPid, "SIGKILL");
       }
@@ -264,10 +270,58 @@ describe("JsonRpcClient", () => {
         await client.closed;
         expect(isPidAlive(gcPid)).toBe(true);
         await client.close();
-        expect(await waitForPidToExit(gcPid)).toBe(true);
+        // close() resolves only once the whole group is gone.
+        expect(isPidAlive(gcPid)).toBe(false);
       } finally {
         if (isPidAlive(gcPid)) process.kill(gcPid, "SIGKILL");
       }
+    }, 20_000);
+
+    it("resolves close() promptly when the group dies just after the app-server, at the default grace", async () => {
+      const { client, grandchildPid } = startStubbornClient("graceful", "default");
+      const gcPid = await grandchildPid;
+      try {
+        const startedAt = performance.now();
+        await client.close();
+        const elapsedMs = performance.now() - startedAt;
+        expect(isPidAlive(gcPid)).toBe(false);
+        // The default grace is 3 s; a group that exits by itself must not wait it out.
+        expect(elapsedMs).toBeLessThan(1_000);
+      } finally {
+        if (isPidAlive(gcPid)) process.kill(gcPid, "SIGKILL");
+      }
+    }, 20_000);
+
+    it("lets a process whose only live work is close() finish with exit code 0", async () => {
+      const script = [
+        `import { JsonRpcClient } from ${JSON.stringify(jsonRpcModulePath)};`,
+        "let announced;",
+        "const up = new Promise((resolve) => { announced = resolve; });",
+        "const client = new JsonRpcClient({",
+        "  bin: process.execPath,",
+        `  args: ${JSON.stringify(appServerWithGrandchild("quiet"))},`,
+        "  cwd: process.cwd(),",
+        "  killGraceMs: 200,",
+        "  onNotification: (n) => { if (n.method === 'grandchild') announced(); },",
+        "  onServerRequest: async () => ({}),",
+        "});",
+        "await up;",
+        "await client.close();",
+        'process.stdout.write("closed");',
+      ].join("\n");
+
+      const host = spawn(process.execPath, ["--input-type=module", "-e", script], {
+        cwd: workDir,
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      let output = "";
+      host.stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString("utf8");
+      });
+      const code = await new Promise<number | null>((resolve) => host.on("close", resolve));
+      // Without ref'd teardown timers node exits 13 (unsettled top-level await).
+      expect(code).toBe(0);
+      expect(output).toBe("closed");
     }, 20_000);
   });
 
@@ -286,8 +340,31 @@ describe("JsonRpcClient", () => {
       expect(process.listenerCount("exit")).toBe(before);
     });
 
+    it("shares one exit listener across many live clients and removes it when they close", async () => {
+      const before = process.listenerCount("exit");
+      const clients = Array.from(
+        { length: 12 },
+        () =>
+          new JsonRpcClient({
+            bin: process.execPath,
+            args: [fakeServerPath],
+            cwd: workDir,
+            onNotification: () => {},
+            onServerRequest: async () => ({}),
+          }),
+      );
+      expect(process.listenerCount("exit") - before).toBeLessThanOrEqual(1);
+      await Promise.all(clients.map((client) => client.close()));
+      expect(process.listenerCount("exit")).toBe(before);
+    });
+
     it("kills the app-server's group when the Wooky process exits without closing the client", async () => {
+      // The host's exit listener is registered after the client's guard, so it runs
+      // once the guard has signalled the group. It then waits (Atomics.wait, bounded,
+      // not a spin) for the group to disappear and reports what it saw before it dies.
       const script = [
+        'import { spawnSync } from "node:child_process";',
+        'import { writeSync } from "node:fs";',
         `import { JsonRpcClient } from ${JSON.stringify(jsonRpcModulePath)};`,
         "const client = new JsonRpcClient({",
         "  bin: process.execPath,",
@@ -296,7 +373,22 @@ describe("JsonRpcClient", () => {
         "  onNotification: () => {},",
         "  onServerRequest: async () => ({}),",
         "});",
-        "process.stdout.write(String(client.pid), () => process.exit(0));",
+        "const pid = client.pid;",
+        "const groupAlive = () => {",
+        "  try { process.kill(-pid, 0); } catch { return false; }",
+        // A killed child stays a zombie until this host reaps it; count that as gone.
+        '  const ps = spawnSync("ps", ["-o", "stat=", "-g", String(pid)], { encoding: "utf8" });',
+        '  const states = ps.stdout.split("\\n").filter((line) => line.trim().length > 0);',
+        '  return !states.every((state) => state.trim().startsWith("Z"));',
+        "};",
+        'process.on("exit", () => {',
+        "  const deadline = Date.now() + 5000;",
+        "  while (groupAlive() && Date.now() < deadline) {",
+        "    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);",
+        "  }",
+        "  writeSync(1, JSON.stringify({ pid, groupGone: !groupAlive() }));",
+        "});",
+        "process.exit(0);",
       ].join("\n");
 
       const host = spawn(process.execPath, ["--input-type=module", "-e", script], {
@@ -309,12 +401,12 @@ describe("JsonRpcClient", () => {
       });
       await new Promise<void>((resolve) => host.on("close", () => resolve()));
 
-      const appServerPid = Number(output.trim());
-      expect(Number.isInteger(appServerPid)).toBe(true);
+      const report = JSON.parse(output) as { pid: number; groupGone: boolean };
       try {
-        expect(await waitForPidToExit(appServerPid)).toBe(true);
+        expect(Number.isInteger(report.pid)).toBe(true);
+        expect(report.groupGone).toBe(true);
       } finally {
-        if (isPidAlive(appServerPid)) process.kill(appServerPid, "SIGKILL");
+        if (isPidAlive(report.pid)) process.kill(report.pid, "SIGKILL");
       }
     }, 20_000);
   });
