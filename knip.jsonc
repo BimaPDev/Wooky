@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": { "entry": ["scripts/*.mjs"] },
+    "packages/*": { "entry": ["src/index.ts"] },
+    "apps/server": { "entry": ["src/bin.ts"] },
+    "apps/web": { "entry": ["src/main.tsx", "index.html"] },
+    "apps/desktop": { "entry": ["src/main.ts", "src/preload.ts"] },
+  },
+  "ignoreExportsUsedInFile": true,
+}

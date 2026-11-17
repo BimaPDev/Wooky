@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "import", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "warn",
+    "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "warn",
+    "import/no-cycle": "error"
+  },
+  "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/out/**", "**/release/**"]
+}

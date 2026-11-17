@@ -1,0 +1,17 @@
+node_modules/
+dist/
+out/
+release/
+coverage/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+!.env.example
+# local runtime state (never commit)
+.age/
+.age-dev/
+# screenshots / QA evidence stay local
+.evidence/
+# head-chef scratch
+.kitchen/

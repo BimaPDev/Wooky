@@ -1,0 +1,37 @@
+{
+  "name": "age",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "pnpm -r --filter ./packages/** --filter ./apps/** run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "oxlint --deny-warnings .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "boundaries": "node scripts/check-boundaries.mjs",
+    "knip": "knip",
+    "check": "node scripts/check.mjs",
+    "check:fast": "node scripts/check.mjs --fast",
+    "prepare": "git config core.hooksPath .githooks || true"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "knip": "^6.45.1",
+    "oxlint": "^1.94.0",
+    "prettier": "^3.10.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  }
+}
