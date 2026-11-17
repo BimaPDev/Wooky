@@ -6,6 +6,7 @@ import {
   shell,
   type MenuItemConstructorOptions,
 } from "electron";
+// age-allow child-process: the shell owns exactly one child, the AGE server.
 import { spawn, type ChildProcess } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -83,12 +84,16 @@ function createWindow(): void {
     if (decideNavigation(url, currentOrigin()) === "external") void shell.openExternal(url);
     return { action: "deny" };
   });
-  win.webContents.on("will-navigate", (event, url) => {
+  // Police every way the page can change: links, server redirects and subframes.
+  const police = (event: { preventDefault(): void }, url: string) => {
     const decision = decideNavigation(url, currentOrigin());
     if (decision === "allow") return;
     event.preventDefault();
     if (decision === "external") void shell.openExternal(url);
-  });
+  };
+  win.webContents.on("will-navigate", (event, url) => police(event, url));
+  win.webContents.on("will-redirect", (event, url) => police(event, url));
+  win.webContents.on("will-frame-navigate", (event) => police(event, event.url));
 
   loadPage(win);
 }
@@ -158,6 +163,9 @@ async function startup(): Promise<void> {
     setPage({ kind: "server", url });
   } catch (error) {
     console.error("AGE server failed to start", error);
+    // Never leave a half-started server holding the port.
+    if (server === child) server = undefined;
+    void stopServer(child);
     setPage({
       kind: "error",
       title: "AGE could not start its server",

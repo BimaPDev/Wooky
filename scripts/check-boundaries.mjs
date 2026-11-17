@@ -89,18 +89,20 @@ for (const file of files) {
     const line = i + 1;
     const allow = (id) => (lines[i - 1] ?? "").includes(`age-allow ${id}`);
 
-    // Complexity lives at the adapter boundary: only adapters, git and terminal spawn processes.
+    // Complexity lives at the adapter boundary: only adapters, git, terminal and the
+    // desktop shell (which owns the server child) spawn processes.
+    const relPosix = rel.split(sep).join("/");
     if (
-      rel.startsWith(`apps${sep}server${sep}`) &&
+      (relPosix.startsWith("apps/server/") || relPosix.startsWith("apps/desktop/")) &&
       /from\s+["'](node:)?child_process["']/.test(content) &&
-      !/apps\/server\/src\/(providers|git|terminal|process)\//.test(rel.split(sep).join("/")) &&
+      !/^apps\/server\/src\/(providers|git|terminal|process)\//.test(relPosix) &&
       !allow("child-process")
     ) {
       report(
         file,
         line,
         "spawn-boundary",
-        "child_process only in providers/, git/, terminal/, process/",
+        "child_process only in server providers/, git/, terminal/, process/ (else age-allow)",
       );
     }
 

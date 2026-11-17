@@ -101,6 +101,8 @@ function start(name, args, env, onLine) {
   return entry;
 }
 
+// A fixed port (not --port 0) because `tsx watch` restarts the server on every save
+// and the web proxy must keep finding it. The probe-then-bind race is accepted.
 function freePort() {
   return new Promise((resolve, reject) => {
     const probe = createServer();
@@ -117,8 +119,8 @@ function startWeb(port) {
 }
 
 async function main() {
-  process.on("SIGINT", () => shutdown(0, "stopping AGE"));
-  process.on("SIGTERM", () => shutdown(0, "stopping AGE"));
+  process.on("SIGINT", () => shutdown(130, "stopping AGE"));
+  process.on("SIGTERM", () => shutdown(143, "stopping AGE"));
 
   if (webOnly) {
     startWeb(Number(process.env.AGE_PORT) || DEFAULT_PORT);
