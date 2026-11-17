@@ -103,9 +103,104 @@ describe("CursorTranslator", () => {
 
   it("finish emits done when stream ends without result", () => {
     const t = new CursorTranslator("turn-finish", "/workspace");
-    const tail = t.finish(0, null, false);
+    const tail = t.finish(0, null, null, false);
     expect(tail).toHaveLength(1);
     expect(tail).toEqual([{ type: "done", status: "completed", error: null }]);
+  });
+
+  it("finish does not report completed when exit code and signal are both null", () => {
+    const t = new CursorTranslator("turn-null-exit", "/workspace");
+    expect(t.finish(null, null, null, false)).toEqual([
+      { type: "done", status: "failed", error: "Process exited unexpectedly" },
+    ]);
+  });
+
+  it("finish reports failed when the process died on a signal", () => {
+    const t = new CursorTranslator("turn-signal", "/workspace");
+    expect(t.finish(null, "SIGKILL", null, false)).toEqual([
+      { type: "done", status: "failed", error: "Process exited on signal SIGKILL" },
+    ]);
+  });
+
+  it("appends non-extending stamp-less assistant chunks as deltas", () => {
+    const t = new CursorTranslator("turn-segment", "/workspace");
+    const events: ProviderEvent[] = [];
+    events.push(
+      ...t.translate({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "hello" }] },
+      }),
+    );
+    events.push(
+      ...t.translate({
+        type: "assistant",
+        message: { content: [{ type: "text", text: " world" }] },
+      }),
+    );
+    const deltas = events.filter((e) => e.type === "delta");
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]?.type === "delta" && deltas[0].text).toBe(" world");
+  });
+
+  it("starts a new message segment when assistant follows reasoning", () => {
+    const t = new CursorTranslator("turn-order", "/workspace");
+    const events: ProviderEvent[] = [];
+    events.push(
+      ...t.translate({
+        type: "thinking",
+        subtype: "delta",
+        text: "think",
+      }),
+    );
+    events.push(
+      ...t.translate({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "answer" }] },
+      }),
+    );
+    events.push(
+      ...t.translate({
+        type: "thinking",
+        subtype: "delta",
+        text: "more",
+      }),
+    );
+    const itemKinds = events.filter((e) => e.type === "item").map((e) => e.item.kind);
+    expect(itemKinds).toEqual(["reasoning", "message", "reasoning"]);
+  });
+
+  it("caps tool output previews at 4 KB in UTF-8 bytes on code-point boundaries", () => {
+    const turn = "turn-preview";
+    const t = new CursorTranslator(turn, "/workspace");
+    const big = "€".repeat(2_100);
+    const events = t.translate({
+      type: "tool_call",
+      subtype: "started",
+      call_id: "preview-call",
+      tool_call: { shellToolCall: { args: { command: "x" } } },
+    });
+    expect(events).toHaveLength(1);
+    const callId = "preview-call";
+    const done = t.translate({
+      type: "tool_call",
+      subtype: "completed",
+      call_id: callId,
+      tool_call: {
+        shellToolCall: {
+          result: {
+            success: { exitCode: 0, interleavedOutput: big },
+          },
+        },
+      },
+    });
+    const tool = done.find((e) => e.type === "item" && e.item.kind === "tool");
+    expect(
+      tool?.type === "item" && tool.item.kind === "tool" && tool.item.output?.endsWith("…"),
+    ).toBe(true);
+    const bytes = new TextEncoder().encode(
+      tool?.type === "item" && tool.item.kind === "tool" ? (tool.item.output ?? "") : "",
+    ).length;
+    expect(bytes).toBeLessThanOrEqual(4 * 1024);
   });
 });
 

@@ -21,4 +21,8 @@ describe("workspaceRelative", () => {
     expect(workspaceRelative("/etc/hosts", dir)).toBe("/etc/hosts");
     expect(workspaceRelative("rel/x.ts", dir)).toBe("rel/x.ts");
   });
+
+  it("treats ..segment names inside the workspace as inside", () => {
+    expect(workspaceRelative(join(dir, "..notes.md"), dir)).toBe("..notes.md");
+  });
 });

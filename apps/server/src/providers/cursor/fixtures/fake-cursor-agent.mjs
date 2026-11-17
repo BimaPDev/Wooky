@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { writeFile } from "node:fs/promises";
+import { writeFile, rename } from "node:fs/promises";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mode = process.env.AGE_FAKE_CURSOR_MODE ?? "replay";
@@ -18,8 +18,13 @@ if (process.env.AGE_FAKE_CURSOR_LOG_ARGV) {
 }
 
 if (args.includes("--version")) {
-  process.stdout.write("fake-cursor-agent 0.0.0-test\n");
-  process.exit(0);
+  if (mode === "version-hang") {
+    process.stdin.resume();
+    setInterval(() => {}, 2 ** 31 - 1);
+  } else {
+    process.stdout.write("fake-cursor-agent 0.0.0-test\n");
+    process.exit(0);
+  }
 }
 
 if (args.includes("status")) {
@@ -38,16 +43,37 @@ if (args.includes("--list-models")) {
 }
 
 if (mode === "hang") {
+  process.stdout.write(`PID ${process.pid}\n`);
   if (process.env.AGE_FAKE_CURSOR_PID_FILE) {
-    await writeFile(process.env.AGE_FAKE_CURSOR_PID_FILE, String(process.pid));
+    const tmp = `${process.env.AGE_FAKE_CURSOR_PID_FILE}.tmp`;
+    await writeFile(tmp, String(process.pid));
+    await rename(tmp, process.env.AGE_FAKE_CURSOR_PID_FILE);
   }
   process.stdin.resume();
-  await new Promise(() => {});
+  setInterval(() => {}, 2 ** 31 - 1);
 }
 
 if (mode === "crash") {
   process.stderr.write("fatal: simulated crash\n");
   process.exit(1);
+}
+
+if (mode === "null-line") {
+  process.stdout.write("null\n");
+  process.stdout.write(
+    JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+    }) + "\n",
+  );
+  process.exit(0);
+}
+
+if (mode === "signal-exit") {
+  process.stdout.write(`PID ${process.pid}\n`);
+  process.stdin.resume();
+  setInterval(() => {}, 2 ** 31 - 1);
 }
 
 const prompt = args[args.length - 1] ?? "";
