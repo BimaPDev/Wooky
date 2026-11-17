@@ -1,5 +1,14 @@
+/**
+ * Git service. Checkpoints are commits stored under hidden refs, built from a throwaway
+ * temp index, so the user's branches, index and stash are never touched — with one
+ * documented exception: restoreCheckpoint drops the exact paths it just deleted from the
+ * REAL index via `git rm --cached --ignore-unmatch` (argv-only, pathspecs read from stdin
+ * NUL-delimited), so a later `git commit` cannot record a file the restore removed. That
+ * step only ever removes entries for paths restore itself deleted; it never alters entries
+ * for other files and never touches HEAD, branches or the stash.
+ */
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, rm, readdir, rmdir } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, readdir, rmdir, realpath } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -33,6 +42,9 @@ const INHERITED_GIT_VARS = [
   "GIT_NAMESPACE",
   "GIT_CONFIG",
   "GIT_CONFIG_PARAMETERS",
+  "GIT_CONFIG_COUNT",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
 ] as const;
 
 const AGE_IDENTITY = {
@@ -44,11 +56,16 @@ const AGE_IDENTITY = {
 
 const PATCH_LIMIT = 200 * 1024;
 const TRUNCATION_NOTICE = "\n… diff truncated\n";
+const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_STDOUT_CAP = 64 * 1024 * 1024;
+
+const AGE_REF = /^refs\/age\/[A-Za-z0-9._/-]+$/;
 
 interface RunOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   allowFail?: boolean;
+  input?: string;
 }
 
 interface RunResult {
@@ -57,38 +74,81 @@ interface RunResult {
   code: number | null;
 }
 
-export function createGitService(options?: { gitBin?: string }): GitService {
+export function createGitService(options?: {
+  gitBin?: string;
+  timeoutMs?: number;
+  maxStdoutBytes?: number;
+}): GitService {
   const gitBin = options?.gitBin ?? "git";
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxStdoutBytes = options?.maxStdoutBytes ?? DEFAULT_STDOUT_CAP;
   const chains = new Map<string, Promise<void>>();
 
   function baseEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env };
     for (const key of INHERITED_GIT_VARS) delete env[key];
+    for (const key of Object.keys(env)) {
+      if (key.startsWith("GIT_CONFIG_KEY_") || key.startsWith("GIT_CONFIG_VALUE_")) delete env[key];
+    }
     env.LC_ALL = "C";
     env.GIT_TERMINAL_PROMPT = "0";
     return { ...env, ...extra };
   }
 
+  /** Spawn git with a wall-clock timeout and a stdout cap; both kill only the child we spawned. */
   function run(args: string[], opts: RunOptions): Promise<RunResult> {
     return new Promise((resolvePromise, reject) => {
+      let settled = false;
+      const done = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+
       const child = spawn(gitBin, args, {
         cwd: opts.cwd,
         env: opts.env ?? baseEnv(),
       });
       const out: Buffer[] = [];
       const err: Buffer[] = [];
-      child.stdout.on("data", (c: Buffer) => out.push(c));
+      let outLen = 0;
+
+      child.stdout.on("data", (c: Buffer) => {
+        outLen += c.length;
+        if (outLen > maxStdoutBytes) {
+          child.kill("SIGKILL");
+          done(() =>
+            reject(new GitError(args, null, `git stdout exceeded cap of ${maxStdoutBytes} bytes`)),
+          );
+          return;
+        }
+        out.push(c);
+      });
       child.stderr.on("data", (c: Buffer) => err.push(c));
-      child.on("error", reject);
+      child.on("error", (e) => done(() => reject(e)));
       child.on("close", (code) => {
         const stdout = Buffer.concat(out).toString("utf8");
         const stderr = Buffer.concat(err).toString("utf8");
-        if (code !== 0 && !opts.allowFail) {
-          reject(new GitError(args, code, stderr.trim()));
-          return;
-        }
-        resolvePromise({ stdout, stderr, code });
+        done(() => {
+          if (code !== 0 && !opts.allowFail) {
+            reject(new GitError(args, code, stderr.trim()));
+            return;
+          }
+          resolvePromise({ stdout, stderr, code });
+        });
       });
+
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        done(() => reject(new GitError(args, null, `git timed out after ${timeoutMs}ms`)));
+      }, timeoutMs);
+
+      if (child.stdin) {
+        child.stdin.on("error", () => {});
+        if (opts.input !== undefined) child.stdin.write(opts.input);
+        child.stdin.end();
+      }
     });
   }
 
@@ -109,7 +169,7 @@ export function createGitService(options?: { gitBin?: string }): GitService {
 
   async function lockKey(cwd: string): Promise<string> {
     const { stdout } = await run(["rev-parse", "--git-common-dir"], { cwd });
-    return resolve(cwd, stdout.trim());
+    return realpath(resolve(cwd, stdout.trim()));
   }
 
   async function topLevel(cwd: string): Promise<string> {
@@ -126,9 +186,27 @@ export function createGitService(options?: { gitBin?: string }): GitService {
     return res.code === 0;
   }
 
-  function assertAgeRef(ref: string): void {
-    if (!ref.startsWith("refs/age/")) {
-      throw new GitError(["update-ref", ref], null, `ref must start with refs/age/: ${ref}`);
+  async function assertAgeRef(cwd: string, ref: string): Promise<void> {
+    const shaped =
+      AGE_REF.test(ref) &&
+      !ref.includes("..") &&
+      !ref.includes("//") &&
+      !ref.endsWith("/") &&
+      !ref.endsWith(".lock");
+    if (!shaped) {
+      throw new GitError(
+        ["check-ref-format", ref],
+        null,
+        `ref must be a safe refs/age/ ref: ${ref}`,
+      );
+    }
+    const res = await run(["check-ref-format", ref], { cwd, allowFail: true });
+    if (res.code !== 0) {
+      throw new GitError(
+        ["check-ref-format", ref],
+        res.code,
+        `ref must be a safe refs/age/ ref: ${ref}`,
+      );
     }
   }
 
@@ -162,7 +240,7 @@ export function createGitService(options?: { gitBin?: string }): GitService {
   }
 
   async function captureCheckpoint(cwd: string, ref: string): Promise<string> {
-    assertAgeRef(ref);
+    await assertAgeRef(cwd, ref);
     const top = await topLevel(cwd);
     const key = await lockKey(top);
     return withRepoLock(key, () =>
@@ -182,7 +260,7 @@ export function createGitService(options?: { gitBin?: string }): GitService {
   }
 
   async function restoreCheckpoint(cwd: string, ref: string): Promise<void> {
-    assertAgeRef(ref);
+    await assertAgeRef(cwd, ref);
     const top = await topLevel(cwd);
     const key = await lockKey(top);
     await withRepoLock(key, () =>
@@ -192,13 +270,41 @@ export function createGitService(options?: { gitBin?: string }): GitService {
 
         const snapshot = await listTree(top, ref, env);
         const current = await listWorkingSet(top);
+        const removed: string[] = [];
+        const failures: string[] = [];
         for (const rel of current) {
           if (snapshot.has(rel)) continue;
-          const abs = join(top, rel);
-          await rm(abs, { force: true });
-          await pruneEmptyParents(top, abs);
+          // `ls-files -o` reports an untracked nested repo as "nested/": never descend or
+          // delete it, and skip any directory entry so a non-recursive rm cannot throw EISDIR.
+          if (rel.endsWith("/")) continue;
+          try {
+            await rm(join(top, rel), { force: true });
+            removed.push(rel);
+          } catch {
+            failures.push(rel);
+          }
+        }
+
+        await dropFromRealIndex(top, removed);
+        for (const rel of removed) await pruneEmptyParents(top, join(top, rel));
+
+        if (failures.length > 0) {
+          throw new GitError(["restore"], null, `could not remove: ${failures.join(", ")}`);
         }
       }),
+    );
+  }
+
+  /**
+   * Drop exactly the deleted paths from the REAL index (documented exception at top of file)
+   * so a later commit cannot record a file restore removed. `--ignore-unmatch` keeps this a
+   * no-op for paths that were never staged, leaving every other index entry alone.
+   */
+  async function dropFromRealIndex(top: string, paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    await run(
+      ["rm", "--cached", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"],
+      { cwd: top, env: baseEnv(), input: paths.join("\0") },
     );
   }
 
@@ -239,16 +345,22 @@ export function createGitService(options?: { gitBin?: string }): GitService {
   }
 
   async function buildDiff(top: string, from: string, to: string): Promise<FileDiff[]> {
-    const common = ["-c", "core.quotePath=false", "diff", "-M"];
+    const common = ["-c", "core.quotePath=false", "diff", "-M", "--no-ext-diff", "--no-textconv"];
     const nameStatus = await run([...common, "--name-status", "-z", from, to], { cwd: top });
     const numstat = await run([...common, "--numstat", "-z", from, to], { cwd: top });
     const patchOut = await run([...common, from, to], { cwd: top });
 
     const counts = parseNumstat(numstat.stdout);
-    const patches = parsePatches(patchOut.stdout);
+    const entries = parseNameStatus(nameStatus.stdout);
+    const patches = splitPatches(patchOut.stdout);
     const diffs: FileDiff[] = [];
 
-    for (const entry of parseNameStatus(nameStatus.stdout)) {
+    // name-status (-z) and the patch both enumerate files in the same diff order, so patches
+    // are matched to entries by position. Filenames are never parsed out of the patch text,
+    // which lets names containing newlines (quoted in the patch) still receive their patch.
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (entry === undefined) continue;
       const count = counts.get(entry.path);
       const binary = count?.binary ?? false;
       const fileDiff: FileDiff = {
@@ -259,7 +371,7 @@ export function createGitService(options?: { gitBin?: string }): GitService {
       };
       if (entry.oldPath !== undefined) fileDiff.oldPath = entry.oldPath;
       if (!binary) {
-        const patch = patches.get(entry.path);
+        const patch = patches[i];
         if (patch !== undefined) fileDiff.patch = capPatch(patch);
       }
       diffs.push(fileDiff);
@@ -280,7 +392,15 @@ export function createGitService(options?: { gitBin?: string }): GitService {
       const path = join(dirname(root), ".age-worktrees", basename(root), threadId);
       const branch = `age/${threadId}`;
       await mkdir(dirname(path), { recursive: true });
-      await run(["worktree", "add", "-b", branch, path, "HEAD"], { cwd: top });
+      const hasBranch = await run(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+        cwd: top,
+        allowFail: true,
+      });
+      if (hasBranch.code === 0) {
+        await run(["worktree", "add", path, branch], { cwd: top });
+      } else {
+        await run(["worktree", "add", "-b", branch, path, "HEAD"], { cwd: top });
+      }
       return { path, branch };
     });
   }
@@ -392,30 +512,24 @@ function parseNumstat(out: string): Map<string, NumstatEntry> {
   return map;
 }
 
-function parsePatches(out: string): Map<string, string> {
-  const map = new Map<string, string>();
-  if (out.length === 0) return map;
-  const chunks = out.split(/\n(?=diff --git )/);
-  for (const chunk of chunks) {
-    if (!chunk.startsWith("diff --git ")) continue;
-    const path = patchPath(chunk);
-    if (path !== null) map.set(path, chunk.endsWith("\n") ? chunk : chunk + "\n");
-  }
-  return map;
+/** Split a diff into its per-file chunks by the `diff --git ` header, preserving diff order. */
+function splitPatches(out: string): string[] {
+  if (out.length === 0) return [];
+  return out
+    .split(/\n(?=diff --git )/)
+    .filter((chunk) => chunk.startsWith("diff --git "))
+    .map((chunk) => (chunk.endsWith("\n") ? chunk : chunk + "\n"));
 }
 
-function patchPath(chunk: string): string | null {
-  const plus = chunk.match(/\n\+\+\+ (?:b\/)?(.+)/);
-  if (plus && plus[1] !== "/dev/null") return plus[1] ?? null;
-  const minus = chunk.match(/\n--- (?:a\/)?(.+)/);
-  if (minus && minus[1] !== "/dev/null") return minus[1] ?? null;
-  const header = chunk.split("\n", 1)[0] ?? "";
-  const m = header.match(/^diff --git a\/(.*) b\/(.*)$/);
-  return m ? (m[2] ?? null) : null;
-}
-
+/** Truncate a patch at the byte limit, backing up to a UTF-8 code-point boundary (no U+FFFD). */
 function capPatch(patch: string): string {
-  if (Buffer.byteLength(patch, "utf8") <= PATCH_LIMIT) return patch;
-  const truncated = Buffer.from(patch, "utf8").subarray(0, PATCH_LIMIT).toString("utf8");
-  return truncated + TRUNCATION_NOTICE;
+  const buf = Buffer.from(patch, "utf8");
+  if (buf.length <= PATCH_LIMIT) return patch;
+  let cut = PATCH_LIMIT;
+  while (cut > 0) {
+    const byte = buf[cut];
+    if (byte === undefined || (byte & 0xc0) !== 0x80) break;
+    cut -= 1;
+  }
+  return buf.subarray(0, cut).toString("utf8") + TRUNCATION_NOTICE;
 }
