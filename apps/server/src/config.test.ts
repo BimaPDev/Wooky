@@ -11,6 +11,7 @@ describe("resolveConfig", () => {
       port: AGE_DEFAULT_PORT,
       host: "127.0.0.1",
       webDist: null,
+      allowedHosts: [],
     });
   });
 
@@ -23,7 +24,14 @@ describe("resolveConfig", () => {
     });
     expect(
       resolveConfig(["--port", "0", "--home", "rel", "--host", "::1", "--web-dist", "/w"], env),
-    ).toEqual({ home: resolve("rel"), port: 0, host: "::1", webDist: "/w" });
+    ).toEqual({ home: resolve("rel"), port: 0, host: "::1", webDist: "/w", allowedHosts: [] });
+  });
+
+  it("collects allowed hosts from flags and the environment", () => {
+    const config = resolveConfig(["--allow-host", "Box.LAN", "--allow-host", "mac.tailnet"], {
+      AGE_ALLOWED_HOSTS: " studio.local, ,",
+    });
+    expect(config).toMatchObject({ allowedHosts: ["box.lan", "mac.tailnet", "studio.local"] });
   });
 
   it("rejects bad input and recognises --help", () => {

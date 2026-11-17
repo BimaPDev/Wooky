@@ -208,9 +208,14 @@ describe("transport", () => {
 
   it("decides origins by host", () => {
     expect(originAllowed(undefined, "127.0.0.1:4317")).toBe(true);
-    expect(originAllowed("http://127.0.0.1:9", "x")).toBe(true);
-    expect(originAllowed("http://[::1]:9", "x")).toBe(true);
-    expect(originAllowed("http://box.lan:4317", "box.lan:4317")).toBe(true);
+    expect(originAllowed("http://127.0.0.1:9", "127.0.0.1:4317")).toBe(true);
+    expect(originAllowed("http://[::1]:9", "[::1]:4317")).toBe(true);
+    expect(originAllowed("http://box.lan:4317", "box.lan:4317")).toBe(false);
+    expect(originAllowed("http://box.lan:4317", "box.lan:4317", new Set(["box.lan"]))).toBe(true);
+    // DNS rebinding: hostile name resolving to loopback, page and Host both say evil.example.
+    expect(originAllowed("http://evil.example:4317", "evil.example:4317")).toBe(false);
+    // Local page dialling a non-local Host is refused too.
+    expect(originAllowed("http://127.0.0.1:5173", "evil.example:4317")).toBe(false);
     expect(originAllowed("http://evil.example", "127.0.0.1:4317")).toBe(false);
     expect(originAllowed("not a url", "x")).toBe(false);
   });

@@ -20,6 +20,7 @@ export interface ServerOptions {
   port: number;
   host: string;
   webDist?: string | null;
+  allowedHosts?: readonly string[];
   adapters?: ProviderAdapter[];
   git?: GitService;
   /** Directory whose children `fs.pickable` suggests. Defaults to the OS home. */
@@ -46,7 +47,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
 
   const http = createServer(createHttpHandler(options.webDist ?? null));
-  const closeSockets = attachWebSocket(http, { store, dispatcher, providers, queries });
+  const closeSockets = attachWebSocket(
+    http,
+    { store, dispatcher, providers, queries },
+    new Set(options.allowedHosts ?? []),
+  );
   try {
     await new Promise<void>((resolve, reject) => {
       http.once("error", reject);
