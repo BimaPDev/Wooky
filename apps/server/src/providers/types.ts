@@ -33,6 +33,8 @@ export interface TurnInput {
   /**
    * Native message to resume the session at (the last kept turn's nativeRef).
    * null means "continue at the end of the current session", not "start fresh".
+   * Only non-null for a provider that cannot rewind natively but can resume at a
+   * message (no `rewind`; e.g. Claude's resume + resumeSessionAt + forkSession).
    */
   resumeAt: string | null;
   interactionMode: InteractionMode;
@@ -54,6 +56,11 @@ export interface RewindInput {
    * TurnInput.resumeAt, where null means "continue at the end of the session".
    */
   keepNativeRef: string | null;
+  /**
+   * How many turns the revert dropped (int, at least 1). Computed by decide at revert
+   * time: by the time the effect runs, those turns are already gone from the model.
+   */
+  dropTurns: number;
   cwd: string;
 }
 
@@ -64,7 +71,9 @@ export interface ProviderAdapter {
   runTurn(input: TurnInput): AsyncIterable<ProviderEvent>;
   /**
    * Cut the native conversation back after a revert. Returns the session the next turn
-   * resumes, or null to start fresh. Adapters without it get the handoff transcript instead.
+   * resumes, or null to start fresh. The runner binds it (turn.reverted.providerSessionId)
+   * and the next turn runs with `resumeAt: null` against it. Adapters without it resume
+   * at a message via TurnInput.resumeAt, or, if they cannot, get the handoff transcript.
    */
   rewind?(input: RewindInput): Promise<{ sessionId: string | null }>;
 }

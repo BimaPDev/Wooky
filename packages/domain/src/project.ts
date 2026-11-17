@@ -125,6 +125,7 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       return patchThread(model, event.threadId, event.at, { status: "waiting" });
 
     case "approval.resolved": {
+      if (!openRequestOnRunningTurn(model, event)) return model;
       const resolved = patchTurn(model, event.threadId, event.turnId, (turn) => ({
         ...turn,
         items: turn.items.map((item) =>
@@ -160,6 +161,7 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
     }
 
     case "question.resolved": {
+      if (!openRequestOnRunningTurn(model, event)) return model;
       const resolved = patchTurn(model, event.threadId, event.turnId, (turn) => ({
         ...turn,
         items: turn.items.map((item) =>
@@ -238,6 +240,21 @@ function isOpenRequest(item: TimelineItem): boolean {
   if (item.kind === "approval") return item.decision === null;
   if (item.kind === "question") return item.answers === null && !item.dismissed;
   return false;
+}
+
+/** A late or repeated resolve (turn ended, reverted, or already answered) changes nothing. */
+function openRequestOnRunningTurn(
+  model: ReadModel,
+  event: { threadId: string; turnId: string; requestId: string },
+): boolean {
+  const turn = model.turns[event.threadId]?.findLast((candidate) => candidate.id === event.turnId);
+  if (turn?.status !== "running") return false;
+  return turn.items.some(
+    (item) =>
+      (item.kind === "approval" || item.kind === "question") &&
+      item.requestId === event.requestId &&
+      isOpenRequest(item),
+  );
 }
 
 function hasOpenRequest(model: ReadModel, threadId: string): boolean {

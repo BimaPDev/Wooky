@@ -35,8 +35,9 @@ export function pendingQuestions(
   return open.length > 0 ? open : NONE;
 }
 
-export function queuedPrompts(model: ReadModel, threadId: string): QueuedPrompt[] {
-  return model.threads[threadId]?.queue ?? [];
+export function queuedPrompts(model: ReadModel, threadId: string): readonly QueuedPrompt[] {
+  const queue = model.threads[threadId]?.queue;
+  return queue && queue.length > 0 ? queue : NONE;
 }
 
 export function nextQueued(model: ReadModel, threadId: string): QueuedPrompt | null {
@@ -53,15 +54,26 @@ export function latestPlan(model: ReadModel, threadId: string): ItemOf<"plan"> |
 }
 
 /**
- * Where the native session should resume: the newest nativeRef among the finished turns
- * still in the thread (after a revert, the kept ones). Turns that recorded none are
- * skipped. Null only when no finished turn has one.
+ * Where the thread's native session should resume: the newest nativeRef among the
+ * finished turns (only those before beforeTurnId, when given). Walks back over running
+ * turns and turns without a ref, but stops with null at the first turn of a provider
+ * other than the thread's, whose refs mean nothing to the current session.
  */
-export function resumePoint(model: ReadModel, threadId: string): string | null {
-  const kept = model.turns[threadId]?.findLast(
-    (turn) => turn.status !== "running" && typeof turn.nativeRef === "string",
-  );
-  return kept?.nativeRef ?? null;
+export function resumePoint(
+  model: ReadModel,
+  threadId: string,
+  beforeTurnId?: string,
+): string | null {
+  const provider = model.threads[threadId]?.provider;
+  const list = model.turns[threadId] ?? [];
+  const end =
+    beforeTurnId === undefined ? list.length : list.findIndex((t) => t.id === beforeTurnId);
+  for (let index = end - 1; index >= 0; index -= 1) {
+    const turn = list[index];
+    if (!turn || turn.provider !== provider) return null;
+    if (turn.status !== "running" && typeof turn.nativeRef === "string") return turn.nativeRef;
+  }
+  return null;
 }
 
 /**

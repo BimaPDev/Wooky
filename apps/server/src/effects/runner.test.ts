@@ -969,7 +969,9 @@ describe("effect runner seams for revert rewind and questions", () => {
       const { effects } = h.store.commit({
         commandId: "rewind",
         events: [],
-        effects: [{ kind: "session.rewind", threadId, turnId: "u1", keepNativeRef: null }],
+        effects: [
+          { kind: "session.rewind", threadId, turnId: "u1", keepNativeRef: null, dropTurns: 1 },
+        ],
       });
       h.runner.enqueue(effects);
       await h.runner.idle();

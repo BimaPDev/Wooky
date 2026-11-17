@@ -310,6 +310,90 @@ describe("applyEvent: questions", () => {
     }
   });
 
+  it("ignores a resolve that arrives after the turn ended", () => {
+    const ended = asked().finish("t1", "u1", { status: "interrupted" });
+    const before = ended.model();
+    const late = ended
+      .push({
+        type: "question.resolved",
+        threadId: "t1",
+        turnId: "u1",
+        requestId: "r1",
+        answers: { db: ["SQLite"] },
+      })
+      .model();
+    expect(late.threads.t1).toEqual(before.threads.t1);
+    expect(late.turns.t1).toEqual(before.turns.t1);
+    expect(late.turns.t1?.[0]?.items[0]).toMatchObject({ answers: null, dismissed: true });
+  });
+
+  it("ignores a resolve for a reverted turn", () => {
+    const reverted = asked()
+      .finish("t1", "u1")
+      .push({ type: "turn.reverted", threadId: "t1", turnId: "u1" });
+    const before = reverted.model();
+    const late = reverted
+      .push({
+        type: "question.resolved",
+        threadId: "t1",
+        turnId: "u1",
+        requestId: "r1",
+        answers: {},
+      })
+      .model();
+    expect(late.threads.t1).toEqual(before.threads.t1);
+    expect(late.threads.t1?.status).toBe("idle");
+  });
+
+  it("ignores a second resolve of an already dismissed question", () => {
+    const dismissed = asked().push({
+      type: "question.resolved",
+      threadId: "t1",
+      turnId: "u1",
+      requestId: "r1",
+      answers: null,
+    });
+    const before = dismissed.model();
+    const again = dismissed
+      .push({
+        type: "question.resolved",
+        threadId: "t1",
+        turnId: "u1",
+        requestId: "r1",
+        answers: {},
+      })
+      .model();
+    expect(again.turns.t1).toEqual(before.turns.t1);
+    expect(again.threads.t1).toEqual(before.threads.t1);
+  });
+
+  it("ignores an approval resolve that arrives after the turn ended", () => {
+    const ended = asked()
+      .item("t1", "u1", {
+        kind: "approval",
+        id: "a1",
+        requestId: "ra",
+        tool: "command",
+        title: "ls",
+        detail: "",
+        decision: null,
+      })
+      .finish("t1", "u1", { status: "interrupted" });
+    const before = ended.model();
+    const late = ended
+      .push({
+        type: "approval.resolved",
+        threadId: "t1",
+        turnId: "u1",
+        requestId: "ra",
+        decision: "allow",
+      })
+      .model();
+    expect(late.threads.t1).toEqual(before.threads.t1);
+    expect(late.turns.t1).toEqual(before.turns.t1);
+    expect(late.turns.t1?.[0]?.items[1]).toMatchObject({ decision: "deny" });
+  });
+
   it("leaves answered questions alone when the turn ends", () => {
     const model = asked()
       .push({

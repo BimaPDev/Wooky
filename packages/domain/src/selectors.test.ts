@@ -57,6 +57,19 @@ describe("queuedPrompts and nextQueued", () => {
     expect(queuedPrompts(log.model(), "missing")).toEqual([]);
     expect(nextQueued(log.model(), "missing")).toBeNull();
   });
+
+  it("returns one shared empty array for an unknown thread or an empty queue", () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const log = testLog().project("p1", "/work").thread("t1", "p1");
+    const none = queuedPrompts(log.model(), "missing");
+    expect(Object.isFrozen(none)).toBe(true);
+    expect(queuedPrompts(log.model(), "t1")).toBe(none);
+    log.push(
+      { type: "queue.added", threadId: "t1", item: { id: "q1", prompt: "one", queuedAt: at } },
+      { type: "queue.removed", threadId: "t1", queueId: "q1", reason: "removed" },
+    );
+    expect(queuedPrompts(log.model(), "t1")).toBe(none);
+  });
 });
 
 describe("latestPlan", () => {
@@ -79,6 +92,15 @@ describe("latestPlan", () => {
 });
 
 describe("resumePoint", () => {
+  const handoff = (provider: "claude" | "codex") => ({
+    type: "thread.configured" as const,
+    threadId: "t1",
+    provider,
+    model: provider,
+    runtimeMode: "approve" as const,
+    handoff: true,
+  });
+
   it("is the nativeRef of the last finished turn still in the thread", () => {
     const log = testLog().project("p1", "/work").thread("t1", "p1");
     expect(resumePoint(log.model(), "t1")).toBeNull();
@@ -113,6 +135,54 @@ describe("resumePoint", () => {
       .finish("t1", "u3", { status: "interrupted" })
       .start("t1", "u4");
     expect(resumePoint(log.model(), "t1")).toBe("msg-1");
+  });
+
+  it("is null when the thread was handed off and the new provider recorded no ref", () => {
+    const log = testLog()
+      .project("p1", "/work")
+      .thread("t1", "p1", { provider: "claude" })
+      .start("t1", "u1", { provider: "claude" })
+      .finish("t1", "u1", { nativeRef: "claude-uuid" })
+      .push(handoff("codex"));
+    expect(resumePoint(log.model(), "t1")).toBeNull();
+
+    log.start("t1", "u2", { provider: "codex" }).finish("t1", "u2");
+    expect(resumePoint(log.model(), "t1")).toBeNull();
+  });
+
+  it("never returns another provider's ref after handing back", () => {
+    const log = testLog()
+      .project("p1", "/work")
+      .thread("t1", "p1", { provider: "claude" })
+      .start("t1", "u1", { provider: "claude" })
+      .finish("t1", "u1", { nativeRef: "claude-1" })
+      .push(handoff("codex"))
+      .start("t1", "u2", { provider: "codex" })
+      .finish("t1", "u2", { nativeRef: "codex-2" })
+      .push(handoff("claude"))
+      .start("t1", "u3", { provider: "claude" })
+      .finish("t1", "u3", { nativeRef: "claude-3" });
+    expect(resumePoint(log.model(), "t1")).toBe("claude-3");
+    expect(resumePoint(log.model(), "t1", "u3")).toBeNull();
+
+    log.push({ type: "turn.reverted", threadId: "t1", turnId: "u3" });
+    expect(resumePoint(log.model(), "t1")).toBeNull();
+  });
+
+  it("considers only the turns before beforeTurnId", () => {
+    const log = testLog()
+      .project("p1", "/work")
+      .thread("t1", "p1")
+      .start("t1", "u1")
+      .finish("t1", "u1", { nativeRef: "msg-1" })
+      .start("t1", "u2")
+      .finish("t1", "u2", { nativeRef: null })
+      .start("t1", "u3")
+      .finish("t1", "u3", { nativeRef: "msg-3" });
+    expect(resumePoint(log.model(), "t1", "u3")).toBe("msg-1");
+    expect(resumePoint(log.model(), "t1", "u2")).toBe("msg-1");
+    expect(resumePoint(log.model(), "t1", "u1")).toBeNull();
+    expect(resumePoint(log.model(), "t1", "unknown")).toBeNull();
   });
 
   it("is null when no finished turn has a nativeRef", () => {

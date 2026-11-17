@@ -21,8 +21,18 @@ export type Effect =
       answers: QuestionAnswers | null;
     }
   | { kind: "checkpoint.restore"; threadId: string; turnId: string; cwd: string; ref: string }
-  /** Rewind the native session after reverting turnId. keepNativeRef null drops every turn. */
-  | { kind: "session.rewind"; threadId: string; turnId: string; keepNativeRef: string | null };
+  /**
+   * Rewind the native session after reverting turnId. keepNativeRef null drops every turn.
+   * dropTurns (int, at least 1) is computed by decide at revert time, because the turns are
+   * already gone from the model when the effect runs.
+   */
+  | {
+      kind: "session.rewind";
+      threadId: string;
+      turnId: string;
+      keepNativeRef: string | null;
+      dropTurns: number;
+    };
 
 export type StoredEffect = Effect & { id: number };
 
