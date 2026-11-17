@@ -9,7 +9,9 @@ import type {
 import { threadsSharingWorkspace } from "@age/domain";
 import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
-import { useStore, type Dialog, type SettingsPage } from "./store.ts";
+import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";
+import { saveTerminalOpen } from "../lib/shell.ts";
+import { currentNavFromState, useStore, type Dialog, type SettingsPage } from "./store.ts";
 
 type CommandInput = Command extends infer C
   ? C extends Command
@@ -47,21 +49,76 @@ export function suggestPaths(query: string) {
   return backend().call("fs.pickable", query ? { query } : {});
 }
 
-export const selectThread = (threadId: string | null) =>
+function recordNav(next: ReturnType<typeof currentNavFromState>) {
+  useStore.setState((state) => {
+    if (state.navSilent) return {};
+    const from = currentNavFromState(state);
+    return { nav: pushNavStack(state.nav, from, next) };
+  });
+}
+
+function applyNavTarget(target: ReturnType<typeof currentNavFromState>) {
+  if (target.kind === "settings") {
+    useStore.setState({
+      navSilent: true,
+      settingsOpen: true,
+      settingsPage: target.page,
+      paletteOpen: false,
+    });
+    return;
+  }
+  useStore.setState((state) => ({
+    navSilent: true,
+    selectedThreadId: target.threadId,
+    settingsOpen: false,
+    changes: { ...state.changes, turnId: null, focusPath: null },
+  }));
+}
+
+export const selectThread = (threadId: string | null) => {
+  const next = { kind: "thread", threadId } as const;
+  recordNav(next);
   useStore.setState((state) => ({
     selectedThreadId: threadId,
     settingsOpen: false,
     changes: { ...state.changes, turnId: null, focusPath: null },
   }));
+};
+
+export function navHistoryBack() {
+  const state = useStore.getState();
+  const current = currentNavFromState(state);
+  const step = navBack(state.nav, current);
+  if (!step) return;
+  useStore.setState({ nav: step.stack });
+  applyNavTarget(step.target);
+  useStore.setState({ navSilent: false });
+}
+
+export function navHistoryForward() {
+  const state = useStore.getState();
+  const current = currentNavFromState(state);
+  const step = navForward(state.nav, current);
+  if (!step) return;
+  useStore.setState({ nav: step.stack });
+  applyNavTarget(step.target);
+  useStore.setState({ navSilent: false });
+}
 
 export const toggleSidebar = () =>
   useStore.setState((state) => ({ sidebarOpen: !state.sidebarOpen }));
 export const toggleTerminal = () =>
-  useStore.setState((state) => ({ terminalOpen: !state.terminalOpen }));
+  useStore.setState((state) => {
+    const terminalOpen = !state.terminalOpen;
+    saveTerminalOpen(terminalOpen);
+    return { terminalOpen };
+  });
 
 /** Queue a line for the docked terminal (used by Settings → Providers Sign in). */
-export const runInTerminal = (line: string) =>
+export const runInTerminal = (line: string) => {
+  saveTerminalOpen(true);
   useStore.setState({ terminalOpen: true, pendingTerminalLine: line, settingsOpen: false });
+};
 
 /** Take the queued line for a ready shell, once. With no ready shell it stays queued. */
 export const takePendingTerminalLine = (sessionId: string | null) => {
@@ -105,8 +162,10 @@ export const openDialog = (dialog: Dialog) => useStore.setState({ dialog, palett
 export const closeDialog = () => useStore.setState({ dialog: null });
 export const setPaletteOpen = (paletteOpen: boolean) => useStore.setState({ paletteOpen });
 
-export const openSettings = (page: SettingsPage = "general") =>
+export const openSettings = (page: SettingsPage = "general") => {
+  recordNav({ kind: "settings", page });
   useStore.setState({ settingsOpen: true, settingsPage: page, paletteOpen: false });
+};
 export const closeSettings = () => useStore.setState({ settingsOpen: false });
 export const setSettingsPage = (settingsPage: SettingsPage) => useStore.setState({ settingsPage });
 

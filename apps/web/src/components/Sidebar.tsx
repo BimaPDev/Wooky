@@ -1,6 +1,11 @@
 import type { Project, Thread } from "@age/contracts";
 import { memo, useMemo, useState } from "react";
 import {
+  isSettledStatus,
+  isWorkingStatus,
+  partitionSidebarThreads,
+} from "../lib/sidebar-sections.ts";
+import {
   openDialog,
   openSettings,
   removeProject,
@@ -35,7 +40,7 @@ const statusText = {
   offline: "Offline",
 } as const;
 
-export function Sidebar({ hideBrand = false }: { hideBrand?: boolean }) {
+export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const projects = useStore((state) => state.model.projects);
   const threads = useStore((state) => state.model.threads);
   const selected = useStore((state) => state.selectedThreadId);
@@ -44,9 +49,10 @@ export function Sidebar({ hideBrand = false }: { hideBrand?: boolean }) {
   const fixture = useStore((state) => state.fixture);
   const [query, setQuery] = useState("");
   const [workingOpen, setWorkingOpen] = useState(true);
+  const [settledOpen, setSettledOpen] = useState(false);
 
   const needle = query.trim().toLowerCase();
-  const { inbox, working, groups } = useMemo(() => {
+  const { working, settled, groups, hasProjects, settledInScroll } = useMemo(() => {
     const matches = (thread: Thread) =>
       !needle ||
       thread.title.toLowerCase().includes(needle) ||
@@ -58,40 +64,45 @@ export function Sidebar({ hideBrand = false }: { hideBrand?: boolean }) {
           Number(b.status === "waiting") - Number(a.status === "waiting") ||
           b.updatedAt.localeCompare(a.updatedAt),
       );
-    const inboxList = all.filter((thread) => thread.status !== "running");
+    const parts = partitionSidebarThreads(all);
+    const includeSettledInGroups = !settledOpen || needle.length > 0;
+    const inProjectList = all.filter((thread) => {
+      if (isWorkingStatus(thread.status)) return false;
+      if (isSettledStatus(thread.status) && !includeSettledInGroups) return false;
+      return true;
+    });
     const byProject = Object.values(projects)
       .toSorted((a, b) => a.name.localeCompare(b.name))
-      .filter((project) => !needle || inboxList.some((t) => t.projectId === project.id))
+      .filter((project) => !needle || inProjectList.some((t) => t.projectId === project.id))
       .map((project) => ({
         project,
-        threads: inboxList.filter((thread) => thread.projectId === project.id),
+        threads: inProjectList.filter((thread) => thread.projectId === project.id),
       }));
     return {
-      inbox: inboxList,
-      working: all.filter((thread) => thread.status === "running"),
+      working: parts.working,
+      settled: parts.settled,
       groups: byProject,
+      hasProjects: Object.values(projects).length > 0,
+      settledInScroll: includeSettledInGroups,
     };
-  }, [projects, threads, needle]);
+  }, [projects, threads, needle, settledOpen]);
 
   const firstProjectId = Object.values(projects)[0]?.id ?? null;
-  const hasProjects = firstProjectId !== null;
 
   return (
     <nav className="sidebar" aria-label="Projects and threads">
-      {hideBrand ? null : (
-        <div className="sidebar-head">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Hide sidebar"
-            title="Hide sidebar"
-            onClick={toggleSidebar}
-          >
-            <IconSidebar />
-          </button>
-          <span className="brand">Wooky</span>
-        </div>
-      )}
+      <div className={macDesktop ? "sidebar-head desktop-traffic-inset" : "sidebar-head"}>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Hide sidebar"
+          title="Hide sidebar"
+          onClick={toggleSidebar}
+        >
+          <IconSidebar />
+        </button>
+        <span className="brand">Wooky</span>
+      </div>
       <div className="sidebar-tools">
         <label className="search-field">
           <IconSearch />
@@ -123,36 +134,35 @@ export function Sidebar({ hideBrand = false }: { hideBrand?: boolean }) {
         </button>
       </div>
       <div className="sidebar-scroll">
-        {!hasProjects ? (
-          <div className="sidebar-empty">
-            <p>No projects yet.</p>
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={() => openDialog({ kind: "addProject" })}
-            >
-              <IconFolderPlus />
-              Add a project folder
-            </button>
-          </div>
-        ) : null}
-        {hasProjects && needle && inbox.length === 0 && working.length === 0 ? (
+        {hasProjects &&
+        needle &&
+        working.length === 0 &&
+        groups.every((g) => g.threads.length === 0) ? (
           <p className="sidebar-empty">No matching threads.</p>
         ) : null}
         {groupByProject ? (
           groups.map(({ project, threads: list }) => (
-            <ProjectGroup key={project.id} project={project} threads={list} selected={selected} />
+            <ProjectGroup
+              key={project.id}
+              project={project}
+              threads={list}
+              selected={selected}
+              grouped
+            />
           ))
         ) : (
           <ul className="thread-list">
-            {inbox.map((thread) => (
-              <ThreadCard
-                key={thread.id}
-                thread={thread}
-                projectName={projects[thread.projectId]?.name ?? ""}
-                active={thread.id === selected}
-              />
-            ))}
+            {groups.flatMap((group) =>
+              group.threads.map((thread) => (
+                <ThreadCard
+                  key={thread.id}
+                  thread={thread}
+                  projectName={projects[thread.projectId]?.name ?? ""}
+                  active={thread.id === selected}
+                  grouped={false}
+                />
+              )),
+            )}
           </ul>
         )}
       </div>
@@ -180,6 +190,35 @@ export function Sidebar({ hideBrand = false }: { hideBrand?: boolean }) {
               ))}
             </ul>
           ) : null}
+        </section>
+      ) : null}
+      {settled.length > 0 ? (
+        <section className="sidebar-settled" aria-label="Settled">
+          <button
+            type="button"
+            className="sidebar-section-toggle"
+            aria-expanded={settledOpen}
+            onClick={() => setSettledOpen(!settledOpen)}
+          >
+            <span>Settled</span>
+            <span className="sidebar-section-count">{settled.length}</span>
+            <IconChevron open={settledOpen} />
+          </button>
+          {settledOpen ? (
+            <ul className="thread-list">
+              {settled.map((thread) => (
+                <ThreadCard
+                  key={thread.id}
+                  thread={thread}
+                  projectName={projects[thread.projectId]?.name ?? ""}
+                  active={thread.id === selected}
+                  grouped={false}
+                />
+              ))}
+            </ul>
+          ) : settledInScroll ? null : (
+            <p className="sidebar-settled-hint">Expand to browse idle threads.</p>
+          )}
         </section>
       ) : null}
       <div className="sidebar-foot">
@@ -234,11 +273,14 @@ function ProjectGroup({
   project,
   threads,
   selected,
+  grouped,
 }: {
   project: Project;
   threads: Thread[];
   selected: string | null;
+  grouped: boolean;
 }) {
+  if (threads.length === 0) return null;
   return (
     <section className="project">
       <div className="project-row" title={project.root}>
@@ -265,7 +307,6 @@ function ProjectGroup({
           </button>
         </span>
       </div>
-      {threads.length === 0 ? <p className="sidebar-empty indent">No threads.</p> : null}
       <ul className="thread-list">
         {threads.map((thread) => (
           <ThreadCard
@@ -273,6 +314,7 @@ function ProjectGroup({
             thread={thread}
             projectName={project.name}
             active={thread.id === selected}
+            grouped={grouped}
           />
         ))}
       </ul>
@@ -284,10 +326,12 @@ const ThreadCard = memo(function ThreadCard({
   thread,
   projectName,
   active,
+  grouped,
 }: {
   thread: Thread;
   projectName: string;
   active: boolean;
+  grouped: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   return (
@@ -311,20 +355,18 @@ const ThreadCard = memo(function ThreadCard({
             onDoubleClick={() => setEditing(true)}
           >
             <span className="thread-top">
-              <ProjectMonogram name={projectName} />
-              <span className="thread-project">{projectName}</span>
+              {grouped ? null : <ProjectMonogram name={projectName} />}
+              <span className="thread-title">{thread.title || "Untitled thread"}</span>
               <span className="thread-time">{relativeTime(thread.updatedAt)}</span>
             </span>
-            <span className="thread-title">{thread.title || "Untitled thread"}</span>
             <span className="thread-meta">
-              <span className="mono">{thread.worktree?.branch ?? "main"}</span>
-              <StatusMark status={thread.status} />
               <span
                 className={`provider-badge provider-${thread.provider}`}
                 title={providerLabels[thread.provider]}
               >
                 {thread.provider.slice(0, 2).toUpperCase()}
               </span>
+              <StatusMark status={thread.status} />
             </span>
           </button>
           <span className="row-actions">
@@ -372,15 +414,20 @@ function WorkingRow({
       >
         <span className="thread-top">
           <ProjectMonogram name={projectName} />
-          <span className="thread-project">{projectName}</span>
+          <span className="thread-title">{thread.title || "Untitled thread"}</span>
           <span className="working-label">
             <StatusMark status={thread.status} />
-            Working
+            {thread.status === "waiting" ? "Waiting" : "Working"}
           </span>
         </span>
-        <span className="thread-title">{thread.title || "Untitled thread"}</span>
         <span className="thread-meta">
-          <span className="mono">{thread.worktree?.branch ?? "main"}</span>
+          <span className="thread-time">{relativeTime(thread.updatedAt)}</span>
+          <span
+            className={`provider-badge provider-${thread.provider}`}
+            title={providerLabels[thread.provider]}
+          >
+            {thread.provider.slice(0, 2).toUpperCase()}
+          </span>
         </span>
       </button>
     </li>

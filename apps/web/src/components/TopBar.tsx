@@ -2,6 +2,8 @@ import type { Thread } from "@age/contracts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   loadDiff,
+  navHistoryBack,
+  navHistoryForward,
   openChanges,
   renameThread,
   toggleChanges,
@@ -13,6 +15,8 @@ import { Counts } from "./DiffView.tsx";
 import {
   IconBranch,
   IconChanges,
+  IconChevronLeft,
+  IconChevronRight,
   IconCopy,
   IconDetails,
   IconFolder,
@@ -24,7 +28,7 @@ import { InlineRename } from "./InlineRename.tsx";
 import { modelLabel, providerLabels, runtimeLabel } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
 
-export function TopBar({ desktopChrome = false }: { desktopChrome?: boolean }) {
+export function TopBar() {
   const thread = useStore((state) =>
     state.selectedThreadId ? state.model.threads[state.selectedThreadId] : undefined,
   );
@@ -34,26 +38,47 @@ export function TopBar({ desktopChrome = false }: { desktopChrome?: boolean }) {
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const changesOpen = useStore((state) => state.changes.open);
   const terminalOpen = useStore((state) => state.terminalOpen);
+  const canBack = useStore((state) => state.nav.past.length > 0);
+  const canForward = useStore((state) => state.nav.future.length > 0);
+  const hasProjects = useStore((state) => Object.keys(state.model.projects).length > 0);
   const [editing, setEditing] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  // Desktop paints project/thread in the native titlebar strip (T3); keep the crumb in browser.
-  const showCrumb = !desktopChrome;
 
   return (
-    <header className={desktopChrome ? "topbar topbar-desktop" : "topbar"}>
-      {sidebarOpen ? null : (
+    <header className="topbar">
+      <div className="topbar-lead">
         <button
           type="button"
           className="icon-button"
-          aria-label="Show sidebar"
-          title="Show sidebar"
+          aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+          title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
           onClick={toggleSidebar}
         >
           <IconSidebar />
         </button>
-      )}
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Back"
+          title="Back"
+          disabled={!canBack}
+          onClick={navHistoryBack}
+        >
+          <IconChevronLeft />
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Forward"
+          title="Forward"
+          disabled={!canForward}
+          onClick={navHistoryForward}
+        >
+          <IconChevronRight />
+        </button>
+      </div>
       <div className="topbar-title">
-        {showCrumb && thread && project ? (
+        {thread && project ? (
           <>
             <ProjectMonogram name={project.name} />
             <span className="crumb-project" title={project.root}>
@@ -83,10 +108,12 @@ export function TopBar({ desktopChrome = false }: { desktopChrome?: boolean }) {
               </button>
             )}
           </>
+        ) : hasProjects ? (
+          <span className="topbar-placeholder">Pick a thread</span>
         ) : null}
       </div>
-      {thread ? (
-        <div className="topbar-actions">
+      <div className="topbar-actions">
+        {thread ? (
           <div className="popover-anchor">
             <button
               type="button"
@@ -102,28 +129,29 @@ export function TopBar({ desktopChrome = false }: { desktopChrome?: boolean }) {
               <DetailsPopover thread={thread} onClose={() => setDetailsOpen(false)} />
             ) : null}
           </div>
-          <button
-            type="button"
-            className={terminalOpen ? "icon-button pressed" : "icon-button"}
-            aria-label="Toggle terminal panel"
-            aria-pressed={terminalOpen}
-            title="Terminal"
-            onClick={toggleTerminal}
-          >
-            <IconPanelBottom />
-          </button>
-          <button
-            type="button"
-            className={changesOpen ? "icon-button pressed" : "icon-button"}
-            aria-label="Toggle changes panel"
-            aria-pressed={changesOpen}
-            title="Changes"
-            onClick={toggleChanges}
-          >
-            <IconPanelRight />
-          </button>
-        </div>
-      ) : null}
+        ) : null}
+        <button
+          type="button"
+          className={terminalOpen ? "icon-button pressed" : "icon-button"}
+          aria-label="Toggle terminal panel"
+          aria-pressed={terminalOpen}
+          title="Terminal"
+          onClick={toggleTerminal}
+        >
+          <IconPanelBottom />
+        </button>
+        <button
+          type="button"
+          className={changesOpen ? "icon-button pressed" : "icon-button"}
+          aria-label="Toggle changes panel"
+          aria-pressed={changesOpen}
+          title="Changes"
+          disabled={!thread}
+          onClick={toggleChanges}
+        >
+          <IconPanelRight />
+        </button>
+      </div>
     </header>
   );
 }

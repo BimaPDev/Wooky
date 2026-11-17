@@ -1,4 +1,5 @@
 import { AGE_WS_PATH } from "@age/contracts";
+import { emptyReadModel } from "@age/domain";
 import { createFixtureBackend } from "../dev/fixture.ts";
 import { loadDeviceSettings } from "../state/appearance.ts";
 import { refreshProviders } from "../state/actions.ts";
@@ -8,11 +9,14 @@ import { receiveEvent, receiveSnapshot, useStore } from "../state/store.ts";
 import { createRpcClient, type SocketHandlers, type SocketLike } from "./client.ts";
 
 export function startConnection() {
-  if (new URLSearchParams(location.search).has("fixture")) {
+  const params = new URLSearchParams(location.search);
+  if (params.has("fixture")) {
     const fixture = createFixtureBackend();
     setBackend(fixture);
     useStore.setState({ fixture: true, status: "open" });
-    void fixture.call("snapshot", {}).then(receiveSnapshot);
+    void fixture.call("snapshot", {}).then((model) => {
+      receiveSnapshot(params.has("empty") ? emptyReadModel() : model);
+    });
     void refreshProviders();
     void loadDeviceSettings();
     return;

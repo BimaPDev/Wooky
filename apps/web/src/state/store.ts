@@ -8,6 +8,7 @@ import type {
 import { applyEvent, emptyReadModel } from "@age/domain";
 import { create } from "zustand";
 import type { ConnectionStatus } from "../rpc/client.ts";
+import type { NavStack, NavTarget } from "../lib/nav-history.ts";
 
 export type Theme = "dark" | "light";
 
@@ -50,6 +51,16 @@ export interface AppState {
   diffVersion: number;
   /** Last rejected command or failed request, in one sentence. */
   notice: string | null;
+  nav: NavStack;
+  /** When true, navigation actions must not push onto nav.past. */
+  navSilent: boolean;
+}
+
+export function currentNavFromState(
+  state: Pick<AppState, "selectedThreadId" | "settingsOpen" | "settingsPage">,
+): NavTarget {
+  if (state.settingsOpen) return { kind: "settings", page: state.settingsPage };
+  return { kind: "thread", threadId: state.selectedThreadId };
 }
 
 export const useStore = create<AppState>(() => ({
@@ -59,7 +70,7 @@ export const useStore = create<AppState>(() => ({
   providers: [],
   selectedThreadId: null,
   sidebarOpen: true,
-  terminalOpen: true,
+  terminalOpen: false,
   pendingTerminalLine: null,
   changes: { open: false, turnId: null, focusPath: null },
   paletteOpen: false,
@@ -71,6 +82,8 @@ export const useStore = create<AppState>(() => ({
   theme: null,
   diffVersion: 0,
   notice: null,
+  nav: { past: [], future: [] },
+  navSilent: false,
 }));
 
 export function receiveSnapshot(model: ReadModel) {
