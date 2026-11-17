@@ -406,6 +406,30 @@ describe("finish", () => {
     expect(events.at(-1)).toEqual({ type: "done", status: "completed", error: null });
   });
 
+  it("settles running tools as done when a plan was proposed", () => {
+    const planProposed = { value: true };
+    const translator = createTranslator({ turnId: "t1", planProposed });
+    const events = [
+      ...translator.push(init()),
+      ...translator.push(assistant("m1", [toolUse("tu1", "ExitPlanMode", { plan: "## ok" })])),
+      ...translator.finish({ kind: "ended" }),
+    ];
+    expect(items(events).at(-1)).toMatchObject({ id: "t1:tu1", status: "done" });
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "completed" });
+  });
+
+  it("fails an ended stream with stderr after a plan was proposed", () => {
+    const planProposed = { value: true };
+    const translator = createTranslator({ turnId: "t1", planProposed });
+    const events = [
+      ...translator.push(init()),
+      ...translator.push(assistant("m1", [toolUse("tu1", "ExitPlanMode", { plan: "## ok" })])),
+      ...translator.finish({ kind: "ended", stderr: "warn\nfatal: boom\n" }),
+    ];
+    expect(items(events).at(-1)).toMatchObject({ id: "t1:tu1", status: "done" });
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "failed", error: "fatal: boom" });
+  });
+
   it("an ended stream prefers the sign-in sentence, then the last stderr line", () => {
     const stderr = "warming up\nfatal: boom\n\n";
     const plain = run([init()], { kind: "ended", stderr });

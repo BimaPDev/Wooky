@@ -250,23 +250,33 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
     finish(reason) {
       if (finished) return [];
       const out: ProviderEvent[] = [];
-      settleRunningTools("failed", out);
-      if (reason.kind === "aborted") return done("interrupted", null, out);
-      if (reason.kind === "error") return done("failed", errorText(reason.error), out);
+      const lastStderrLine =
+        reason.kind === "ended"
+          ? reason.stderr
+              ?.split("\n")
+              .map((line) => line.trim())
+              .findLast((line) => line !== "")
+          : undefined;
+      if (reason.kind === "aborted") {
+        settleRunningTools("failed", out);
+        return done("interrupted", null, out);
+      }
+      if (reason.kind === "error") {
+        settleRunningTools("failed", out);
+        return done("failed", errorText(reason.error), out);
+      }
       if (planProposed?.value) {
         settleRunningTools("done", out);
+        if (lastStderrLine) return done("failed", clip(lastStderrLine, 300), out);
         return done("completed", null, out);
       }
-      const lastLine = reason.stderr
-        ?.split("\n")
-        .map((line) => line.trim())
-        .findLast((line) => line !== "");
+      settleRunningTools("failed", out);
       return done(
         "failed",
         authFailed
           ? NOT_SIGNED_IN
-          : lastLine
-            ? clip(lastLine, 300)
+          : lastStderrLine
+            ? clip(lastStderrLine, 300)
             : "Claude Code stopped before finishing the turn.",
         out,
       );

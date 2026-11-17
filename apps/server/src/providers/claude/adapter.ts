@@ -17,6 +17,7 @@ import {
   ASK_USER_QUESTION,
   EXIT_PLAN_MODE,
   questionRequest,
+  planDenyMessage,
   resolvePlanMarkdown,
   toolAnswers,
 } from "./interaction.ts";
@@ -299,14 +300,11 @@ async function proposePlan(
   cwd: string,
   lastPlanWritePath: string | null,
 ): Promise<PermissionResult> {
-  const markdown = await resolvePlanMarkdown(toolInput, lastPlanWritePath, cwd);
-  if (!markdown) {
-    return {
-      behavior: "deny",
-      message: "Write the plan to your plan file, then call ExitPlanMode again.",
-    };
+  const resolved = await resolvePlanMarkdown(toolInput, lastPlanWritePath, cwd);
+  if (!resolved.ok) {
+    return { behavior: "deny", message: planDenyMessage(resolved.reason) };
   }
-  emit({ type: "plan", itemId: requestId, markdown });
+  emit({ type: "plan", itemId: requestId, markdown: resolved.markdown });
   return {
     behavior: "deny",
     message: "The user will review the plan.",

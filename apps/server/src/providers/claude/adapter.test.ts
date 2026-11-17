@@ -1,11 +1,12 @@
 import type { ApprovalRequest, ProviderEvent, UserInputRequest } from "@age/contracts";
 import type { Options, query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TurnInput } from "../types.ts";
 import { createClaudeAdapter } from "./adapter.ts";
+import { setPlanUserHomeForTests } from "./interaction.ts";
 import {
   assistant,
   init,
@@ -596,7 +597,7 @@ describe("AskUserQuestion", () => {
     return { requests, result, events, requestApproval, options: calls[0]?.options as Options };
   }
 
-  it("quotes option labels that contain comma-space in answers", async () => {
+  it("keeps single-select labels that contain comma-space unquoted in answers", async () => {
     const ambiguous = {
       questions: [
         {
@@ -609,7 +610,7 @@ describe("AskUserQuestion", () => {
     const { result } = await ask("approve", { "Which?": ["a, b"] }, ambiguous as typeof askInput);
     expect(result).toMatchObject({
       behavior: "allow",
-      updatedInput: { answers: { "Which?": '"a, b"' } },
+      updatedInput: { answers: { "Which?": "a, b" } },
     });
   });
 
@@ -724,6 +725,10 @@ describe("AskUserQuestion", () => {
   });
 });
 
+afterEach(() => {
+  setPlanUserHomeForTests(undefined);
+});
+
 describe("plan mode", () => {
   const plan = "## Plan\n\n1. Add the field\n2. Update the tests";
 
@@ -794,9 +799,11 @@ describe("plan mode", () => {
 
   it("reads a plan file from the default ~/.claude/plans location", async () => {
     const dir = await mkdtemp(join(tmpdir(), "age-plan-home-"));
-    const planPath = join(homedir(), ".claude", "plans", `age-test-${Date.now()}.md`);
+    const fakeHome = await mkdtemp(join(tmpdir(), "age-fake-home-"));
+    setPlanUserHomeForTests(fakeHome);
+    const planPath = join(fakeHome, ".claude", "plans", "task.md");
     const filePlan = "## Home plan";
-    await mkdir(join(homedir(), ".claude", "plans"), { recursive: true });
+    await mkdir(join(fakeHome, ".claude", "plans"), { recursive: true });
     await writeFile(planPath, filePlan);
 
     let result: unknown;
@@ -814,6 +821,81 @@ describe("plan mode", () => {
     );
     expect(events.find((event) => event.type === "plan")).toMatchObject({ markdown: filePlan });
     expect(result).toMatchObject({ behavior: "deny", interrupt: true });
+  });
+
+  it("reads a plan from a custom plansDirectory setting", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "age-plan-settings-"));
+    const customDir = join(dir, "my-plans");
+    await mkdir(join(dir, ".claude"), { recursive: true });
+    await mkdir(customDir, { recursive: true });
+    await writeFile(
+      join(dir, ".claude", "settings.json"),
+      JSON.stringify({ plansDirectory: "my-plans" }),
+    );
+    const planPath = join(customDir, "task.md");
+    const filePlan = "## Custom dir";
+    await writeFile(planPath, filePlan);
+
+    let result: unknown;
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      yield assistant("m1", [toolUse("tw", "Write", { file_path: planPath, content: filePlan })]);
+      yield assistant("m2", [toolUse("tu1", "ExitPlanMode", {})]);
+      result = await params.options?.canUseTool?.("ExitPlanMode", {}, context());
+      yield resultSuccess();
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(
+        turnInput({ interactionMode: "plan", cwd: dir }),
+      ),
+    );
+    expect(events.find((event) => event.type === "plan")).toMatchObject({ markdown: filePlan });
+    expect(result).toMatchObject({ behavior: "deny", interrupt: true });
+  });
+
+  it("denies with a specific message when the plan file is outside allowed roots", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "age-plan-deny-outside-"));
+    const outside = join(dir, "rogue.md");
+    await writeFile(outside, "## rogue");
+
+    let result: unknown;
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      yield assistant("m1", [toolUse("tw", "Write", { file_path: outside, content: "## rogue" })]);
+      yield assistant("m2", [toolUse("tu1", "ExitPlanMode", {})]);
+      result = await params.options?.canUseTool?.("ExitPlanMode", {}, context());
+      yield resultSuccess();
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(
+        turnInput({ interactionMode: "plan", cwd: dir }),
+      ),
+    );
+    expect(events.some((event) => event.type === "plan")).toBe(false);
+    expect((result as { message: string }).message).toMatch(/outside an allowed plans directory/i);
+  });
+
+  it("denies with a specific message when the plan file is too large", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "age-plan-deny-large-"));
+    const planPath = join(dir, ".claude", "plans", "big.md");
+    await mkdir(join(dir, ".claude", "plans"), { recursive: true });
+    await writeFile(planPath, "x".repeat((1 << 20) + 1));
+
+    let result: unknown;
+    const { fake } = fakeQuery(async function* (params) {
+      yield init();
+      yield assistant("m1", [toolUse("tw", "Write", { file_path: planPath, content: "big" })]);
+      yield assistant("m2", [toolUse("tu1", "ExitPlanMode", {})]);
+      result = await params.options?.canUseTool?.("ExitPlanMode", {}, context());
+      yield resultSuccess();
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(
+        turnInput({ interactionMode: "plan", cwd: dir }),
+      ),
+    );
+    expect(events.some((event) => event.type === "plan")).toBe(false);
+    expect((result as { message: string }).message).toMatch(/too large/i);
   });
 
   it("emits no plan event when the plan text is missing", async () => {

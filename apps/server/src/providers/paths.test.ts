@@ -2,7 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { workspaceRelative } from "./paths.ts";
+import { isInsideWorkspace, workspaceRelative } from "./paths.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "age-paths-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -24,5 +24,13 @@ describe("workspaceRelative", () => {
 
   it("treats ..segment names inside the workspace as inside", () => {
     expect(workspaceRelative(join(dir, "..notes.md"), dir)).toBe("..notes.md");
+  });
+});
+
+describe("isInsideWorkspace", () => {
+  it("detects paths inside the workspace across /var spelling aliases", () => {
+    const real = realpathSync(dir);
+    expect(isInsideWorkspace(join(real, "inner.ts"), dir)).toBe(true);
+    expect(isInsideWorkspace("/etc/hosts", dir)).toBe(false);
   });
 });

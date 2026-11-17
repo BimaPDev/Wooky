@@ -34,3 +34,11 @@ export function workspaceRelative(path: string, cwd: string): string {
   }
   return path;
 }
+
+/** Whether an absolute path lies inside a workspace directory (after realpath normalization). */
+export function isInsideWorkspace(path: string, workspace: string): boolean {
+  if (!workspace || !isAbsolute(path)) return false;
+  const rel = workspaceRelative(path, workspace);
+  if (rel === path) return false;
+  return !isOutsideWorkspace(rel);
+}
