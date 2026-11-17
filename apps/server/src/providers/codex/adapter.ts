@@ -28,6 +28,10 @@ import { createUsageBaselineStore } from "./usage-baselines.ts";
 const PROBE_TIMEOUT_MS = 5_000;
 const NOT_FOUND_PROBLEM = "Codex CLI was not found on PATH. Install it and sign in, then refresh.";
 
+// Rollback, user-input requests and plan collaboration mode are not in the protocol types
+// this adapter is built against, so those capabilities stay off.
+const CODEX_CAPABILITIES = { rewind: false, questions: false, planMode: false, queue: true };
+
 const CODEX_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "default", label: "Default" },
   { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
@@ -103,6 +107,7 @@ function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<Provide
         authenticated: null,
         version: null,
         models: [...CODEX_MODELS],
+        capabilities: CODEX_CAPABILITIES,
         problem: NOT_FOUND_PROBLEM,
       });
       return;
@@ -121,6 +126,7 @@ function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<Provide
             authenticated: null,
             version: null,
             models: [...CODEX_MODELS],
+            capabilities: CODEX_CAPABILITIES,
             problem: notFound
               ? NOT_FOUND_PROBLEM
               : `Codex CLI check failed: ${err.message.split(/\r?\n/)[0] ?? "unknown error"}.`,
@@ -135,6 +141,7 @@ function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<Provide
           authenticated: null,
           version: parseVersionOutput(stdout, stderr),
           models: [...CODEX_MODELS],
+          capabilities: CODEX_CAPABILITIES,
           problem: null,
         });
       },
@@ -285,6 +292,7 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
       let protocolFailure: Error | null = null;
       let activeThreadId: string | null = input.resumeSessionId;
       let activeTurn: { threadId: string; turnId: string } | null = null;
+      const nativeTurnId = () => activeTurn?.turnId;
 
       let resolveTurnWaiter: (() => void) | null = null;
       const turnWaiter = new Promise<void>((resolve) => {
@@ -455,7 +463,8 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
         }
 
         if (finalDone) {
-          queue.push(finalDone);
+          const nativeRef = nativeTurnId();
+          queue.push(nativeRef ? { ...finalDone, nativeRef } : finalDone);
         }
         queue.close();
       };

@@ -243,6 +243,13 @@ describe("CursorTranslator real-read-shell.ndjson", () => {
     expect(read?.kind === "tool" && read.title).toBe("Read package.json");
   });
 
+  it("never puts request_id on done as nativeRef", async () => {
+    const events = await realEvents();
+    const done = events.at(-1);
+    expect(done).toMatchObject({ type: "done", status: "completed" });
+    expect(done).not.toHaveProperty("nativeRef");
+  });
+
   it("uses turn-scoped deterministic item ids", async () => {
     const events = await realEvents();
     const ids = finalItems(events).map((i) => i.id);

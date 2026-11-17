@@ -270,5 +270,23 @@ describe("createCursorAdapter e2e", () => {
     expect(status.installed).toBe(true);
     expect(status.version).toContain(FAKE_CURSOR_AGENT_VERSION);
     expect(status.models.length).toBeGreaterThan(0);
+    expect(status.capabilities).toEqual({
+      rewind: false,
+      questions: false,
+      planMode: false,
+      queue: true,
+    });
+  });
+
+  it("reports the same capabilities when the binary is missing", async () => {
+    const status = await createCursorAdapter({
+      cursorBin: "/nonexistent/cursor-agent-missing",
+    }).probe();
+    expect(status.capabilities).toEqual({
+      rewind: false,
+      questions: false,
+      planMode: false,
+      queue: true,
+    });
   });
 });

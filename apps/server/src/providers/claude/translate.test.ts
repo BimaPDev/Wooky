@@ -285,6 +285,19 @@ describe("tool lifecycle", () => {
   });
 });
 
+describe("nativeRef", () => {
+  it("uses the last top-level chain uuid, including a trailing tool result", () => {
+    const assistantMsg = assistant("m1", [toolUse("tu1", "Bash", { command: "ls" })]);
+    const userMsg = toolResult("tu1", "ok");
+    const events = run([init(), assistantMsg, userMsg, resultSuccess()]);
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      status: "completed",
+      nativeRef: userMsg.uuid,
+    });
+  });
+});
+
 describe("result", () => {
   it("emits usage then a single completed done", () => {
     const events = run([init(), assistant("m1", [text("hi")]), resultSuccess()]);
@@ -293,7 +306,7 @@ describe("result", () => {
         type: "usage",
         usage: { inputTokens: 120, outputTokens: 45, cachedInputTokens: 30, costUsd: 0.0123 },
       },
-      { type: "done", status: "completed", error: null },
+      { type: "done", status: "completed", error: null, nativeRef: expect.any(String) },
     ]);
     expectOneDoneLast(events);
   });
@@ -333,6 +346,7 @@ describe("result", () => {
       type: "done",
       status: "failed",
       error: "API Error: overloaded",
+      nativeRef: expect.any(String),
     });
   });
 
@@ -363,7 +377,12 @@ describe("finish", () => {
       },
     );
     expect(items(events).at(-1)).toMatchObject({ id: "t1:tu1", status: "failed" });
-    expect(events.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      status: "interrupted",
+      error: null,
+      nativeRef: expect.any(String),
+    });
     expectOneDoneLast(events);
   });
 
@@ -377,6 +396,38 @@ describe("finish", () => {
     const events = run([init()], { kind: "ended" });
     expect(events.at(-1)).toMatchObject({ type: "done", status: "failed" });
     expectOneDoneLast(events);
+  });
+
+  it("completes when the stream ends after a plan was proposed", () => {
+    const planProposed = { value: true };
+    const translator = createTranslator({ turnId: "t1", planProposed });
+    translator.push(init());
+    const events = translator.finish({ kind: "ended" });
+    expect(events.at(-1)).toEqual({ type: "done", status: "completed", error: null });
+  });
+
+  it("settles running tools as done when a plan was proposed", () => {
+    const planProposed = { value: true };
+    const translator = createTranslator({ turnId: "t1", planProposed });
+    const events = [
+      ...translator.push(init()),
+      ...translator.push(assistant("m1", [toolUse("tu1", "ExitPlanMode", { plan: "## ok" })])),
+      ...translator.finish({ kind: "ended" }),
+    ];
+    expect(items(events).at(-1)).toMatchObject({ id: "t1:tu1", status: "done" });
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "completed" });
+  });
+
+  it("fails an ended stream with stderr after a plan was proposed", () => {
+    const planProposed = { value: true };
+    const translator = createTranslator({ turnId: "t1", planProposed });
+    const events = [
+      ...translator.push(init()),
+      ...translator.push(assistant("m1", [toolUse("tu1", "ExitPlanMode", { plan: "## ok" })])),
+      ...translator.finish({ kind: "ended", stderr: "warn\nfatal: boom\n" }),
+    ];
+    expect(items(events).at(-1)).toMatchObject({ id: "t1:tu1", status: "done" });
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "failed", error: "fatal: boom" });
   });
 
   it("an ended stream prefers the sign-in sentence, then the last stderr line", () => {
