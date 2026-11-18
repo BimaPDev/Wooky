@@ -4,7 +4,7 @@ import { Command } from "./commands.ts";
 import { AgeEvent } from "./events.ts";
 import { FileDiff, Id, Project, ProviderKind, ProviderStatus, Thread, Turn } from "./model.ts";
 import { TerminalPush, TerminalSessionId } from "./terminal.ts";
-import { ProviderLimits } from "./usage.ts";
+import { ProviderLimits, UsageHistoryParams, UsageHistoryResult } from "./usage.ts";
 
 /**
  * Wire protocol over a single WebSocket at /ws.
@@ -127,6 +127,11 @@ export const RpcMethods = {
   "usage.limits": {
     params: z.object({ refresh: z.boolean().optional() }),
     result: z.array(ProviderLimits),
+  },
+  /** Aggregated local history. Not the plan-limit meters. */
+  "usage.history": {
+    params: UsageHistoryParams,
+    result: UsageHistoryResult,
   },
 } as const;
 

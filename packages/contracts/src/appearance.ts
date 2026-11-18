@@ -144,5 +144,7 @@ export const DeviceSettings = z.object({
   disabledProviders: z.array(ProviderKind).default([]),
   /** Sending while a turn runs: queue the prompt, or keep the composer blocked. */
   followUp: z.enum(["queue", "off"]).default("queue"),
+  /** Read Claude, Cursor, Codex and OpenCode history on this machine. */
+  importLocalHistory: z.boolean().default(true),
 });
 export type DeviceSettings = z.infer<typeof DeviceSettings>;

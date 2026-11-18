@@ -101,6 +101,10 @@ function createHandlers({
       return { ok: true as const };
     },
     "usage.limits": ({ refresh }) => limits.get({ refresh }),
+    // Station 1 replaces this stub. The method is registered so clients can call it.
+    "usage.history": () => {
+      throw new ServiceError("unavailable", "Usage history is not available yet.");
+    },
   };
 }
 
