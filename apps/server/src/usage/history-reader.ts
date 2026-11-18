@@ -33,6 +33,27 @@ export interface HistoryStat {
   isDirectory(): boolean;
 }
 
+/** What a file looked like when it was parsed. The service compares both fields. */
+export interface HistoryFileStat {
+  size: number;
+  mtimeMs: number;
+}
+
+/**
+ * Optional per-file cache, owned by the service. A reader that parses one file at a time
+ * SHOULD call `get` before reading a file and `set` after parsing it, passing the stat taken
+ * before the read. `get` returns nothing for a file that grew or changed: the service
+ * compares size and mtime and never hands back an entry for a different stat.
+ * Cached records must already be safe to dedupe per file; the service still dedupes globally.
+ * Records handed to `set` or returned by `get` must not be mutated afterwards.
+ * The service persists entries in the existing cache file, pruning those older than 92 days
+ * and those for files the reader no longer reports. A reader that ignores it works as before.
+ */
+export interface HistoryFileCache {
+  get(path: string, stat: HistoryFileStat): HistoryRecord[] | undefined;
+  set(path: string, stat: HistoryFileStat, records: HistoryRecord[]): void;
+}
+
 export interface HistoryReaderContext {
   /** User home. Tests pass a temporary directory. */
   homeDir: string;
@@ -43,6 +64,8 @@ export interface HistoryReaderContext {
   untilMs: number;
   signal: AbortSignal;
   fs: HistoryFs;
+  /** Absent when the caller offers no file cache. */
+  fileCache?: HistoryFileCache;
 }
 
 export interface HistorySourceReport {

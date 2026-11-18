@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat as statFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { UsageHistoryPricing } from "@age/contracts";
 import { z } from "zod";
+import { parseJsonSafely } from "./safe-input.ts";
 
 /** USD per token. Cache rates fall back to `input` when the table has none. */
 export interface ModelRate {
@@ -40,6 +41,32 @@ const LITELLM_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const RATES_FILE = "usage-model-rates.json";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_BODY_BYTES = 16 * 1024 * 1024;
+const MAX_FILE_BYTES = 16 * 1024 * 1024;
+
+/** Reads a response body as text, stopping and cancelling the stream past `maxBytes`. */
+async function readCapped(response: Response, maxBytes: number): Promise<string> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("rate table response is too large");
+  }
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new Error("rate table response had no body");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("rate table response is too large");
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
 
 const ALIASES: Readonly<Record<string, string>> = {
   "claude-4-sonnet": "claude-sonnet-4",
@@ -239,6 +266,10 @@ export interface PricingOptions {
   retryMs?: number;
   timeoutMs?: number;
   url?: string;
+  /** Cap on the fetched body. Default 16 MB. */
+  maxBodyBytes?: number;
+  /** Cap on the stored rate file. Default 16 MB. */
+  maxFileBytes?: number;
 }
 
 interface StoredRates {
@@ -265,6 +296,8 @@ export function createPricingService(options: PricingOptions): PricingService {
   const retryMs = options.retryMs ?? 10 * 60 * 1000;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const url = options.url ?? LITELLM_URL;
+  const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
+  const maxFileBytes = options.maxFileBytes ?? MAX_FILE_BYTES;
   const file = join(options.home, RATES_FILE);
 
   let stored: StoredRates | null | undefined;
@@ -274,7 +307,8 @@ export function createPricingService(options: PricingOptions): PricingService {
   async function readStored(): Promise<StoredRates | null> {
     if (stored !== undefined) return stored;
     try {
-      const parsed = RatesCacheFile.parse(JSON.parse(await readFile(file, "utf8")));
+      if ((await statFile(file)).size > maxFileBytes) throw new Error("rate file is too large");
+      const parsed = RatesCacheFile.parse(parseJsonSafely(await readFile(file, "utf8")));
       stored = { fetchedAt: parsed.fetchedAt, rates: parsed.rates };
     } catch {
       stored = null;
@@ -303,7 +337,7 @@ export function createPricingService(options: PricingOptions): PricingService {
       headers: { accept: "application/json" },
     });
     if (!response.ok) throw new Error(`rate table request failed (${response.status})`);
-    const rates = reduceLitellm(await response.json());
+    const rates = reduceLitellm(parseJsonSafely(await readCapped(response, maxBodyBytes)));
     if (Object.keys(rates).length === 0) throw new Error("rate table was empty");
     return { fetchedAt: now(), rates };
   }

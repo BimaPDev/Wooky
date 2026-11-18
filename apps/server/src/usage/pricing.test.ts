@@ -250,4 +250,59 @@ describe("pricing service", () => {
     const snapshot = await service(respond(table(1e-6))).cached();
     expect(snapshot.status).toBe("unavailable");
   });
+
+  it("treats a response above the byte cap as a failed fetch and stops reading it", async () => {
+    let cancelled = false;
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(512));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(body));
+    const snapshot = await createPricingService({
+      home,
+      fetch: fetchFn,
+      now: () => clock,
+      maxBodyBytes: 4096,
+    }).load();
+    expect(snapshot.status).toBe("unavailable");
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(20);
+  });
+
+  it("rejects a declared content length above the cap without reading", async () => {
+    const fetchFn = vi.fn<typeof fetch>(
+      async () => new Response("{}", { headers: { "content-length": "999999999" } }),
+    );
+    const snapshot = await createPricingService({
+      home,
+      fetch: fetchFn,
+      now: () => clock,
+      maxBodyBytes: 4096,
+    }).load();
+    expect(snapshot.status).toBe("unavailable");
+  });
+
+  it("ignores a rate file above the size cap", async () => {
+    await service(respond(table(1e-6))).load();
+    const capped = createPricingService({ home, now: () => clock, maxFileBytes: 10 });
+    expect((await capped.cached()).status).toBe("unavailable");
+    expect((await service(offline()).cached()).status).toBe("ok");
+  });
+
+  it("drops prototype-polluting keys from a stored rate file", async () => {
+    await writeFile(
+      join(home, "usage-model-rates.json"),
+      `{"version":1,"fetchedAt":${NOW},"rates":{"__proto__":{"input":1,"output":1},"ok-model":{"input":1,"output":2}}}`,
+    );
+    const snapshot = await service(offline()).cached();
+    expect(snapshot.table["ok-model"]?.output).toBe(2);
+    expect(Object.getPrototypeOf(snapshot.table)).toBe(Object.prototype);
+    expect(Object.hasOwn(snapshot.table, "__proto__")).toBe(false);
+  });
 });

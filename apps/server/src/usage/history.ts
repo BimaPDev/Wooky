@@ -37,12 +37,28 @@ export interface WorkerHostOptions {
   env?: NodeJS.ProcessEnv;
   /** File URL of a module exporting `HISTORY_READERS`. Tests only. */
   readersModule?: string;
+  /** Tests only: stands in for the `worker_threads` Worker. */
+  spawn?: (init: WorkerInit) => WorkerLike;
+  /** Bounds the wait for the shutdown ack in `close()`. */
+  timer?: HistoryTimer;
 }
+
+/** The slice of `Worker` the host uses. */
+export interface WorkerLike {
+  postMessage(message: WorkerEnvelope): void;
+  on(event: "message", listener: (reply: WorkerReply) => void): unknown;
+  on(event: "error" | "exit", listener: () => void): unknown;
+  terminate(): Promise<unknown>;
+  unref(): unknown;
+}
+
+const CLOSE_ACK_MS = 2_000;
 
 /** One long-lived `worker_threads` Worker, started on first use and restarted if it dies. */
 export function createWorkerHost(options: WorkerHostOptions): WorkerHost {
-  let worker: Worker | null = null;
+  let worker: WorkerLike | null = null;
   let nextId = 1;
+  const timer = options.timer ?? defaultTimer;
   const pending = new Map<
     number,
     { resolve: (value: AggregateResponse | null) => void; reject: (error: Error) => void }
@@ -53,17 +69,19 @@ export function createWorkerHost(options: WorkerHostOptions): WorkerHost {
     pending.clear();
   }
 
-  function start(): Worker {
+  function start(): WorkerLike {
     const init: WorkerInit = {
       ageUsageHistory: true,
       homeDir: options.userHome,
       cachePath: join(options.home, CACHE_FILE_NAME),
       readersModule: options.readersModule ?? null,
     };
-    const created = new Worker(new URL("./history-worker.ts", import.meta.url), {
-      workerData: init,
-      env: options.env ?? process.env,
-    });
+    const created =
+      options.spawn?.(init) ??
+      new Worker(new URL("./history-worker.ts", import.meta.url), {
+        workerData: init,
+        env: options.env ?? process.env,
+      });
     created.unref();
     created.on("message", (reply: WorkerReply) => {
       const entry = pending.get(reply.id);
@@ -97,6 +115,20 @@ export function createWorkerHost(options: WorkerHostOptions): WorkerHost {
       const current = worker;
       worker = null;
       if (current === null) return;
+      const id = nextId++;
+      const acked = new Promise<void>((resolve) => {
+        pending.set(id, { resolve: () => resolve(), reject: () => resolve() });
+      });
+      const shutdown: WorkerEnvelope = { id, request: { kind: "shutdown" } };
+      const limit = timer.after(CLOSE_ACK_MS);
+      try {
+        current.postMessage(shutdown);
+        await Promise.race([acked, limit.promise]);
+      } catch {
+        // The worker is already gone; terminate below is a no-op.
+      } finally {
+        limit.cancel();
+      }
       failAll("history worker closed");
       await current.terminate();
     },

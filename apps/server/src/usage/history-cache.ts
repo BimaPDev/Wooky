@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat as statFile, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Origin } from "@age/contracts";
 import type {
@@ -8,9 +8,12 @@ import type {
   HistorySourceReport,
   HistoryStat,
 } from "./history-reader.ts";
+import { parseJsonSafely, sanitizeNote } from "./safe-input.ts";
 
 export const CACHE_FILE_NAME = "usage-history-cache-v1.json";
 export const RETENTION_MS = 92 * 24 * 60 * 60 * 1000;
+/** A cache file above this is treated as corrupt and rebuilt, not parsed. */
+export const MAX_CACHE_BYTES = 128 * 1024 * 1024;
 
 const ORIGINS: readonly Origin[] = ["claude", "cursor", "codex", "opencode"];
 const STATUSES = new Set<string>(["ok", "partial", "missing", "failed"]);
@@ -29,11 +32,20 @@ export interface InputFingerprint {
   dirs: Array<[path: string, names: string | null]>;
 }
 
+/** One file's parsed rows, valid while its size and mtime are unchanged. */
+export interface FileEntry {
+  size: number;
+  mtimeMs: number;
+  records: HistoryRecord[];
+}
+
 export interface OriginEntry {
   fingerprint: InputFingerprint;
   report: HistorySourceReport;
   /** Reader output, already deduped by `dedupeKey`. */
   records: HistoryRecord[];
+  /** Per-file rows for readers that use `HistoryReaderContext.fileCache`, keyed by path. */
+  files: Map<string, FileEntry>;
 }
 
 export interface CacheData {
@@ -219,7 +231,8 @@ function decodeReport(origin: Origin, value: unknown): HistorySourceReport | nul
     status: status as HistorySourceReport["status"],
     files,
   };
-  if (note !== undefined) report.note = note;
+  const safe = sanitizeNote(note);
+  if (safe !== undefined) report.note = safe;
   return report;
 }
 
@@ -241,7 +254,7 @@ function decodeFingerprint(value: unknown): InputFingerprint | null {
 
 function decodeEntry(origin: Origin, value: unknown): OriginEntry | null {
   if (typeof value !== "object" || value === null) return null;
-  const { fingerprint, report, records } = value as Record<string, unknown>;
+  const { fingerprint, report, records, files } = value as Record<string, unknown>;
   const decodedFingerprint = decodeFingerprint(fingerprint);
   const decodedReport = decodeReport(origin, report);
   if (decodedFingerprint === null || decodedReport === null || !Array.isArray(records)) return null;
@@ -251,15 +264,41 @@ function decodeEntry(origin: Origin, value: unknown): OriginEntry | null {
     if (record === null) return null;
     decoded.push(record);
   }
-  return { fingerprint: decodedFingerprint, report: decodedReport, records: decoded };
+  return {
+    fingerprint: decodedFingerprint,
+    report: decodedReport,
+    records: decoded,
+    files: decodeFiles(origin, files),
+  };
+}
+
+/** Lenient: a malformed file cache costs a re-read of those files, not the whole origin. */
+function decodeFiles(origin: Origin, value: unknown): Map<string, FileEntry> {
+  const out = new Map<string, FileEntry>();
+  if (!Array.isArray(value)) return out;
+  for (const item of value) {
+    if (!Array.isArray(item) || item.length !== 4) return new Map();
+    const [path, size, mtimeMs, rows] = item as unknown[];
+    if (typeof path !== "string" || !isNumber(size) || !isNumber(mtimeMs) || !Array.isArray(rows))
+      return new Map();
+    const records: HistoryRecord[] = [];
+    for (const row of rows) {
+      const record = decodeRecord(origin, row);
+      if (record === null) return new Map();
+      records.push(record);
+    }
+    out.set(path, { size, mtimeMs, records });
+  }
+  return out;
 }
 
 /** Never throws. A missing, unreadable or corrupt file is an empty cache, rebuilt by the next scan. */
-export async function loadCache(path: string): Promise<CacheData> {
+export async function loadCache(path: string, maxBytes = MAX_CACHE_BYTES): Promise<CacheData> {
   const cache = emptyCache();
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readFile(path, "utf8"));
+    if ((await statFile(path)).size > maxBytes) return cache;
+    parsed = parseJsonSafely(await readFile(path, "utf8"));
   } catch {
     return cache;
   }
@@ -273,9 +312,15 @@ export async function loadCache(path: string): Promise<CacheData> {
   return cache;
 }
 
-/** Drops rows older than the retention cutoff. */
+/** Drops rows older than the retention cutoff, and file entries last touched before it. */
 export function pruneEntry(entry: OriginEntry, cutoffMs: number): OriginEntry {
-  return { ...entry, records: entry.records.filter((record) => record.at >= cutoffMs) };
+  const files = new Map<string, FileEntry>();
+  for (const [path, file] of entry.files) {
+    if (file.mtimeMs < cutoffMs) continue;
+    const kept = file.records.filter((record) => record.at >= cutoffMs);
+    files.set(path, kept.length === file.records.length ? file : { ...file, records: kept });
+  }
+  return { ...entry, records: entry.records.filter((record) => record.at >= cutoffMs), files };
 }
 
 /** Writes to a temp file in the same directory, then renames over the target. */
@@ -288,6 +333,12 @@ export async function saveCache(path: string, cache: CacheData): Promise<void> {
       fingerprint: entry.fingerprint,
       report: { status: entry.report.status, files: entry.report.files, note: entry.report.note },
       records: entry.records.map(encodeRecord),
+      files: [...entry.files].map(([filePath, file]) => [
+        filePath,
+        file.size,
+        file.mtimeMs,
+        file.records.map(encodeRecord),
+      ]),
     };
   }
   const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
