@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ImportTuning,
+  type HistoryFileCache,
+  type HistoryFileStat,
   type HistoryFs,
   type HistoryReaderContext,
+  type HistoryRecord,
   type HistoryStat,
 } from "../history-reader.ts";
 import { claudeHistoryReader, readLinesForTest } from "./claude.ts";
@@ -106,6 +109,7 @@ function ctx(
     sinceMs?: number;
     untilMs?: number;
     signal?: AbortSignal;
+    fileCache?: HistoryFileCache;
   } = {},
 ): HistoryReaderContext {
   return {
@@ -115,6 +119,7 @@ function ctx(
     untilMs: options.untilMs ?? Number.MAX_SAFE_INTEGER,
     signal: options.signal ?? new AbortController().signal,
     fs,
+    ...(options.fileCache === undefined ? {} : { fileCache: options.fileCache }),
   };
 }
 
@@ -558,6 +563,125 @@ describe("claudeHistoryReader", () => {
     expect(read.records).toHaveLength(1);
     expect(read.records[0]?.sessionKey).toBe("sess-kept");
     expect(read.report.status).toBe("ok");
+  });
+
+  it("does not re-read a file when fileCache returns a hit", async () => {
+    const home = "/home/user";
+    const { fs: inner } = claudeTree(home, [
+      { rel: "cache-hit.jsonl", content: assistantLine(), mtimeMs: FRESH_MTIME },
+    ]);
+    let readCount = 0;
+    const fs: HistoryFs = {
+      ...inner,
+      readFile(path) {
+        readCount += 1;
+        return inner.readFile(path);
+      },
+    };
+    const store = new Map<string, { stat: HistoryFileStat; records: HistoryRecord[] }>();
+    const fileCache: HistoryFileCache = {
+      get(path, stat) {
+        const hit = store.get(path);
+        if (hit === undefined || hit.stat.size !== stat.size || hit.stat.mtimeMs !== stat.mtimeMs) {
+          return undefined;
+        }
+        return hit.records;
+      },
+      set(path, stat, records) {
+        store.set(path, { stat, records });
+      },
+    };
+    const base = ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL });
+    const warm = await claudeHistoryReader.read({ ...base, fileCache });
+    expect(warm.records).toHaveLength(1);
+    expect(readCount).toBe(1);
+
+    readCount = 0;
+    const again = await claudeHistoryReader.read({ ...base, fileCache });
+    expect(again.records).toHaveLength(1);
+    expect(readCount).toBe(0);
+  });
+
+  it("re-reads and re-sets when size or mtime changes", async () => {
+    const home = "/home/user";
+    const fileName = "mtime.jsonl";
+    const firstBody = assistantLine({
+      message: {
+        id: "msg-a",
+        model: "claude-sonnet-4",
+        usage: { input_tokens: 1, output_tokens: 2 },
+      },
+    });
+    const { fs: inner, projectsDir } = claudeTree(home, [
+      { rel: fileName, content: firstBody, mtimeMs: FRESH_MTIME },
+    ]);
+    const filePath = `${projectsDir}/${fileName}`;
+    let body = firstBody;
+    let mtimeMs = FRESH_MTIME;
+    const fs: HistoryFs = {
+      ...inner,
+      readFile(path) {
+        if (path === filePath) return Promise.resolve(encoder.encode(body));
+        return inner.readFile(path);
+      },
+      async stat(path) {
+        if (path === filePath) {
+          const data = encoder.encode(body);
+          return fileStat(data.byteLength, mtimeMs);
+        }
+        return inner.stat(path);
+      },
+    };
+    const sets: Array<{ size: number; mtimeMs: number; count: number }> = [];
+    const fileCache: HistoryFileCache = {
+      get() {
+        return undefined;
+      },
+      set(_path, stat, records) {
+        sets.push({ size: stat.size, mtimeMs: stat.mtimeMs, count: records.length });
+      },
+    };
+    const base = ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL });
+    const first = await claudeHistoryReader.read({ ...base, fileCache });
+    expect(first.records[0]?.outputTokens).toBe(2);
+    expect(sets).toHaveLength(1);
+
+    body =
+      firstBody +
+      assistantLine({
+        message: {
+          id: "msg-b",
+          model: "claude-sonnet-4",
+          usage: { input_tokens: 3, output_tokens: 9 },
+        },
+      });
+    mtimeMs = FRESH_MTIME + 1;
+    const second = await claudeHistoryReader.read({ ...base, fileCache });
+    expect(second.records).toHaveLength(2);
+    expect(sets).toHaveLength(2);
+    expect(sets[1]?.size).not.toBe(sets[0]?.size);
+    expect(sets[1]?.mtimeMs).toBe(FRESH_MTIME + 1);
+  });
+
+  it("does not store partial files in fileCache", async () => {
+    const home = "/home/user";
+    const padding = "x".repeat(ImportTuning.maxLineBytes + 1);
+    const { fs } = claudeTree(home, [
+      {
+        rel: "partial-cache.jsonl",
+        content: `${padding}\n${assistantLine()}`,
+        mtimeMs: FRESH_MTIME,
+      },
+    ]);
+    const set = vi.fn<HistoryFileCache["set"]>();
+    const fileCache: HistoryFileCache = {
+      get: () => undefined,
+      set,
+    };
+    await claudeHistoryReader.read(
+      ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL, fileCache }),
+    );
+    expect(set).not.toHaveBeenCalled();
   });
 
   it("marks partial when a file read fails and continues without leaking the path", async () => {

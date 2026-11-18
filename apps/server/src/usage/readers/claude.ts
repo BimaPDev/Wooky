@@ -281,6 +281,14 @@ export const claudeHistoryReader: HistoryReader = {
       if (fileStat.mtimeMs < mtimeFloor) continue;
 
       filesScanned++;
+
+      const fileKey = { size: fileStat.size, mtimeMs: fileStat.mtimeMs };
+      const cached = ctx.fileCache?.get(path, fileKey);
+      if (cached !== undefined) {
+        records.push(...cached);
+        continue;
+      }
+
       let filePartial = false;
       const markPartial = () => {
         filePartial = true;
@@ -307,6 +315,7 @@ export const claudeHistoryReader: HistoryReader = {
       }
 
       if (filePartial) partial = true;
+      if (!filePartial) ctx.fileCache?.set(path, fileKey, fileRecords);
       records.push(...fileRecords);
     }
 

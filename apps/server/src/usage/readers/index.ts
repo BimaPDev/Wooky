@@ -1,5 +1,6 @@
 import type { Origin } from "@age/contracts";
 import type { HistoryReader } from "../history-reader.ts";
+import { claudeHistoryReader } from "./claude.ts";
 
 /** Placeholder that finds nothing. Each real reader replaces one stub entry below. */
 function stubReader(origin: Origin): HistoryReader {
@@ -9,8 +10,6 @@ function stubReader(origin: Origin): HistoryReader {
   };
 }
 
-// STUB: Station 2 replaces this with the real import from ./claude.ts.
-const stubClaudeReader = stubReader("claude");
 // STUB: Station 3 replaces these three with the real imports from ./cursor.ts, ./opencode.ts
 // and ./codex.ts.
 const stubCursorReader = stubReader("cursor");
@@ -19,7 +18,7 @@ const stubCodexReader = stubReader("codex");
 
 /** Every local history reader. The history worker runs all of them over the window. */
 export const HISTORY_READERS: readonly HistoryReader[] = [
-  stubClaudeReader,
+  claudeHistoryReader,
   stubCursorReader,
   stubCodexReader,
   stubOpencodeReader,
