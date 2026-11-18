@@ -77,6 +77,18 @@ describe("extractPathFromCapture", () => {
     ].join("\n");
     expect(extractPathFromCapture(output)).toBe("/last");
   });
+
+  it("parses the marker pair after 300 KiB of rc noise", () => {
+    const noise = "x".repeat(300 * 1024);
+    const output = [noise, PATH_CAPTURE_START, "/tail/bin", PATH_CAPTURE_END].join("\n");
+    expect(extractPathFromCapture(output)).toBe("/tail/bin");
+  });
+
+  it("parses the marker pair after 100 KiB of rc noise", () => {
+    const noise = "n".repeat(100 * 1024);
+    const output = [noise, PATH_CAPTURE_START, "/ok", PATH_CAPTURE_END].join("\n");
+    expect(extractPathFromCapture(output)).toBe("/ok");
+  });
 });
 
 describe("mergeLoginShellPath", () => {
@@ -128,14 +140,16 @@ describe("captureLoginShellPath", () => {
   });
 
   it("accepts stdout when the shell exits non-zero", async () => {
-    const { child, stdout } = fakeShellChild();
+    const { child, stdout } = fakeShellChild(88);
     const spawnShell = vi.fn<SpawnShell>(() => child);
+    const killProcess = vi.fn<KillProcess>();
 
     const promise = captureLoginShellPath(
       "/bin/zsh",
       { PATH: "/usr/bin", HOME: "/h" },
       {
         spawnShell,
+        killProcess,
       },
     );
 
@@ -143,6 +157,47 @@ describe("captureLoginShellPath", () => {
     child.emit("close", 1, null);
 
     await expect(promise).resolves.toBe("/ok/bin");
+    expect(killProcess).toHaveBeenCalledWith(-88, "SIGKILL");
+  });
+
+  it("settles on a complete marker pair before close and kills the process group", async () => {
+    const { child, stdout } = fakeShellChild(66);
+    const spawnShell = vi.fn<SpawnShell>(() => child);
+    const killProcess = vi.fn<KillProcess>();
+
+    const promise = captureLoginShellPath(
+      "/bin/zsh",
+      { PATH: "/usr/bin", HOME: "/h" },
+      {
+        spawnShell,
+        killProcess,
+      },
+    );
+
+    stdout.write("sleep 25 &\n");
+    stdout.write([PATH_CAPTURE_START, "/fast/bin", PATH_CAPTURE_END].join("\n"));
+
+    await expect(promise).resolves.toBe("/fast/bin");
+    expect(killProcess).toHaveBeenCalledWith(-66, "SIGKILL");
+  });
+
+  it("parses PATH when marker pair follows more than 256 KiB of stdout noise", async () => {
+    const { child, stdout } = fakeShellChild(31);
+    const spawnShell = vi.fn<SpawnShell>(() => child);
+    const killProcess = vi.fn<KillProcess>();
+    const noise = "z".repeat(300 * 1024);
+
+    const promise = captureLoginShellPath(
+      "/bin/zsh",
+      { PATH: "/usr/bin", HOME: "/h" },
+      { spawnShell, killProcess },
+    );
+
+    stdout.write(`${noise}\n`);
+    stdout.write([PATH_CAPTURE_START, "/after/noise", PATH_CAPTURE_END].join("\n"));
+    child.emit("close", 0, null);
+
+    await expect(promise).resolves.toBe("/after/noise");
   });
 });
 
@@ -229,6 +284,31 @@ describe("hydrateLoginShellPath", () => {
     const { spawnShell: spawn2 } = mockSpawn(text);
     await hydrateLoginShellPath({ platform: "linux", env: envWithHome, spawnShell: spawn2 });
     expect(envWithHome.HOME).toBe("/custom");
+  });
+
+  it("returns failed when kill throws EPERM on timeout", async () => {
+    vi.useFakeTimers();
+    const { child } = fakeShellChild(44);
+    const spawnShell = vi.fn<SpawnShell>(() => child);
+    const eperm = Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+    const killProcess = vi.fn<KillProcess>(() => {
+      throw eperm;
+    });
+    const env = { PATH: "/usr/bin", HOME: "/h", SHELL: "/bin/zsh" };
+
+    const promise = hydrateLoginShellPath({
+      platform: "darwin",
+      env,
+      spawnShell,
+      killProcess,
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await promise;
+
+    expect(result).toEqual({ source: "failed", added: [] });
+    expect(env.PATH).toBe("/usr/bin");
+    vi.useRealTimers();
   });
 
   it("makes only one capture attempt", async () => {

@@ -149,6 +149,23 @@ function killProcessGroup(pid: number, kill: KillProcess): void {
   }
 }
 
+function appendOutputTail(current: string, piece: string, maxBytes: number): string {
+  let combined = current + piece;
+  while (Buffer.byteLength(combined, "utf8") > maxBytes) {
+    const trim = Buffer.byteLength(combined, "utf8") - maxBytes;
+    let removed = 0;
+    let i = 0;
+    while (i < combined.length && removed < trim) {
+      const unit = combined[i];
+      if (unit === undefined) break;
+      removed += Buffer.byteLength(unit, "utf8");
+      i++;
+    }
+    combined = combined.slice(i);
+  }
+  return combined;
+}
+
 export async function captureLoginShellPath(
   shell: string,
   env: NodeJS.ProcessEnv,
@@ -176,6 +193,14 @@ export async function captureLoginShellPath(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      try {
+        killGroup();
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") {
+          /* already gone */
+        }
+        /* timer callback rejects on other kill errors; here we only best-effort cleanup */
+      }
       options.onActiveShell?.(undefined);
       fn();
     };
@@ -188,19 +213,22 @@ export async function captureLoginShellPath(
 
     const timer = setTimeout(() => {
       timedOut = true;
-      killGroup();
+      try {
+        killGroup();
+      } catch (error) {
+        finish(() => reject(error));
+      }
     }, CAPTURE_TIMEOUT_MS);
 
-    const append = (chunk: Buffer, target: "out" | "err") => {
-      const buf = target === "out" ? stdout : "";
-      if (Buffer.byteLength(buf, "utf8") >= MAX_OUTPUT_BYTES) return;
-      const piece = chunk.toString("utf8");
-      if (target === "out") {
-        stdout = (stdout + piece).slice(0, MAX_OUTPUT_BYTES);
-      }
+    const settleIfMarked = () => {
+      const path = extractPathFromCapture(stdout);
+      if (path) finish(() => resolve(path));
     };
 
-    child.stdout?.on("data", (chunk: Buffer) => append(chunk, "out"));
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout = appendOutputTail(stdout, chunk.toString("utf8"), MAX_OUTPUT_BYTES);
+      settleIfMarked();
+    });
     child.stderr?.on("data", () => undefined);
 
     child.on("error", (error) => {
@@ -208,6 +236,7 @@ export async function captureLoginShellPath(
     });
 
     child.on("close", (code, signal) => {
+      if (settled) return;
       const path = extractPathFromCapture(stdout);
       if (path) {
         finish(() => resolve(path));
