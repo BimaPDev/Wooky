@@ -2,7 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { TerminalPush } from "@age/contracts";
 import { ServiceError } from "../errors.ts";
-import { defaultCwd, resolveShellCommand } from "./shell.ts";
+import { defaultCwd, resolveShellCommand, type ShellCommand } from "./shell.ts";
 
 export type TerminalSink = (message: TerminalPush) => void;
 
@@ -16,7 +16,7 @@ export interface TerminalManager {
   open(
     input: { cwd?: string; cols?: number; rows?: number },
     sink: TerminalSink,
-  ): { sessionId: string; shell: string };
+  ): { sessionId: string; shell: string; lineEnding: ShellCommand["lineEnding"] };
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
   close(sessionId: string): void;
@@ -30,7 +30,7 @@ export function createTerminalManager(): TerminalManager {
   function open(
     input: { cwd?: string; cols?: number; rows?: number },
     sink: TerminalSink,
-  ): { sessionId: string; shell: string } {
+  ): { sessionId: string; shell: string; lineEnding: ShellCommand["lineEnding"] } {
     const shell = resolveShellCommand();
     const cwd = defaultCwd(input.cwd);
     // age-allow child-process: terminal sessions are user-facing shells the server owns.
@@ -83,7 +83,7 @@ export function createTerminalManager(): TerminalManager {
       data: `Wooky terminal · ${shell.label}\r\n${cwd}\r\n\r\n`,
     });
 
-    return { sessionId: id, shell: shell.label };
+    return { sessionId: id, shell: shell.label, lineEnding: shell.lineEnding };
   }
 
   function write(sessionId: string, data: string) {

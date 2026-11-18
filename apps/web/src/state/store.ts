@@ -36,8 +36,6 @@ export interface AppState {
   selectedThreadId: string | null;
   sidebarOpen: boolean;
   terminalOpen: boolean;
-  /** Line to send once the terminal session is ready (T3-style Sign in). */
-  pendingTerminalLine: string | null;
   changes: ChangesPanel;
   paletteOpen: boolean;
   settingsOpen: boolean;
@@ -77,7 +75,6 @@ export const useStore = create<AppState>(() => ({
   selectedThreadId: null,
   sidebarOpen: true,
   terminalOpen: false,
-  pendingTerminalLine: null,
   changes: { open: false, turnId: null, focusPath: null },
   paletteOpen: false,
   settingsOpen: false,
