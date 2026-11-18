@@ -1,5 +1,5 @@
 import type { ApprovalRequest, ProviderEvent, UserInputRequest } from "@age/contracts";
-import type { Options, query } from "@anthropic-ai/claude-agent-sdk";
+import type { AccountInfo, Options, query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +26,51 @@ function fakeQuery(script: Script) {
   const fake = ((params: Params) => {
     calls.push(params);
     return Object.assign(script(params), { close });
+  }) as unknown as typeof query;
+  return { fake, calls, close };
+}
+
+function fakeQueryForAuthProbe(
+  probe: { account?: AccountInfo; delayMs?: number; fail?: boolean } | "hang" | "error",
+) {
+  const calls: Params[] = [];
+  const close = vi.fn<() => void>();
+  const fake = ((params: Params) => {
+    calls.push(params);
+    const initializationResult = () => {
+      if (probe === "error") return Promise.reject(new Error("sdk init failed"));
+      if (probe === "hang") return new Promise(() => undefined);
+      if (probe.fail) return Promise.reject(new Error("sdk init failed"));
+      if (probe.delayMs) {
+        return new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                account: probe.account,
+                commands: [],
+                agents: [],
+                models: [],
+                output_style: "",
+                available_output_styles: [],
+              }),
+            probe.delayMs,
+          ),
+        );
+      }
+      return Promise.resolve({
+        account: probe.account,
+        commands: [],
+        agents: [],
+        models: [],
+        output_style: "",
+        available_output_styles: [],
+      });
+    };
+    const gen = async function* () {
+      if (false as boolean) yield undefined;
+      await new Promise<never>(() => undefined);
+    };
+    return Object.assign(gen(), { initializationResult, close });
   }) as unknown as typeof query;
   return { fake, calls, close };
 }
@@ -444,10 +489,54 @@ describe("probe", () => {
   });
 
   it("reads the version from a working executable", async () => {
-    const status = await createClaudeAdapter({ claudeBin: process.execPath }).probe();
+    const { fake } = fakeQueryForAuthProbe({ account: { tokenSource: "oauth" } });
+    const status = await createClaudeAdapter({
+      query: fake,
+      claudeBin: process.execPath,
+    }).probe();
     expect(status.installed).toBe(true);
     expect(status.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(status.authenticated).toBe(true);
     expect(status.problem).toBeNull();
+  });
+
+  it("reports signed out when the SDK account has no token or API key source", async () => {
+    const { fake, close } = fakeQueryForAuthProbe({
+      account: { tokenSource: "none", apiKeySource: "none" },
+    });
+    const status = await createClaudeAdapter({ query: fake, claudeBin: process.execPath }).probe();
+    expect(status.authenticated).toBe(false);
+    expect(status.problem).toBe("Run `claude auth login`, then refresh.");
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("reports signed in when tokenSource is set", async () => {
+    const { fake } = fakeQueryForAuthProbe({ account: { tokenSource: "oauth" } });
+    const status = await createClaudeAdapter({ query: fake, claudeBin: process.execPath }).probe();
+    expect(status.authenticated).toBe(true);
+    expect(status.problem).toBeNull();
+  });
+
+  it("reports signed in when apiKeySource is set", async () => {
+    const { fake } = fakeQueryForAuthProbe({ account: { apiKeySource: "ANTHROPIC_API_KEY" } });
+    const status = await createClaudeAdapter({ query: fake, claudeBin: process.execPath }).probe();
+    expect(status.authenticated).toBe(true);
+    expect(status.problem).toBeNull();
+  });
+
+  it("leaves auth unknown on SDK initialization timeout", async () => {
+    const { fake, calls } = fakeQueryForAuthProbe("hang");
+    const status = await createClaudeAdapter({ query: fake, claudeBin: process.execPath }).probe();
+    expect(status.authenticated).toBeNull();
+    expect(status.problem).toBe("Could not verify sign-in.");
+    expect(calls[0]?.options).toMatchObject({ persistSession: false, tools: [] });
+  }, 10_000);
+
+  it("leaves auth unknown when initialization fails", async () => {
+    const { fake } = fakeQueryForAuthProbe("error");
+    const status = await createClaudeAdapter({ query: fake, claudeBin: process.execPath }).probe();
+    expect(status.authenticated).toBeNull();
+    expect(status.problem).toBe("Could not verify sign-in.");
   });
 });
 
@@ -967,7 +1056,11 @@ describe("capabilities", () => {
     const missing = await createClaudeAdapter({
       claudeBin: "/nonexistent/age-test/claude",
     }).probe();
-    const present = await createClaudeAdapter({ claudeBin: process.execPath }).probe();
+    const { fake } = fakeQueryForAuthProbe({ account: { tokenSource: "oauth" } });
+    const present = await createClaudeAdapter({
+      query: fake,
+      claudeBin: process.execPath,
+    }).probe();
     for (const status of [missing, present]) {
       expect(status.capabilities).toEqual({
         rewind: true,

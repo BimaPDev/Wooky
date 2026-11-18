@@ -113,7 +113,7 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
 
       const problem =
         authenticated === false
-          ? "Cursor Agent is not signed in. Run `cursor-agent login`, then refresh."
+          ? "Cursor Agent is not signed in. Run `agent login`, then refresh."
           : null;
 
       return {

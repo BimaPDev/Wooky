@@ -67,6 +67,25 @@ describe("probe with nonexistent binary", () => {
     expect(parseAuthFromStatus("Not signed in")).toBe(false);
   });
 
+  it("probe problem text names agent login when signed out", async () => {
+    const prev = process.env.AGE_FAKE_CURSOR_AUTH;
+    process.env.AGE_FAKE_CURSOR_AUTH = "signed-out";
+    try {
+      const adapter = createCursorAdapter({
+        cursorBin: process.execPath,
+        cursorArgsPrefix: [CURSOR_FAKE_AGENT_SCRIPT],
+      });
+      const status = await adapter.probe();
+      expect(status.authenticated).toBe(false);
+      expect(status.problem).toBe(
+        "Cursor Agent is not signed in. Run `agent login`, then refresh.",
+      );
+    } finally {
+      if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_AUTH;
+      else process.env.AGE_FAKE_CURSOR_AUTH = prev;
+    }
+  });
+
   it("recognises the CLI's sign-in refusal", () => {
     expect(
       isAuthFailure(
