@@ -565,6 +565,16 @@ function respond(method: RpcMethod, params: unknown): unknown {
       return fixtureModel;
     case "providers.list":
       return fixtureProviders;
+    case "providers.signIn": {
+      const provider = (params as RpcParams<"providers.signIn">).provider;
+      const command =
+        provider === "claude"
+          ? "claude auth login"
+          : provider === "codex"
+            ? "codex login"
+            : "agent login";
+      return { opened: true as const, command };
+    }
     case "git.diff":
       return diffs[(params as RpcParams<"git.diff">).threadId] ?? [];
     case "fs.pickable":

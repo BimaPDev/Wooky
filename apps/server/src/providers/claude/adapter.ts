@@ -23,6 +23,7 @@ import {
 } from "./interaction.ts";
 import { clip } from "./text.ts";
 import { describeTool, str, toolKind, type ToolInput } from "./tools.ts";
+import { probeClaudeAuth } from "./probe-auth.ts";
 import { createTranslator } from "./translate.ts";
 
 const execFileAsync = promisify(execFile);
@@ -82,7 +83,21 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           windowsHide: true,
         });
         const version = /\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? null;
-        return { ...base, installed: true, version, problem: null };
+        const claudeExecutable = resolved?.prefixArgs.length
+          ? undefined
+          : (resolved?.command ?? options.claudeBin);
+        const auth = await probeClaudeAuth(
+          runQuery,
+          claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
+          PROBE_TIMEOUT_MS,
+        );
+        return {
+          ...base,
+          installed: true,
+          version,
+          authenticated: auth.authenticated,
+          problem: auth.problem,
+        };
       } catch (error) {
         if ((error as { code?: unknown }).code === "ENOENT") {
           const problem =

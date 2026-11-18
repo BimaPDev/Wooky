@@ -1,9 +1,14 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { takePendingTerminalLine, toggleTerminal } from "../state/actions.ts";
+import { toggleTerminal } from "../state/actions.ts";
 import { backend } from "../state/backend.ts";
 import { useStore } from "../state/store.ts";
 import { subscribeTerminal } from "../state/terminal.ts";
 import { IconClose } from "./Icons.tsx";
+
+/** Ending comes from `terminal.open`. Older servers omit it; those shells want LF. */
+export function terminalLine(text: string, lineEnding: "\n" | "\r\n" = "\n"): string {
+  return `${text}${lineEnding}`;
+}
 
 export function TerminalPane() {
   const thread = useStore((state) =>
@@ -34,28 +39,24 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
   const scrollRef = useRef<HTMLPreElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sessionRef = useRef<string | null>(null);
-  const pending = useStore((state) => state.pendingTerminalLine);
+  const lineEndingRef = useRef<"\n" | "\r\n">("\n");
 
   const writeTo = (id: string, text: string) =>
     backend()
-      .call("terminal.write", { sessionId: id, data: `${text}\r\n` })
+      .call("terminal.write", { sessionId: id, data: terminalLine(text, lineEndingRef.current) })
       .then(
-        () => setOutput((prev) => prev + `$ ${text}\r\n`),
+        () => setOutput((prev) => prev + `$ ${text}\n`),
         (err: unknown) => {
           setStatus("error");
           setError(err instanceof Error ? err.message : "Write failed.");
         },
       );
 
-  const onReady = useEffectEvent((id: string) => {
+  const onReady = useEffectEvent((id: string, lineEnding: "\n" | "\r\n") => {
     sessionRef.current = id;
+    lineEndingRef.current = lineEnding;
     setSessionId(id);
     setStatus("ready");
-  });
-
-  const deliverPending = useEffectEvent((id: string) => {
-    const text = takePendingTerminalLine(id);
-    if (text) void writeTo(id, text);
   });
 
   const onOpenFailed = useEffectEvent((err: unknown) => {
@@ -73,7 +74,7 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
           void backend().call("terminal.close", { sessionId: result.sessionId });
           return;
         }
-        onReady(result.sessionId);
+        onReady(result.sessionId, result.lineEnding === "\r\n" ? "\r\n" : "\n");
       } catch (err) {
         if (!cancelled) onOpenFailed(err);
       }
@@ -86,11 +87,6 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
       if (id) void backend().call("terminal.close", { sessionId: id });
     };
   }, [cwd]);
-
-  // sync: send a Sign in line queued in the store to the ready server shell, once
-  useEffect(() => {
-    if (pending && sessionId && status === "ready") deliverPending(sessionId);
-  }, [pending, sessionId, status]);
 
   // sync: append terminal chunks pushed over the websocket for this session
   useEffect(() => {

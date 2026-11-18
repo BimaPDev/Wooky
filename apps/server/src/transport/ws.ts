@@ -18,6 +18,7 @@ import type { ProviderRegistry } from "../providers/registry.ts";
 import type { Queries } from "../queries.ts";
 import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
+import { openSignInTerminal } from "../terminal/login.ts";
 import type { TerminalManager } from "../terminal/session.ts";
 import type { LimitsService } from "../usage/limits.ts";
 
@@ -62,6 +63,17 @@ function createHandlers({
     snapshot: () => store.model,
     subscribe: ({ fromSeq }, conn) => ({ replayed: conn.follow(fromSeq) }),
     "providers.list": () => providers.list(),
+    "providers.signIn": async ({ provider }) => {
+      try {
+        return await openSignInTerminal(provider);
+      } catch (error) {
+        if (error instanceof ServiceError) throw error;
+        throw new ServiceError(
+          "unavailable",
+          error instanceof Error ? error.message : "Could not open a terminal.",
+        );
+      }
+    },
     "git.diff": ({ threadId, turnId }) => queries.diff(threadId, turnId),
     "fs.pickable": ({ query }) => queries.pickable(query),
     "fs.searchEntries": (params) => queries.searchEntries(params),

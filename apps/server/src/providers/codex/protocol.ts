@@ -21,8 +21,8 @@
  *   `"untrusted"` so commands prompt, and auto-accepts non-escalated (`!grantRoot`) fileChange prompts
  *   when `runtimeMode === "auto-edits"`. Under `"untrusted"`, Codex still auto-allows its built-in
  *   read-only command safelist without issuing an approval request.
- * - `codex --version` verifies CLI installation without network or quota; authentication cannot be
- *   confirmed without starting an app-server/account check, so `probe()` reports `authenticated: null`.
+ * - `codex --version` verifies CLI installation without network; `probe()` may call `account/read`
+ *   on a short-lived app-server session to learn sign-in status.
  */
 import { z } from "zod";
 import type { RuntimeMode } from "@age/contracts";
@@ -153,6 +153,13 @@ export function runtimeModeToCodexSettings(
 export const InitializeResponseSchema = z.object({
   userAgent: z.string().optional(),
 });
+
+/** `account/read` (`GetAccountResponse` in codex app-server v2). */
+export const AccountReadResponseSchema = z.object({
+  account: z.unknown().nullable().optional(),
+  requiresOpenaiAuth: z.boolean(),
+});
+export type AccountReadResponse = z.infer<typeof AccountReadResponseSchema>;
 
 export const ThreadEnvelopeResponseSchema = z.object({
   thread: z.object({

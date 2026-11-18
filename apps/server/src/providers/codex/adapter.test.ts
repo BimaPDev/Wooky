@@ -105,9 +105,59 @@ describe("createCodexAdapter", () => {
     ProviderStatus.parse(status);
 
     expect(status.installed).toBe(true);
-    expect(status.authenticated).toBeNull();
+    expect(status.authenticated).toBe(true);
     expect(status.version).toBe("0.160.0");
     expect(status.problem).toBeNull();
+  });
+
+  it("probe reports signed out when account is absent and requiresOpenaiAuth is true", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--auth-probe", "requires-auth-absent"],
+    });
+    const status = await adapter.probe();
+    expect(status.authenticated).toBe(false);
+    expect(status.problem).toBe("Run `codex login`, then refresh.");
+  });
+
+  it("probe reports signed out when account is null and requiresOpenaiAuth is true", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--auth-probe", "requires-auth"],
+    });
+    const status = await adapter.probe();
+    expect(status.authenticated).toBe(false);
+    expect(status.problem).toBe("Run `codex login`, then refresh.");
+  });
+
+  it("probe reports signed in when account/read returns an account", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--auth-probe", "signed-in"],
+    });
+    const status = await adapter.probe();
+    expect(status.authenticated).toBe(true);
+    expect(status.problem).toBeNull();
+  });
+
+  it("probe reports authenticated when requiresOpenaiAuth is false with no account", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--auth-probe", "no-openai-auth"],
+    });
+    const status = await adapter.probe();
+    expect(status.authenticated).toBe(true);
+    expect(status.problem).toBeNull();
+  });
+
+  it("probe leaves auth unknown when account/read is unsupported", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--auth-probe", "unsupported"],
+    });
+    const status = await adapter.probe();
+    expect(status.authenticated).toBeNull();
+    expect(status.problem).toBe("Could not verify sign-in.");
   });
 
   it("puts the Codex turn id on done as nativeRef", async () => {
