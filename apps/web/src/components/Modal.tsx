@@ -20,6 +20,7 @@ export function Modal({
     const dialog = ref.current;
     if (!dialog) return;
     if (!dialog.open) dialog.showModal();
+    dialog.focus({ preventScroll: true, focusVisible: false });
     const onCancel = (event: Event) => {
       event.preventDefault();
       cancel();
@@ -34,6 +35,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
+      tabIndex={-1}
       className={className}
       aria-label={label}
       onPointerDown={(event) => {

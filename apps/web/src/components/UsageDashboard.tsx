@@ -529,7 +529,7 @@ function UsageOverview({
       <section className="usage-hero-grid">
         <div className="usage-hero-left">
           <div className="usage-hero-figure">
-            <p className="usage-total">{heroValue}</p>
+            <p className="usage-total tabular">{heroValue}</p>
             <p className="muted usage-hero-caption">
               {formatCount(stats.sessions)} {stats.sessions === 1 ? "session" : "sessions"}
               {metric === "cost" ? (
@@ -813,6 +813,8 @@ function UsageChart({
   const width = 960;
   const height = 220;
   const top = 8;
+  const bottom = 6;
+  const plotHeight = height - top - bottom;
   const valueOf = (period: UsageDashboardStats["periods"][number], id: UsageSeriesId) =>
     (metric === "cost" ? period.costBySeries : period.tokensBySeries).get(id) ?? 0;
   const peak = periods.reduce(
@@ -821,8 +823,9 @@ function UsageChart({
   );
   const scale = niceScale(peak);
   const stepX = periods.length < 2 ? 0 : width / (periods.length - 1);
+  const baseline = top + plotHeight;
   const y = (value: number) =>
-    scale.max === 0 ? height : height - (value / scale.max) * (height - top);
+    scale.max === 0 ? baseline : baseline - (value / scale.max) * plotHeight;
 
   const paths = series
     .map((id) => {
@@ -831,7 +834,7 @@ function UsageChart({
         y: y(valueOf(period, id)),
       }));
       const line = polyline(points);
-      const area = line === "" ? "" : `${line} L${width},${height} L0,${height} Z`;
+      const area = line === "" ? "" : `${line} L${width},${baseline} L0,${baseline} Z`;
       const total = periods.reduce((sum, period) => sum + valueOf(period, id), 0);
       return { id, line, area, total };
     })
