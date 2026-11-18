@@ -5,7 +5,25 @@ import {
   type HistoryReaderContext,
   type HistoryStat,
 } from "../history-reader.ts";
-import { claudeHistoryReader } from "./claude.ts";
+import { claudeHistoryReader, readLinesForTest } from "./claude.ts";
+
+const HISTORY_RECORD_KEYS = new Set([
+  "origin",
+  "model",
+  "sessionKey",
+  "at",
+  "inputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "outputTokens",
+  "reasoningTokens",
+  "reportedCostUsd",
+  "dedupeKey",
+]);
+
+const REPORT_KEYS = new Set(["origin", "status", "files", "note"]);
+
+const READ_CHUNK_BYTES = 256 * 1024;
 
 const encoder = new TextEncoder();
 
@@ -387,20 +405,32 @@ describe("claudeHistoryReader", () => {
   it("does not retain prompt text or account identifiers from transcript lines", async () => {
     const leakPrompt = "RECOGNISABLE_FAKE_PROMPT_DO_NOT_LEAK";
     const leakAccount = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const leakCwd = "/secret/abs/path/project";
+    const leakBranch = "feature/top-secret-branch";
+    const leakTool = "RECOGNISABLE_FAKE_TOOL_OUTPUT_DO_NOT_LEAK";
     const home = "/home/user";
-    const header = `${JSON.stringify({
-      type: "assistant",
-      timestamp: "2026-11-18T12:00:00.000Z",
+    const tainted = assistantLine({
       sessionId: "sess-privacy",
       accountUuid: leakAccount,
-      message: { content: [{ type: "text", text: leakPrompt }] },
-    })}\n`;
-    const { fs } = claudeTree(home, [
-      {
-        rel: "privacy.jsonl",
-        content: header + assistantLine({ sessionId: "sess-privacy" }),
-        mtimeMs: FRESH_MTIME,
+      cwd: leakCwd,
+      gitBranch: leakBranch,
+      message: {
+        id: "msg-privacy",
+        model: "claude-opus-4-6",
+        content: [
+          { type: "text", text: leakPrompt },
+          { type: "tool_result", content: leakTool },
+        ],
+        usage: {
+          input_tokens: 7,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          output_tokens: 4,
+        },
       },
+    });
+    const { fs } = claudeTree(home, [
+      { rel: "privacy.jsonl", content: tainted, mtimeMs: FRESH_MTIME },
     ]);
     const read = await claudeHistoryReader.read(
       ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL }),
@@ -408,6 +438,158 @@ describe("claudeHistoryReader", () => {
     const blob = JSON.stringify(read);
     expect(blob).not.toContain(leakPrompt);
     expect(blob).not.toContain(leakAccount);
+    expect(blob).not.toContain(leakCwd);
+    expect(blob).not.toContain(leakBranch);
+    expect(blob).not.toContain(leakTool);
     expect(read.records).toHaveLength(1);
+    const requiredRecordKeys = [
+      "origin",
+      "model",
+      "sessionKey",
+      "at",
+      "inputTokens",
+      "cacheReadTokens",
+      "cacheWriteTokens",
+      "outputTokens",
+    ] as const;
+    for (const record of read.records) {
+      const keys = Object.keys(record);
+      for (const key of keys) {
+        expect(HISTORY_RECORD_KEYS.has(key)).toBe(true);
+      }
+      for (const key of requiredRecordKeys) {
+        expect(keys).toContain(key);
+      }
+    }
+    for (const key of Object.keys(read.report)) {
+      expect(REPORT_KEYS.has(key)).toBe(true);
+    }
+  });
+
+  it("returns valid lines and partial status for a 40 MB oversized line without unbounded buffering", async () => {
+    const home = "/home/user";
+    const giant = `${"y".repeat(40 * 1024 * 1024)}\n`;
+    const first = assistantLine({ sessionId: "sess-before-giant" });
+    const last = assistantLine({ sessionId: "sess-after-giant" });
+    const { fs } = claudeTree(home, [
+      { rel: "giant.jsonl", content: first + giant + last, mtimeMs: FRESH_MTIME },
+    ]);
+    let peakCarry = 0;
+    const read = await claudeHistoryReader.read(
+      ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL }),
+    );
+    expect(read.report.status).toBe("partial");
+    expect(read.records).toHaveLength(2);
+    expect(read.records[0]?.sessionKey).toBe("sess-before-giant");
+    expect(read.records[1]?.sessionKey).toBe("sess-after-giant");
+
+    const projectsPath = `${home}/.claude/projects/giant.jsonl`;
+    await readLinesForTest(projectsPath, ctx(fs), () => {}, {
+      onPeakCarryBytes: (peak) => {
+        peakCarry = peak;
+      },
+    });
+    expect(peakCarry).toBeLessThanOrEqual(ImportTuning.maxLineBytes + READ_CHUNK_BYTES);
+  });
+
+  it("skips an oversized line that ends exactly at a chunk boundary with bounded carry", async () => {
+    const home = "/home/user";
+    const lineBodyBytes = ImportTuning.maxLineBytes + 1;
+    const padToChunk =
+      READ_CHUNK_BYTES - ((lineBodyBytes + 1) % READ_CHUNK_BYTES || READ_CHUNK_BYTES);
+    const oversized = `${"z".repeat(lineBodyBytes + padToChunk)}\n`;
+    expect((lineBodyBytes + padToChunk + 1) % READ_CHUNK_BYTES).toBe(0);
+    const before = assistantLine({ sessionId: "sess-chunk-before" });
+    const after = assistantLine({ sessionId: "sess-chunk-after" });
+    const { fs } = claudeTree(home, [
+      { rel: "chunk-edge.jsonl", content: before + oversized + after, mtimeMs: FRESH_MTIME },
+    ]);
+    let peakCarry = 0;
+    const read = await claudeHistoryReader.read(
+      ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL }),
+    );
+    expect(read.report.status).toBe("partial");
+    expect(read.records).toHaveLength(2);
+    expect(read.records[0]?.sessionKey).toBe("sess-chunk-before");
+    expect(read.records[1]?.sessionKey).toBe("sess-chunk-after");
+
+    const path = `${home}/.claude/projects/chunk-edge.jsonl`;
+    await readLinesForTest(path, ctx(fs), () => {}, {
+      onPeakCarryBytes: (peak) => {
+        peakCarry = peak;
+      },
+    });
+    expect(peakCarry).toBeLessThanOrEqual(ImportTuning.maxLineBytes + READ_CHUNK_BYTES);
+  });
+
+  it("skips a file that disappears before stat and keeps other files", async () => {
+    const home = "/home/user";
+    const { fs: inner, projectsDir } = claudeTree(home, [
+      {
+        rel: "kept.jsonl",
+        content: assistantLine({ sessionId: "sess-kept" }),
+        mtimeMs: FRESH_MTIME,
+      },
+      {
+        rel: "vanished.jsonl",
+        content: assistantLine({ sessionId: "sess-vanished" }),
+        mtimeMs: FRESH_MTIME,
+      },
+    ]);
+    const vanishPath = `${projectsDir}/vanished.jsonl`;
+    let statCalls = 0;
+    const fs: HistoryFs = {
+      ...inner,
+      async stat(path) {
+        if (path === vanishPath) {
+          statCalls += 1;
+          if (statCalls >= 2) {
+            const error = new Error("ENOENT") as NodeJS.ErrnoException;
+            error.code = "ENOENT";
+            throw error;
+          }
+        }
+        return inner.stat(path);
+      },
+    };
+    const read = await claudeHistoryReader.read(
+      ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL }),
+    );
+    expect(read.records).toHaveLength(1);
+    expect(read.records[0]?.sessionKey).toBe("sess-kept");
+    expect(read.report.status).toBe("ok");
+  });
+
+  it("marks partial when a file read fails and continues without leaking the path", async () => {
+    const home = "/home/user";
+    const { fs: inner, projectsDir } = claudeTree(home, [
+      {
+        rel: "good.jsonl",
+        content: assistantLine({ sessionId: "sess-good" }),
+        mtimeMs: FRESH_MTIME,
+      },
+      { rel: "bad.jsonl", content: assistantLine({ sessionId: "sess-bad" }), mtimeMs: FRESH_MTIME },
+    ]);
+    const badPath = `${projectsDir}/bad.jsonl`;
+    const fs: HistoryFs = {
+      ...inner,
+      async readFile(path) {
+        if (path === badPath) {
+          const error = new Error("EIO") as NodeJS.ErrnoException;
+          error.code = "EIO";
+          throw error;
+        }
+        return inner.readFile(path);
+      },
+    };
+    const read = await claudeHistoryReader.read(
+      ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL }),
+    );
+    expect(read.records).toHaveLength(1);
+    expect(read.records[0]?.sessionKey).toBe("sess-good");
+    expect(read.report.status).toBe("partial");
+    expect(read.report.note).toBe("Scan stopped before all transcript files were read.");
+    expect(read.report.note).not.toContain(badPath);
+    expect(JSON.stringify(read)).not.toContain(badPath);
   });
 });

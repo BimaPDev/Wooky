@@ -113,7 +113,13 @@ async function listJsonlFiles(
   for (const name of names) {
     if (ctx.signal.aborted) return;
     const child = `${dir}/${name}`;
-    const info = await ctx.fs.stat(child);
+    let info;
+    try {
+      info = await ctx.fs.stat(child);
+    } catch (error) {
+      if (isEnoent(error)) continue;
+      throw error;
+    }
     if (info.isDirectory()) {
       await listJsonlFiles(child, ctx, acc);
     } else if (info.isFile() && name.endsWith(".jsonl")) {
@@ -122,26 +128,31 @@ async function listJsonlFiles(
   }
 }
 
+export type ReadLinesTuning = {
+  onPeakCarryBytes?: (peak: number) => void;
+};
+
 async function readLines(
   path: string,
   ctx: HistoryReaderContext,
   onOversizedLine: () => void,
+  tuning?: ReadLinesTuning,
 ): Promise<string[]> {
   const data = await ctx.fs.readFile(path);
   const lines: string[] = [];
   let carry = new Uint8Array(0);
+  let skipOversized = false;
+  let peakCarry = 0;
 
-  for (let offset = 0; offset < data.byteLength || (offset === 0 && data.byteLength === 0);) {
-    if (ctx.signal.aborted) break;
-    const end = Math.min(offset + READ_CHUNK_BYTES, data.byteLength);
-    const slice = data.subarray(offset, end);
-    offset = end;
+  const trackPeak = () => {
+    if (carry.byteLength > peakCarry) peakCarry = carry.byteLength;
+  };
 
-    const combined = concatBytes(carry, slice);
+  const parseBuffered = (buffer: Uint8Array) => {
     let start = 0;
-    for (let i = 0; i < combined.length; i++) {
-      if (combined[i] === 0x0a) {
-        const lineBytes = combined.subarray(start, i);
+    for (let i = 0; i < buffer.length; i++) {
+      if (buffer[i] === 0x0a) {
+        const lineBytes = buffer.subarray(start, i);
         if (lineBytes.byteLength > ImportTuning.maxLineBytes) {
           onOversizedLine();
         } else if (lineBytes.byteLength > 0) {
@@ -150,27 +161,56 @@ async function readLines(
         start = i + 1;
       }
     }
+    return buffer.subarray(start);
+  };
 
-    const tail = combined.subarray(start);
-    if (tail.byteLength > ImportTuning.maxLineBytes) {
-      onOversizedLine();
-      carry = new Uint8Array(0);
-      let skipEnd = start;
-      for (let i = start; i < combined.length; i++) {
-        if (combined[i] === 0x0a) {
-          skipEnd = i + 1;
+  for (let offset = 0; offset < data.byteLength || (offset === 0 && data.byteLength === 0);) {
+    if (ctx.signal.aborted) break;
+    const end = Math.min(offset + READ_CHUNK_BYTES, data.byteLength);
+    const slice = data.subarray(offset, end);
+    offset = end;
+
+    if (skipOversized) {
+      let newlineAt = -1;
+      for (let i = 0; i < slice.length; i++) {
+        if (slice[i] === 0x0a) {
+          newlineAt = i;
           break;
         }
       }
-      carry = Uint8Array.from(combined.subarray(skipEnd));
+      if (newlineAt === -1) continue;
+      skipOversized = false;
+      carry = Uint8Array.from(slice.subarray(newlineAt + 1));
+      trackPeak();
+      const tail = parseBuffered(carry);
+      if (tail.byteLength > ImportTuning.maxLineBytes) {
+        onOversizedLine();
+        skipOversized = true;
+        carry = new Uint8Array(0);
+      } else {
+        carry = Uint8Array.from(tail);
+      }
+      trackPeak();
+      if (offset >= data.byteLength) break;
+      continue;
+    }
+
+    carry = Uint8Array.from(concatBytes(carry, slice));
+    trackPeak();
+    const tail = parseBuffered(carry);
+    if (tail.byteLength > ImportTuning.maxLineBytes) {
+      onOversizedLine();
+      skipOversized = true;
+      carry = new Uint8Array(0);
     } else {
       carry = Uint8Array.from(tail);
     }
+    trackPeak();
 
     if (offset >= data.byteLength) break;
   }
 
-  if (!ctx.signal.aborted && carry.byteLength > 0) {
+  if (!ctx.signal.aborted && !skipOversized && carry.byteLength > 0) {
     if (carry.byteLength > ImportTuning.maxLineBytes) {
       onOversizedLine();
     } else {
@@ -178,8 +218,12 @@ async function readLines(
     }
   }
 
+  tuning?.onPeakCarryBytes?.(peakCarry);
   return lines;
 }
+
+/** @internal Test seam for chunked line parsing and buffer bounds. */
+export const readLinesForTest = readLines;
 
 function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
   if (a.byteLength === 0) return b;
@@ -225,7 +269,14 @@ export const claudeHistoryReader: HistoryReader = {
         break;
       }
 
-      const fileStat = await ctx.fs.stat(path);
+      let fileStat;
+      try {
+        fileStat = await ctx.fs.stat(path);
+      } catch (error) {
+        if (isEnoent(error)) continue;
+        partial = true;
+        continue;
+      }
       if (!fileStat.isFile()) continue;
       if (fileStat.mtimeMs < mtimeFloor) continue;
 
@@ -236,7 +287,14 @@ export const claudeHistoryReader: HistoryReader = {
       };
 
       const fileRecords: HistoryRecord[] = [];
-      const lines = await readLines(path, ctx, markPartial);
+      let lines: string[];
+      try {
+        lines = await readLines(path, ctx, markPartial);
+      } catch (error) {
+        if (isEnoent(error)) continue;
+        partial = true;
+        continue;
+      }
       for (const line of lines) {
         if (ctx.signal.aborted) break;
         if (line.length > ImportTuning.maxLineBytes) {
