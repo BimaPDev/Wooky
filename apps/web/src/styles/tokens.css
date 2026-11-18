@@ -68,20 +68,20 @@
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg-0: #09080f;
-  --bg-1: #0f0e18;
-  --bg-2: #161422;
-  --bg-3: #1f1c30;
-  --bg-hover: #27233a;
-  --bg-active: #302b46;
-  --line: #2a2540;
-  --line-strong: #3d3658;
-  --text: #f3f0ff;
-  --text-2: #c4bdd9;
-  --text-3: #8f87ab;
-  --text-4: #6a6285;
+  --bg-0: #0a0a0a;
+  --bg-1: #0f0f0f;
+  --bg-2: #141414;
+  --bg-3: #1a1a1a;
+  --bg-hover: #1f1f1f;
+  --bg-active: #262626;
+  --line: #1f1f1f;
+  --line-strong: #2e2e2e;
+  --text: #eceae4;
+  --text-2: #b8b5ad;
+  --text-3: #85837b;
+  --text-4: #5f5d57;
   --accent: #a78bfa;
-  --accent-ink: #160f28;
+  --accent-ink: #141218;
   --focus: #c4b5fd;
   --amber: #f0b45a;
   --amber-bg: #2a2114;
@@ -93,7 +93,7 @@
   --del-bg: #2c1716;
   --del-ink: #eba49d;
   --scrim: #05040acc;
-  --shadow: 0 18px 48px -16px #000000d9, 0 0 0 1px #3d3658;
+  --shadow: 0 18px 48px -16px #000000d9, 0 0 0 1px var(--line);
   --glow: color-mix(in srgb, var(--accent) 28%, transparent);
   --provider-claude: #d98b63;
   --provider-cursor: #b9b8b3;

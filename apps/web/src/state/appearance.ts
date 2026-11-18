@@ -64,13 +64,35 @@ function parseHex(hex: string): [number, number, number] | null {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-function luminance(hex: string): number {
+function linearChannel(channel: number): number {
+  const c = channel / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+function relativeLuminance(hex: string): number {
   const rgb = parseHex(hex);
   if (!rgb) return 0;
-  return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  const r = linearChannel(rgb[0]);
+  const g = linearChannel(rgb[1]);
+  const b = linearChannel(rgb[2]);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG 2.x contrast ratio between a foreground and background colour. */
+export function contrastRatio(foreground: string, background: string): number {
+  const lighter = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+  const darker = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
 /** Full palette for a theme: derived from canvas + accent, then explicit role overrides. */
+/** Pick whichever base ink reads better on the accent (higher WCAG contrast). */
+export function accentInkFor(accent: string): string {
+  const darkInk = BASE.dark.accentInk;
+  const lightInk = BASE.light.accentInk;
+  return contrastRatio(darkInk, accent) >= contrastRatio(lightInk, accent) ? darkInk : lightInk;
+}
+
 export function resolvePalette(theme: AppearanceTheme): Palette {
   const dark = theme.appearance === "dark";
   const base = BASE[theme.appearance];
@@ -92,7 +114,7 @@ export function resolvePalette(theme: AppearanceTheme): Palette {
     text3: mix(ink, canvas, dark ? 0.45 : 0.5),
     text4: mix(ink, canvas, dark ? 0.62 : 0.66),
     accent,
-    accentInk: luminance(accent) > 0.55 ? BASE.dark.accentInk : BASE.light.accentInk,
+    accentInk: accentInkFor(accent),
     focus: mix(accent, ink, 0.15),
     amberBg: mix(canvas, base.amber, dark ? 0.14 : 0.1),
     redBg: mix(canvas, base.red, dark ? 0.14 : 0.1),

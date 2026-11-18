@@ -1,7 +1,8 @@
 // age-allow-file color: assertions on generated theme CSS compare hex values.
 import { AppearanceTheme } from "@age/contracts";
 import { describe, expect, it } from "vitest";
-import { buildAppearanceCss } from "./appearance.ts";
+import { accentInkFor, buildAppearanceCss, contrastRatio } from "./appearance.ts";
+import { BASE_PALETTES } from "./theme-data.ts";
 
 const ui = { appearanceContrast: 100, glassOpacity: 80 };
 const line = (css: string) => /--line: (#[0-9a-f]{6});/.exec(css)?.[1];
@@ -44,7 +45,7 @@ describe("buildAppearanceCss", () => {
     const flat = buildAppearanceCss(null, ui);
     const sharp = buildAppearanceCss(null, { ...ui, appearanceContrast: 150 });
     expect(line(sharp)).not.toBe(line(flat));
-    expect(sharp).toContain("--bg-0: #0d0d0c;");
+    expect(sharp).toContain("--bg-0: #0a0a0a;");
   });
 
   it("layers a background image under translucent surfaces", () => {
@@ -55,6 +56,30 @@ describe("buildAppearanceCss", () => {
     const css = buildAppearanceCss(withImage, ui);
     expect(css).toContain('url("data:image/png;base64,iVBORw0KGgo=")');
     expect(css).toMatch(/--bg-0: #101020[0-9a-f]{2};/);
+  });
+});
+
+describe("default dark palette contrast", () => {
+  const dark = BASE_PALETTES.dark;
+
+  it("meets WCAG AA for body text on layered surfaces", () => {
+    expect(contrastRatio(dark.text, dark.bg0)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(dark.text2, dark.bg1)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(dark.text, dark.bg2)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("accent ink", () => {
+  it("picks the ink with the higher contrast, including mid-tone accents", () => {
+    for (const accent of ["#e0533d", "#3b82f6", "#22c55e", "#ffd60a", "#7c3aed", "#808080"]) {
+      const ink = accentInkFor(accent);
+      const other =
+        ink === BASE_PALETTES.dark.accentInk
+          ? BASE_PALETTES.light.accentInk
+          : BASE_PALETTES.dark.accentInk;
+      expect(contrastRatio(ink, accent)).toBeGreaterThanOrEqual(contrastRatio(other, accent));
+      expect(contrastRatio(ink, accent)).toBeGreaterThan(3);
+    }
   });
 });
 

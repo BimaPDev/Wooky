@@ -67,8 +67,8 @@ function setPage(next: Page): void {
 
 const TITLEBAR_HEIGHT = 40;
 /** Near-opaque so the custom title strip reads like T3; fully transparent breaks on some GPUs. */
-const TITLEBAR_OVERLAY_COLOR = "#0d0d0ce8";
-const TITLEBAR_SYMBOL_DARK = "#ecebe6";
+const TITLEBAR_OVERLAY_COLOR = "#0a0a0ae8";
+const TITLEBAR_SYMBOL_DARK = "#eceae4";
 
 function createWindow(): void {
   const win = new BrowserWindow({

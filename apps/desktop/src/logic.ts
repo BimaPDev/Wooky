@@ -1,7 +1,7 @@
 // Pure desktop-shell logic. No Electron or Node process imports, so it runs under vitest.
 
 /** Window and page background. Keep in step with the dark surface in apps/web tokens. */
-export const WINDOW_BACKGROUND = "#0f0e18";
+export const WINDOW_BACKGROUND = "#0a0a0a";
 const WINDOW_TEXT = "#f3f0ff";
 
 const STDERR_TAIL_CHARS = 4_000;

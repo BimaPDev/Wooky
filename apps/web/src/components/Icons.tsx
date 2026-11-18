@@ -99,6 +99,16 @@ export const IconChevron = ({ open = false }: { open?: boolean }) => (
     <path d="M6 4l4 4-4 4" />
   </Svg>
 );
+export const IconChevronLeft = () => (
+  <Svg>
+    <path d="M10 3.5L5.5 8 10 12.5" />
+  </Svg>
+);
+export const IconChevronRight = () => (
+  <Svg>
+    <path d="M6 3.5L10.5 8 6 12.5" />
+  </Svg>
+);
 export const IconTrash = () => (
   <Svg>
     <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" />

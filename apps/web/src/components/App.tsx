@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { dismissNotice, setPaletteOpen } from "../state/actions.ts";
+import { dismissNotice, openDialog, setPaletteOpen } from "../state/actions.ts";
+import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
 import { useStore } from "../state/store.ts";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
@@ -11,10 +12,6 @@ import { Sidebar } from "./Sidebar.tsx";
 import { TerminalPane } from "./TerminalPane.tsx";
 import { ThreadView } from "./ThreadView.tsx";
 import { TopBar } from "./TopBar.tsx";
-import { WindowTitlebar } from "./WindowTitlebar.tsx";
-
-const isDesktopShell =
-  typeof navigator !== "undefined" && /\belectron\b/i.test(navigator.userAgent);
 
 export function App() {
   const theme = useStore((state) => state.theme);
@@ -31,22 +28,23 @@ export function App() {
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const changesOpen = useStore((state) => state.changes.open);
   const terminalOpen = useStore((state) => state.terminalOpen);
+  const macDesktop = isMacDesktopShell();
+  const desktopShell = isElectronShell();
 
   // sync: document root attribute drives the CSS theme tokens + WCO vars
   useEffect(() => {
     if (theme) document.documentElement.dataset.theme = theme;
     else delete document.documentElement.dataset.theme;
-    document.documentElement.classList.toggle("wco", isDesktopShell);
-  }, [theme]);
+    document.documentElement.classList.toggle("wco", desktopShell);
+    document.documentElement.classList.toggle("desktop-darwin", macDesktop);
+  }, [theme, desktopShell, macDesktop]);
 
-  // sync: T3-style window title + favicon monogram for the open project/thread
+  // sync: window title + favicon monogram for the open project/thread
   useEffect(() => {
     const projectTitle = project?.name?.trim() ?? "";
     const threadTitle = thread?.title?.trim() ?? "";
-    // Desktop paints the crumb in WindowTitlebar; keep native title short so it does not double.
-    const title = isDesktopShell
-      ? "Wooky"
-      : threadTitle === ""
+    const title =
+      threadTitle === ""
         ? "Wooky"
         : projectTitle === ""
           ? `${threadTitle} - Wooky`
@@ -82,24 +80,21 @@ export function App() {
   }, []);
 
   const bodyClass = changesOpen && threadId ? "workspace-body split" : "workspace-body";
+  const shellClass = [
+    "shell",
+    sidebarOpen ? null : "sidebar-hidden",
+    desktopShell ? "desktop-shell" : null,
+    macDesktop ? "desktop-darwin" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <>
-      <div
-        className={
-          sidebarOpen
-            ? isDesktopShell
-              ? "shell desktop-shell"
-              : "shell"
-            : isDesktopShell
-              ? "shell sidebar-hidden desktop-shell"
-              : "shell sidebar-hidden"
-        }
-      >
-        {isDesktopShell ? <WindowTitlebar /> : null}
-        {sidebarOpen ? <Sidebar hideBrand={isDesktopShell} /> : null}
+      <div className={shellClass}>
+        {sidebarOpen ? <Sidebar macDesktop={macDesktop} /> : null}
         <div className="workspace">
-          <TopBar desktopChrome={isDesktopShell} />
+          <TopBar macDesktop={macDesktop} />
           <div className={terminalOpen ? "workspace-stack with-terminal" : "workspace-stack"}>
             <div className={bodyClass}>
               <main className="main">
@@ -108,12 +103,22 @@ export function App() {
                     <ThreadView key={threadId} threadId={threadId} />
                     <Composer key={`composer-${threadId}`} threadId={threadId} />
                   </>
+                ) : hasProjects ? (
+                  <p className="empty-state">Pick a thread or start a new one.</p>
                 ) : (
-                  <p className="empty-state">
-                    {hasProjects
-                      ? "Pick a thread or start a new one."
-                      : "Add a project folder to get started."}
-                  </p>
+                  <div className="empty-state-hero">
+                    <p className="empty-state-heading">No projects yet</p>
+                    <p className="empty-state-copy">
+                      Add a project folder to browse threads and start work.
+                    </p>
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick={() => openDialog({ kind: "addProject" })}
+                    >
+                      Add a project folder
+                    </button>
+                  </div>
                 )}
                 {notice ? (
                   <div className="notice-bar" role="alert">
