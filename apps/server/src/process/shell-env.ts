@@ -1,38 +1,59 @@
-import { execFile } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { userInfo } from "node:os";
-import { basename, delimiter } from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { basename, delimiter, isAbsolute } from "node:path";
 
 export const PATH_CAPTURE_START = "__AGE_PATH_START__";
 export const PATH_CAPTURE_END = "__AGE_PATH_END__";
 
-const FIRST_TIMEOUT_MS = 5_000;
-const RETRY_TIMEOUT_MS = 20_000;
+const CAPTURE_TIMEOUT_MS = 5_000;
+const MAX_OUTPUT_BYTES = 256 * 1024;
 
 export type HydrateLoginShellPathResult = {
   source: "shell" | "skipped" | "failed";
   added: string[];
 };
 
-export type ExecFileAsync = (
+export type SpawnShell = (
   file: string,
   args: readonly string[],
   options: {
-    encoding: "utf8";
-    timeout: number;
-    killSignal: NodeJS.Signals;
     env?: NodeJS.ProcessEnv;
+    detached: true;
+    stdio: ["ignore", "pipe", "pipe"];
   },
-) => Promise<{ stdout: string; stderr: string }>;
+) => ChildProcess;
+
+export type KillProcess = (pid: number, signal: NodeJS.Signals) => void;
 
 export type HydrateLoginShellPathOptions = {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
-  execFile?: ExecFileAsync;
+  spawnShell?: SpawnShell;
+  killProcess?: KillProcess;
+  onActiveShell?: (kill: (() => void) | undefined) => void;
   log?: (line: string) => void;
 };
+
+export function stripAnsi(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code !== 0x1b && code !== 0x9b) {
+      out += text[i];
+      continue;
+    }
+    i++;
+    if (text[i] === "[") {
+      i++;
+      while (i < text.length) {
+        const ch = text.charCodeAt(i);
+        if (ch >= 0x40 && ch <= 0x7e) break;
+        i++;
+      }
+    }
+  }
+  return out;
+}
 
 export function buildPosixPathCaptureScript(): string {
   return [
@@ -50,35 +71,49 @@ export function buildFishPathCaptureScript(): string {
 }
 
 export function extractPathFromCapture(output: string): string | null {
-  const start = output.indexOf(PATH_CAPTURE_START);
-  if (start === -1) return null;
-  const valueStart = start + PATH_CAPTURE_START.length;
-  const end = output.indexOf(PATH_CAPTURE_END, valueStart);
-  if (end === -1) return null;
-  const raw = output
-    .slice(valueStart, end)
-    .replace(/^\r?\n/, "")
-    .replace(/\r?\n$/, "");
-  const line = raw.split(/\r?\n/).find((row) => row.length > 0);
-  return line ?? null;
+  const lines = stripAnsi(output).split(/\r?\n/);
+  let lastPath: string | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] !== PATH_CAPTURE_START) continue;
+    if (i + 2 >= lines.length) continue;
+    if (lines[i + 2] !== PATH_CAPTURE_END) continue;
+    const pathLine = stripAnsi(lines[i + 1] ?? "").trim();
+    if (pathLine.length > 0) lastPath = pathLine;
+    i += 2;
+  }
+
+  return lastPath;
+}
+
+export function normalizeShellPathEntry(entry: string, home: string): string | null {
+  const trimmed = entry.trim();
+  if (!trimmed) return null;
+  let expanded = trimmed;
+  if (expanded === "~" || expanded.startsWith("~/")) {
+    expanded = home + expanded.slice(1);
+  }
+  return isAbsolute(expanded) ? expanded : null;
 }
 
 export function mergeLoginShellPath(
   shellPath: string,
   existingPath: string,
+  home: string,
 ): {
   path: string;
   added: string[];
 } {
   const existing = existingPath.split(delimiter).filter(Boolean);
-  const fromShell = shellPath.split(delimiter).filter(Boolean);
+  const fromShell = shellPath.split(delimiter);
   const existingSet = new Set(existing);
   const seen = new Set<string>();
   const ordered: string[] = [];
   const added: string[] = [];
 
-  for (const entry of fromShell) {
-    if (seen.has(entry)) continue;
+  for (const raw of fromShell) {
+    const entry = normalizeShellPathEntry(raw, home);
+    if (!entry || seen.has(entry)) continue;
     seen.add(entry);
     ordered.push(entry);
     if (!existingSet.has(entry)) added.push(entry);
@@ -105,45 +140,95 @@ function shellCaptureArgs(shell: string): readonly string[] {
   return ["-ilc", buildPosixPathCaptureScript()];
 }
 
-function timedOut(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const code = "code" in error ? String(error.code) : "";
-  const signal = "signal" in error ? String(error.signal) : "";
-  return code === "ETIMEDOUT" || signal === "SIGKILL";
+function killProcessGroup(pid: number, kill: KillProcess): void {
+  try {
+    kill(-pid, "SIGKILL");
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") return;
+    throw error;
+  }
 }
 
-async function readShellPath(
+export async function captureLoginShellPath(
   shell: string,
   env: NodeJS.ProcessEnv,
-  exec: ExecFileAsync,
-): Promise<string | null> {
-  const run = async (timeout: number) => {
-    const { stdout } = await exec(shell, shellCaptureArgs(shell), {
-      encoding: "utf8",
-      timeout,
-      killSignal: "SIGKILL",
+  options: {
+    spawnShell?: SpawnShell;
+    killProcess?: KillProcess;
+    onActiveShell?: (kill: (() => void) | undefined) => void;
+  } = {},
+): Promise<string> {
+  const spawnFn = options.spawnShell ?? spawn;
+  const killFn = options.killProcess ?? process.kill.bind(process);
+
+  return new Promise((resolve, reject) => {
+    const child = spawnFn(shell, shellCaptureArgs(shell), {
       env,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    return extractPathFromCapture(stdout);
-  };
 
-  try {
-    const first = await run(FIRST_TIMEOUT_MS);
-    if (first) return first;
-  } catch (error) {
-    if (!timedOut(error)) return null;
-    try {
-      return await run(RETRY_TIMEOUT_MS);
-    } catch {
-      return null;
-    }
-  }
+    let stdout = "";
+    let timedOut = false;
+    let settled = false;
 
-  try {
-    return await run(RETRY_TIMEOUT_MS);
-  } catch {
-    return null;
-  }
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.onActiveShell?.(undefined);
+      fn();
+    };
+
+    const killGroup = () => {
+      if (child.pid !== undefined) killProcessGroup(child.pid, killFn);
+    };
+
+    options.onActiveShell?.(killGroup);
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup();
+    }, CAPTURE_TIMEOUT_MS);
+
+    const append = (chunk: Buffer, target: "out" | "err") => {
+      const buf = target === "out" ? stdout : "";
+      if (Buffer.byteLength(buf, "utf8") >= MAX_OUTPUT_BYTES) return;
+      const piece = chunk.toString("utf8");
+      if (target === "out") {
+        stdout = (stdout + piece).slice(0, MAX_OUTPUT_BYTES);
+      }
+    };
+
+    child.stdout?.on("data", (chunk: Buffer) => append(chunk, "out"));
+    child.stderr?.on("data", () => undefined);
+
+    child.on("error", (error) => {
+      finish(() => reject(error));
+    });
+
+    child.on("close", (code, signal) => {
+      const path = extractPathFromCapture(stdout);
+      if (path) {
+        finish(() => resolve(path));
+        return;
+      }
+      if (timedOut && signal === "SIGKILL") {
+        finish(() =>
+          reject(Object.assign(new Error("login-shell PATH capture timed out"), { code, signal })),
+        );
+        return;
+      }
+      finish(() =>
+        reject(
+          Object.assign(new Error("login-shell PATH capture failed"), {
+            code: code ?? undefined,
+            signal: signal ?? undefined,
+          }),
+        ),
+      );
+    });
+  });
 }
 
 export async function hydrateLoginShellPath(
@@ -152,7 +237,6 @@ export async function hydrateLoginShellPath(
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const log = options.log ?? ((line: string) => console.error(line));
-  const exec = options.execFile ?? execFileAsync;
 
   if (platform === "win32" || env.AGE_SKIP_SHELL_ENV === "1") {
     return { source: "skipped", added: [] };
@@ -162,15 +246,21 @@ export async function hydrateLoginShellPath(
     env.HOME = userInfo().homedir;
   }
 
+  const home = env.HOME;
   const shell = defaultShell(platform, env);
   const existingPath = env.PATH ?? "";
-  const shellPath = await readShellPath(shell, env, exec);
-  if (!shellPath) {
+
+  try {
+    const shellPath = await captureLoginShellPath(shell, env, {
+      spawnShell: options.spawnShell,
+      killProcess: options.killProcess,
+      onActiveShell: options.onActiveShell,
+    });
+    const { path, added } = mergeLoginShellPath(shellPath, existingPath, home);
+    env.PATH = path;
+    return { source: "shell", added };
+  } catch {
     log("login-shell PATH capture failed; keeping inherited PATH");
     return { source: "failed", added: [] };
   }
-
-  const { path, added } = mergeLoginShellPath(shellPath, existingPath);
-  env.PATH = path;
-  return { source: "shell", added };
 }
