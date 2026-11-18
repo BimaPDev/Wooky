@@ -1,9 +1,26 @@
-import type { AccountInfo, Options, query } from "@anthropic-ai/claude-agent-sdk";
+import type { AccountInfo, Options, SDKUserMessage, query } from "@anthropic-ai/claude-agent-sdk";
 
 export const CLAUDE_AUTH_UNKNOWN_NOTE = "Could not verify sign-in.";
 export const CLAUDE_SIGNED_OUT_PROBLEM = "Run `claude auth login`, then refresh.";
 
-const PROBE_PROMPT = " ";
+function idleStreamingPrompt(signal: AbortSignal): AsyncIterable<SDKUserMessage> {
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        async next() {
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve();
+              return;
+            }
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          return { done: true, value: undefined as never };
+        },
+      };
+    },
+  };
+}
 
 export type ClaudeAuthProbeResult = {
   authenticated: boolean | null;
@@ -28,7 +45,7 @@ export async function probeClaudeAuth(
   let session: ReturnType<typeof runQuery> | undefined;
   try {
     session = runQuery({
-      prompt: PROBE_PROMPT,
+      prompt: idleStreamingPrompt(abort.signal),
       options: {
         ...sdkOptions,
         persistSession: false,
@@ -55,6 +72,7 @@ export async function probeClaudeAuth(
     return { authenticated: null, problem: CLAUDE_AUTH_UNKNOWN_NOTE };
   } finally {
     clearTimeout(timer);
+    if (!abort.signal.aborted) abort.abort();
     session?.close();
   }
 }
