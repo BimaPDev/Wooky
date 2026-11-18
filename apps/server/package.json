@@ -7,7 +7,7 @@
     "age": "./src/bin.ts"
   },
   "scripts": {
-    "dev": "tsx watch src/bin.ts",
+    "dev": "AGE_SKIP_SHELL_ENV=1 tsx watch src/bin.ts",
     "start": "tsx src/bin.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
