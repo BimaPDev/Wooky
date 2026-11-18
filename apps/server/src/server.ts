@@ -17,6 +17,7 @@ import { openEventStore } from "./store/event-store.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
+import { createHistoryService } from "./usage/history.ts";
 import { createLimitsService } from "./usage/limits.ts";
 
 export interface ServerOptions {
@@ -86,11 +87,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
   const themes = createThemeStore(options.home);
   const terminals = createTerminalManager();
+  const history = createHistoryService({
+    home: options.home,
+    userHome: options.userHome ?? homedir(),
+    enabled: () => themes.getSettings().importLocalHistory,
+  });
 
   const http = createServer(createHttpHandler(options.webDist ?? null));
   const closeSockets = attachWebSocket(
     http,
-    { store, dispatcher, providers, queries, themes, terminals, limits },
+    { store, dispatcher, providers, queries, themes, terminals, limits, history },
     new Set(options.allowedHosts ?? []),
   );
   try {
@@ -123,6 +129,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         closeSockets();
         http.closeAllConnections();
         await stopped;
+        await history.close();
         store.close();
       })();
       return closing;
