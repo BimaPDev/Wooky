@@ -20,6 +20,7 @@ import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
 import { openSignInTerminal } from "../terminal/login.ts";
 import type { TerminalManager } from "../terminal/session.ts";
+import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
 
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
@@ -33,6 +34,7 @@ interface Services {
   themes: ThemeStore;
   terminals: TerminalManager;
   limits: LimitsService;
+  history: HistoryService;
 }
 
 interface Connection {
@@ -57,6 +59,7 @@ function createHandlers({
   themes,
   terminals,
   limits,
+  history,
 }: Services): Handlers {
   return {
     dispatch: (command) => dispatcher.dispatch(command),
@@ -101,10 +104,7 @@ function createHandlers({
       return { ok: true as const };
     },
     "usage.limits": ({ refresh }) => limits.get({ refresh }),
-    // Station 1 replaces this stub. The method is registered so clients can call it.
-    "usage.history": () => {
-      throw new ServiceError("unavailable", "Usage history is not available yet.");
-    },
+    "usage.history": (params) => history.get(params),
   };
 }
 
