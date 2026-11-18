@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { ApprovalRequest, ProviderEvent, ProviderStatus } from "@age/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
@@ -8,6 +9,8 @@ import {
   UnhandledServerRequestError,
 } from "./jsonrpc.ts";
 import {
+  type AccountReadResponse,
+  AccountReadResponseSchema,
   type CodexApprovalDecision,
   CommandExecutionRequestApprovalParamsSchema,
   FileChangeRequestApprovalParamsSchema,
@@ -27,6 +30,8 @@ import { createUsageBaselineStore } from "./usage-baselines.ts";
 
 const PROBE_TIMEOUT_MS = 5_000;
 const NOT_FOUND_PROBLEM = "Codex CLI was not found on PATH. Install it and sign in, then refresh.";
+const CODEX_SIGNED_OUT_PROBLEM = "Run `codex login`, then refresh.";
+const CODEX_AUTH_UNKNOWN_NOTE = "Could not verify sign-in.";
 
 // Rollback, user-input requests and plan collaboration mode are not in the protocol types
 // this adapter is built against, so those capabilities stay off.
@@ -94,59 +99,114 @@ function isErrnoCode(err: unknown, code: string): boolean {
   return typeof err === "object" && err !== null && "code" in err && err.code === code;
 }
 
-function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<ProviderStatus> {
+function authFromAccountRead(response: AccountReadResponse): boolean | null {
+  if (response.requiresOpenaiAuth && !response.account) return false;
+  if (response.account) return true;
+  if (!response.requiresOpenaiAuth) return true;
+  return null;
+}
+
+function probeAuthProblem(authenticated: boolean | null): string | null {
+  if (authenticated === false) return CODEX_SIGNED_OUT_PROBLEM;
+  if (authenticated === null) return CODEX_AUTH_UNKNOWN_NOTE;
+  return null;
+}
+
+async function probeCodexAuth(
+  command: string,
+  launchArgs: readonly string[],
+  timeoutMs: number,
+): Promise<{ authenticated: boolean | null; problem: string | null }> {
+  const client = new JsonRpcClient({
+    bin: command,
+    args: launchArgs.length > 0 ? launchArgs : undefined,
+    cwd: process.cwd(),
+    onNotification: () => undefined,
+    onServerRequest: async (request) => {
+      throw new UnhandledServerRequestError(`Unsupported server request: ${request.method}`);
+    },
+  });
+
+  const work = async (): Promise<{ authenticated: boolean | null; problem: string | null }> => {
+    await client.request(
+      "initialize",
+      {
+        clientInfo: { name: "wooky", title: "Wooky", version: "0.0.0" },
+        capabilities: null,
+      },
+      InitializeResponseSchema,
+    );
+    client.notify("initialized");
+    const account = await client.request("account/read", {}, AccountReadResponseSchema);
+    const authenticated = authFromAccountRead(account);
+    return { authenticated, problem: probeAuthProblem(authenticated) };
+  };
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timed = new Promise<{ authenticated: null; problem: string }>((resolve) => {
+      timeoutId = setTimeout(
+        () => resolve({ authenticated: null, problem: CODEX_AUTH_UNKNOWN_NOTE }),
+        timeoutMs,
+      );
+    });
+    return await Promise.race([work(), timed]);
+  } catch {
+    return { authenticated: null, problem: CODEX_AUTH_UNKNOWN_NOTE };
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    await client.close();
+  }
+}
+
+async function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<ProviderStatus> {
+  const base = {
+    kind: "codex" as const,
+    label: "Codex",
+    models: [...CODEX_MODELS],
+    capabilities: CODEX_CAPABILITIES,
+  };
   const resolved = resolveCommand(bin);
   const command = resolved?.command ?? bin;
-  const args = [...(resolved?.prefixArgs ?? []), ...(extraArgs ?? []), "--version"];
-  return new Promise<ProviderStatus>((resolve) => {
-    if (!resolved && process.platform === "win32") {
-      resolve({
-        kind: "codex",
-        label: "Codex",
-        installed: false,
-        authenticated: null,
-        version: null,
-        models: [...CODEX_MODELS],
-        capabilities: CODEX_CAPABILITIES,
-        problem: NOT_FOUND_PROBLEM,
-      });
-      return;
-    }
-    execFile(
-      command,
-      args,
-      { timeout: PROBE_TIMEOUT_MS, windowsHide: true },
-      (err, stdout, stderr) => {
-        if (err) {
-          const notFound = isErrnoCode(err, "ENOENT");
-          resolve({
-            kind: "codex",
-            label: "Codex",
-            installed: false,
-            authenticated: null,
-            version: null,
-            models: [...CODEX_MODELS],
-            capabilities: CODEX_CAPABILITIES,
-            problem: notFound
-              ? NOT_FOUND_PROBLEM
-              : `Codex CLI check failed: ${err.message.split(/\r?\n/)[0] ?? "unknown error"}.`,
-          });
-          return;
-        }
+  const versionArgs = [...(resolved?.prefixArgs ?? []), ...(extraArgs ?? []), "--version"];
+  const launchArgs = [...(resolved?.prefixArgs ?? []), ...(extraArgs ?? [])];
 
-        resolve({
-          kind: "codex",
-          label: "Codex",
-          installed: true,
-          authenticated: null,
-          version: parseVersionOutput(stdout, stderr),
-          models: [...CODEX_MODELS],
-          capabilities: CODEX_CAPABILITIES,
-          problem: null,
-        });
-      },
-    );
-  });
+  if (!resolved && process.platform === "win32") {
+    return {
+      ...base,
+      installed: false,
+      authenticated: null,
+      version: null,
+      problem: NOT_FOUND_PROBLEM,
+    };
+  }
+
+  const execFileAsync = promisify(execFile);
+  try {
+    const { stdout, stderr } = await execFileAsync(command, versionArgs, {
+      timeout: PROBE_TIMEOUT_MS,
+      windowsHide: true,
+    });
+    const auth = await probeCodexAuth(command, launchArgs, PROBE_TIMEOUT_MS);
+    return {
+      ...base,
+      installed: true,
+      authenticated: auth.authenticated,
+      version: parseVersionOutput(stdout, stderr),
+      problem: auth.problem,
+    };
+  } catch (error) {
+    const notFound = isErrnoCode(error, "ENOENT");
+    return {
+      ...base,
+      installed: false,
+      authenticated: null,
+      version: null,
+      problem: notFound
+        ? NOT_FOUND_PROBLEM
+        : `Codex CLI check failed: ${error instanceof Error ? error.message.split(/\r?\n/)[0] : "unknown error"}.`,
+    };
+  }
 }
 
 function buildUserPrompt(prompt: string, handoffContext: string | null): string {

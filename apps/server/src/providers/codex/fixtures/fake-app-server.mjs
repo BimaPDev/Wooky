@@ -239,6 +239,30 @@ function handleClientRequest(msg) {
     return;
   }
 
+  if (msg.method === "account/read") {
+    const authProbe = readFlag("--auth-probe") ?? "signed-in";
+    if (authProbe === "requires-auth") {
+      send({
+        id: msg.id,
+        result: { account: null, requiresOpenaiAuth: true, userId: null },
+      });
+      return;
+    }
+    if (authProbe === "unsupported") {
+      send({ id: msg.id, error: { code: -32601, message: "Unknown method: account/read" } });
+      return;
+    }
+    send({
+      id: msg.id,
+      result: {
+        account: { type: "chatgpt", email: "user@example.com" },
+        requiresOpenaiAuth: true,
+        userId: "user-1",
+      },
+    });
+    return;
+  }
+
   if (msg.method === "thread/start") {
     currentThreadId = "thr_started_1";
     send({
