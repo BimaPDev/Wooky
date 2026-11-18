@@ -11,7 +11,13 @@ import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
 import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";
 import { saveTerminalOpen } from "../lib/shell.ts";
-import { currentNavFromState, useStore, type Dialog, type SettingsPage } from "./store.ts";
+import {
+  currentNavFromState,
+  navTargetExists,
+  useStore,
+  type Dialog,
+  type SettingsPage,
+} from "./store.ts";
 
 type CommandInput = Command extends infer C
   ? C extends Command
@@ -88,7 +94,7 @@ export const selectThread = (threadId: string | null) => {
 export function navHistoryBack() {
   const state = useStore.getState();
   const current = currentNavFromState(state);
-  const step = navBack(state.nav, current);
+  const step = navBack(state.nav, current, navTargetExists(state.model));
   if (!step) return;
   useStore.setState({ nav: step.stack });
   applyNavTarget(step.target);
@@ -98,7 +104,7 @@ export function navHistoryBack() {
 export function navHistoryForward() {
   const state = useStore.getState();
   const current = currentNavFromState(state);
-  const step = navForward(state.nav, current);
+  const step = navForward(state.nav, current, navTargetExists(state.model));
   if (!step) return;
   useStore.setState({ nav: step.stack });
   applyNavTarget(step.target);
@@ -166,7 +172,11 @@ export const openSettings = (page: SettingsPage = "general") => {
   recordNav({ kind: "settings", page });
   useStore.setState({ settingsOpen: true, settingsPage: page, paletteOpen: false });
 };
-export const closeSettings = () => useStore.setState({ settingsOpen: false });
+export const closeSettings = () => {
+  // Record the hop back to the thread so Back reopens Settings and Forward returns here.
+  recordNav({ kind: "thread", threadId: useStore.getState().selectedThreadId });
+  useStore.setState({ settingsOpen: false });
+};
 export const setSettingsPage = (settingsPage: SettingsPage) => useStore.setState({ settingsPage });
 
 export const toggleChanges = () =>

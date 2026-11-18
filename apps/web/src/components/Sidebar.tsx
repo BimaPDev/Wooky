@@ -65,7 +65,8 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
           b.updatedAt.localeCompare(a.updatedAt),
       );
     const parts = partitionSidebarThreads(all);
-    const includeSettledInGroups = !settledOpen || needle.length > 0;
+    // Expanded Settled lists its own threads, so keep them out of the groups to avoid duplicates.
+    const includeSettledInGroups = !settledOpen;
     const inProjectList = all.filter((thread) => {
       if (isWorkingStatus(thread.status)) return false;
       if (isSettledStatus(thread.status) && !includeSettledInGroups) return false;
@@ -137,6 +138,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
         {hasProjects &&
         needle &&
         working.length === 0 &&
+        settled.length === 0 &&
         groups.every((g) => g.threads.length === 0) ? (
           <p className="sidebar-empty">No matching threads.</p>
         ) : null}

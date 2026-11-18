@@ -1,7 +1,7 @@
 // age-allow-file color: assertions on generated theme CSS compare hex values.
 import { AppearanceTheme } from "@age/contracts";
 import { describe, expect, it } from "vitest";
-import { buildAppearanceCss, contrastRatio } from "./appearance.ts";
+import { accentInkFor, buildAppearanceCss, contrastRatio } from "./appearance.ts";
 import { BASE_PALETTES } from "./theme-data.ts";
 
 const ui = { appearanceContrast: 100, glassOpacity: 80 };
@@ -66,6 +66,20 @@ describe("default dark palette contrast", () => {
     expect(contrastRatio(dark.text, dark.bg0)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(dark.text2, dark.bg1)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(dark.text, dark.bg2)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("accent ink", () => {
+  it("picks the ink with the higher contrast, including mid-tone accents", () => {
+    for (const accent of ["#e0533d", "#3b82f6", "#22c55e", "#ffd60a", "#7c3aed", "#808080"]) {
+      const ink = accentInkFor(accent);
+      const other =
+        ink === BASE_PALETTES.dark.accentInk
+          ? BASE_PALETTES.light.accentInk
+          : BASE_PALETTES.dark.accentInk;
+      expect(contrastRatio(ink, accent)).toBeGreaterThanOrEqual(contrastRatio(other, accent));
+      expect(contrastRatio(ink, accent)).toBeGreaterThan(3);
+    }
   });
 });
 

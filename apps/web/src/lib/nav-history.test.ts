@@ -3,13 +3,16 @@ import {
   currentNavTarget,
   navBack,
   navForward,
+  NAV_STACK_LIMIT,
   navTargetKey,
+  pruneNavStack,
   pushNavStack,
   type NavTarget,
 } from "./nav-history.ts";
 
 const thread = (id: string | null): NavTarget => ({ kind: "thread", threadId: id });
 const settings: NavTarget = { kind: "settings", page: "appearance" };
+const valid = (t: NavTarget) => !(t.kind === "thread" && t.threadId === "gone");
 
 describe("nav history", () => {
   it("keys targets for deduping", () => {
@@ -62,5 +65,37 @@ describe("nav history", () => {
     expect(
       currentNavTarget({ selectedThreadId: "t1", settingsOpen: true, settingsPage: "usage" }),
     ).toEqual({ kind: "settings", page: "usage" });
+  });
+
+  it("caps past and future at the stack limit", () => {
+    let stack = { past: [] as NavTarget[], future: [] as NavTarget[] };
+    for (let i = 0; i < NAV_STACK_LIMIT + 10; i++)
+      stack = pushNavStack(stack, thread(String(i)), thread(String(i + 1)));
+    expect(stack.past).toHaveLength(NAV_STACK_LIMIT);
+    expect(stack.past[0]).toEqual(thread("10"));
+
+    const full = {
+      past: [thread("p")],
+      future: Array.from({ length: NAV_STACK_LIMIT }, (_, i) => thread(`f${i}`)),
+    };
+    expect(navBack(full, thread("now"))?.stack.future).toHaveLength(NAV_STACK_LIMIT);
+  });
+
+  it("walks past invalid targets in both directions", () => {
+    const stack = { past: [thread("a"), thread("gone")], future: [thread("gone"), thread("b")] };
+    const back = navBack(stack, thread("x"), valid);
+    expect(back?.target).toEqual(thread("a"));
+    expect(back?.stack.past).toEqual([]);
+    const forward = navForward(stack, thread("x"), valid);
+    expect(forward?.target).toEqual(thread("b"));
+    expect(forward?.stack.future).toEqual([]);
+    expect(navBack({ past: [thread("gone")], future: [] }, thread("x"), valid)).toBeNull();
+  });
+
+  it("prunes invalid targets and keeps identity when nothing changes", () => {
+    const stack = { past: [thread("gone"), settings], future: [thread("gone")] };
+    expect(pruneNavStack(stack, valid)).toEqual({ past: [settings], future: [] });
+    const clean = { past: [settings], future: [] };
+    expect(pruneNavStack(clean, valid)).toBe(clean);
   });
 });

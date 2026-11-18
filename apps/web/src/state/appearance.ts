@@ -85,11 +85,14 @@ export function contrastRatio(foreground: string, background: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-function luminance(hex: string): number {
-  return relativeLuminance(hex);
+/** Full palette for a theme: derived from canvas + accent, then explicit role overrides. */
+/** Pick whichever base ink reads better on the accent (higher WCAG contrast). */
+export function accentInkFor(accent: string): string {
+  const darkInk = BASE.dark.accentInk;
+  const lightInk = BASE.light.accentInk;
+  return contrastRatio(darkInk, accent) >= contrastRatio(lightInk, accent) ? darkInk : lightInk;
 }
 
-/** Full palette for a theme: derived from canvas + accent, then explicit role overrides. */
 export function resolvePalette(theme: AppearanceTheme): Palette {
   const dark = theme.appearance === "dark";
   const base = BASE[theme.appearance];
@@ -111,7 +114,7 @@ export function resolvePalette(theme: AppearanceTheme): Palette {
     text3: mix(ink, canvas, dark ? 0.45 : 0.5),
     text4: mix(ink, canvas, dark ? 0.62 : 0.66),
     accent,
-    accentInk: luminance(accent) > 0.55 ? BASE.dark.accentInk : BASE.light.accentInk,
+    accentInk: accentInkFor(accent),
     focus: mix(accent, ink, 0.15),
     amberBg: mix(canvas, base.amber, dark ? 0.14 : 0.1),
     redBg: mix(canvas, base.red, dark ? 0.14 : 0.1),

@@ -8,7 +8,7 @@ import type {
 import { applyEvent, emptyReadModel } from "@age/domain";
 import { create } from "zustand";
 import type { ConnectionStatus } from "../rpc/client.ts";
-import type { NavStack, NavTarget } from "../lib/nav-history.ts";
+import { pruneNavStack, type NavStack, type NavTarget } from "../lib/nav-history.ts";
 
 export type Theme = "dark" | "light";
 
@@ -63,6 +63,12 @@ export function currentNavFromState(
   return { kind: "thread", threadId: state.selectedThreadId };
 }
 
+/** A nav target is valid while its thread (if any) still exists in the model. */
+export function navTargetExists(model: ReadModel) {
+  return (target: NavTarget) =>
+    target.kind !== "thread" || target.threadId === null || Boolean(model.threads[target.threadId]);
+}
+
 export const useStore = create<AppState>(() => ({
   model: emptyReadModel(),
   status: "connecting",
@@ -109,6 +115,8 @@ export function receiveEvent(event: AgeEvent) {
     if (event.type === "project.removed" && !model.threads[selected ?? ""])
       selected = newestThreadId(model);
     patch.selectedThreadId = selected;
+    if (event.type === "thread.removed" || event.type === "project.removed")
+      patch.nav = pruneNavStack(state.nav, navTargetExists(model));
     return patch;
   });
 }
