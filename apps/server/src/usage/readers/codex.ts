@@ -176,13 +176,22 @@ function applyEvent(state: SessionState, event: unknown): { at: number; delta: C
   }
 
   const previous = state.baseline;
+  if (previous === null) {
+    state.baseline = cumulative;
+    state.lastSignature = last === null ? null : JSON.stringify(last);
+    return { at, delta: cumulative };
+  }
+  if (COUNTER_KEYS.some((key) => cumulative[key] < previous[key])) {
+    // Genuine reset: cumulative matches this request’s last usage. A replayed older snapshot keeps the prior baseline.
+    if (last !== null && sameCounters(cumulative, last)) {
+      state.baseline = cumulative;
+      state.lastSignature = JSON.stringify(last);
+      return { at, delta: cumulative };
+    }
+    return null;
+  }
   state.baseline = cumulative;
   state.lastSignature = last === null ? null : JSON.stringify(last);
-  if (previous === null) return { at, delta: cumulative };
-  if (COUNTER_KEYS.some((key) => cumulative[key] < previous[key])) {
-    // A counter reset: the session restarted from zero at this request, or an older snapshot replayed.
-    return last !== null && sameCounters(cumulative, last) ? { at, delta: cumulative } : null;
-  }
   return { at, delta: deltaOf(cumulative, previous) };
 }
 

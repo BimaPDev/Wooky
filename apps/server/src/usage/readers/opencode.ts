@@ -101,6 +101,7 @@ export function createOpenCodeHistoryReader(options: OpenCodeReaderOptions = {})
           if (!isMissingError(error)) listFailed = true;
         }
       }
+      const truncated = databases.length > ImportTuning.filesPerScan;
       if (!listed || databases.length === 0) {
         return {
           records: [],
@@ -210,6 +211,7 @@ export function createOpenCodeHistoryReader(options: OpenCodeReaderOptions = {})
       if (unreadable > 0)
         notes.push(`${unreadable} OpenCode tables or databases could not be read.`);
       if (skippedRows > 0) notes.push(`${skippedRows} messages had unreadable usage.`);
+      if (truncated) notes.push("Some OpenCode databases were left out to bound the scan.");
       return {
         records,
         report: {
