@@ -6,7 +6,6 @@ import {
   connectProvider,
   refreshProviders,
   setSettingsPage,
-  signInCommand,
 } from "../state/actions.ts";
 import { useStore, type SettingsPage } from "../state/store.ts";
 import { AppearanceSettings } from "./AppearanceSettings.tsx";
@@ -348,13 +347,30 @@ function ProviderDetail({
   enabled: boolean;
   onEnabledChange: (checked: boolean) => void;
 }) {
+  const [busyKind, setBusyKind] = useState<ProviderKind | null>(null);
+  const [feedback, setFeedback] = useState<{
+    kind: ProviderKind;
+    error: boolean;
+    message: string;
+  } | null>(null);
   const summary = providerSummary(provider, enabled);
-  const login = signInCommand(provider.kind);
-  const needsSignIn =
-    provider.kind !== "demo" &&
-    (provider.authenticated === false || (!provider.installed && Boolean(login)));
+  const canSignIn = provider.kind !== "demo";
+  const needsSignIn = canSignIn && (provider.authenticated === false || !provider.installed);
   const connected =
     enabled && provider.installed && provider.authenticated !== false && !provider.problem;
+  const busy = busyKind === provider.kind;
+  const shown = feedback?.kind === provider.kind ? feedback : null;
+
+  const onSignIn = async () => {
+    const kind = provider.kind;
+    setBusyKind(kind);
+    try {
+      const result = await connectProvider(kind);
+      setFeedback({ kind, error: !result.ok, message: result.message });
+    } finally {
+      setBusyKind((current) => (current === kind ? null : current));
+    }
+  };
 
   return (
     <div className="provider-detail-inner">
@@ -381,17 +397,22 @@ function ProviderDetail({
           {summary.headline}
           {summary.detail ? ` · ${summary.detail}` : ""}
         </p>
-        {login ? (
+        {canSignIn ? (
           <div className="provider-connect-row">
             <button
               type="button"
               className={needsSignIn || !connected ? "button primary" : "ghost-button"}
-              onClick={() => connectProvider(provider.kind)}
+              disabled={busy}
+              aria-busy={busy}
+              onClick={() => void onSignIn()}
             >
               {needsSignIn || !connected ? "Sign in" : "Sign in again"}
             </button>
-            <p className="setting-desc">
-              Opens the terminal and runs <code className="mono">{login}</code>.
+            <p
+              className={shown?.error ? "provider-detail-status error" : "setting-desc"}
+              role={shown?.error ? "alert" : "status"}
+            >
+              {shown?.message ?? "Opens Terminal to sign in. Finish there, then press Refresh."}
             </p>
           </div>
         ) : (

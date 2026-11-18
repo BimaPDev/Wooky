@@ -120,45 +120,30 @@ export const toggleTerminal = () =>
     return { terminalOpen };
   });
 
-/** Queue a line for the docked terminal (used by Settings → Providers Sign in). */
-export const runInTerminal = (line: string) => {
-  saveTerminalOpen(true);
-  useStore.setState({ terminalOpen: true, pendingTerminalLine: line, settingsOpen: false });
-};
+/** Sentence shown after the server opens a real terminal for this command. */
+export function signInOpenedCopy(command: string): string {
+  return `Opened Terminal to run \`${command}\`. Finish signing in there, then press Refresh.`;
+}
 
-/** Take the queued line for a ready shell, once. With no ready shell it stays queued. */
-export const takePendingTerminalLine = (sessionId: string | null) => {
-  const line = sessionId ? useStore.getState().pendingTerminalLine : null;
-  if (line) useStore.setState({ pendingTerminalLine: null });
-  return line;
-};
-
-/** T3-style connect: enable the provider and open its CLI login in the terminal. */
-export function connectProvider(kind: ProviderKind) {
-  const command = signInCommand(kind);
-  if (!command) {
-    useStore.setState({ notice: "Demo is always connected." });
-    return;
-  }
+/** Enable the provider and ask the server to open its sign-in command in a real terminal. */
+export async function connectProvider(
+  kind: ProviderKind,
+): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+  if (kind === "demo") return { ok: false, message: "Demo is always connected." };
   const settings = useStore.getState().deviceSettings;
   const disabled = new Set(settings?.disabledProviders ?? []);
   if (disabled.has(kind)) {
     disabled.delete(kind);
     void patchDeviceSettings({ disabledProviders: [...disabled] });
   }
-  runInTerminal(command);
-}
-
-export function signInCommand(kind: ProviderKind): string | null {
-  switch (kind) {
-    case "claude":
-      return "claude auth login";
-    case "codex":
-      return "codex login";
-    case "cursor":
-      return "agent login";
-    case "demo":
-      return null;
+  try {
+    const result = await backend().call("providers.signIn", { provider: kind });
+    return { ok: true, message: signInOpenedCopy(result.command) };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not open a terminal.",
+    };
   }
 }
 

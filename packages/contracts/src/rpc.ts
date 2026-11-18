@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AppearanceTheme, AppearanceThemeSummary, DeviceSettings } from "./appearance.ts";
 import { Command } from "./commands.ts";
 import { AgeEvent } from "./events.ts";
-import { FileDiff, Id, Project, ProviderStatus, Thread, Turn } from "./model.ts";
+import { FileDiff, Id, Project, ProviderKind, ProviderStatus, Thread, Turn } from "./model.ts";
 import { TerminalPush, TerminalSessionId } from "./terminal.ts";
 import { ProviderLimits } from "./usage.ts";
 
@@ -44,6 +44,11 @@ export const RpcMethods = {
     result: z.object({ replayed: z.number().int().nonnegative() }),
   },
   "providers.list": { params: z.object({}), result: z.array(ProviderStatus) },
+  /** Open the provider's fixed sign-in command in a real terminal. The client names the provider, never the command. */
+  "providers.signIn": {
+    params: z.object({ provider: ProviderKind.exclude(["demo"]) }),
+    result: z.object({ opened: z.literal(true), command: z.string() }),
+  },
   /** Diff of the workspace for a thread: whole thread, or a single turn. */
   "git.diff": {
     params: z.object({ threadId: Id, turnId: Id.optional() }),

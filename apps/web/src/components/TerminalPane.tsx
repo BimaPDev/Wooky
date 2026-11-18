@@ -1,9 +1,14 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { takePendingTerminalLine, toggleTerminal } from "../state/actions.ts";
+import { toggleTerminal } from "../state/actions.ts";
 import { backend } from "../state/backend.ts";
 import { useStore } from "../state/store.ts";
 import { subscribeTerminal } from "../state/terminal.ts";
 import { IconClose } from "./Icons.tsx";
+
+/** Pipe-backed shells keep a trailing CR on the last argument. Send LF only. */
+export function terminalLine(text: string): string {
+  return `${text}\n`;
+}
 
 export function TerminalPane() {
   const thread = useStore((state) =>
@@ -34,13 +39,12 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
   const scrollRef = useRef<HTMLPreElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sessionRef = useRef<string | null>(null);
-  const pending = useStore((state) => state.pendingTerminalLine);
 
   const writeTo = (id: string, text: string) =>
     backend()
-      .call("terminal.write", { sessionId: id, data: `${text}\r\n` })
+      .call("terminal.write", { sessionId: id, data: terminalLine(text) })
       .then(
-        () => setOutput((prev) => prev + `$ ${text}\r\n`),
+        () => setOutput((prev) => prev + `$ ${text}\n`),
         (err: unknown) => {
           setStatus("error");
           setError(err instanceof Error ? err.message : "Write failed.");
@@ -51,11 +55,6 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
     sessionRef.current = id;
     setSessionId(id);
     setStatus("ready");
-  });
-
-  const deliverPending = useEffectEvent((id: string) => {
-    const text = takePendingTerminalLine(id);
-    if (text) void writeTo(id, text);
   });
 
   const onOpenFailed = useEffectEvent((err: unknown) => {
@@ -86,11 +85,6 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
       if (id) void backend().call("terminal.close", { sessionId: id });
     };
   }, [cwd]);
-
-  // sync: send a Sign in line queued in the store to the ready server shell, once
-  useEffect(() => {
-    if (pending && sessionId && status === "ready") deliverPending(sessionId);
-  }, [pending, sessionId, status]);
 
   // sync: append terminal chunks pushed over the websocket for this session
   useEffect(() => {
