@@ -3943,6 +3943,113 @@ button.tool-line:active {
   text-align: center;
 }
 
+.usage-scanning {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) 0 var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.usage-scan-track {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.usage-scan-fill {
+  display: block;
+  width: 35%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-3);
+  animation: usage-scan-once 1.2s ease-out 1 both;
+}
+
+@keyframes usage-scan-once {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-scan-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.35;
+  }
+}
+
+.usage-dimmed {
+  opacity: 0.72;
+}
+
+.usage-note {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.usage-hero-caption {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.usage-info-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.usage-info-button {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-3);
+}
+
+.usage-info-button:hover,
+.usage-info-button:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.usage-info-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: 16rem;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
+  box-shadow: var(--shadow);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 450;
+  line-height: 1.4;
+}
+
+.usage-import-footer {
+  padding: var(--space-4) 0 var(--space-6);
+  font-size: var(--text-xs);
+}
+
+.usage-import-footer p + p {
+  margin-top: 2px;
+}
+
 .usage-limits {
   display: flex;
   flex-direction: column;
