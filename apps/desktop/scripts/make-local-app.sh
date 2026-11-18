@@ -38,6 +38,8 @@ $pb -c "Set :CFBundleIdentifier $bundle_id" "$plist"
 $pb -c "Delete :ElectronAsarIntegrity" "$plist" 2>/dev/null || true
 $pb -c "Add :LSEnvironment:AGE_HOME string $age_home" "$plist" 2>/dev/null ||
   $pb -c "Set :LSEnvironment:AGE_HOME $age_home" "$plist"
+$pb -c "Add :NSAppleEventsUsageDescription string Wooky opens Terminal so you can sign in to your coding agents." "$plist" 2>/dev/null ||
+  $pb -c "Set :NSAppleEventsUsageDescription Wooky opens Terminal so you can sign in to your coding agents." "$plist"
 
 # Helpers: Chromium looks them up as "<executable> Helper*.app", so rename them to match.
 fw="$app/Contents/Frameworks"
