@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { HistoryFs, HistoryReaderContext } from "../history-reader.ts";
+import { ImportTuning, type HistoryFs, type HistoryReaderContext } from "../history-reader.ts";
 import type { ReadOnlyDb } from "./cursor.ts";
 import { createOpenCodeHistoryReader, opencodeHistoryReader } from "./opencode.ts";
 
@@ -12,6 +12,8 @@ const NOW = Date.parse("2026-06-10T12:00:00.000Z");
 const SECRET_PROMPT = "FAKE-PROMPT-summarise-the-private-roadmap";
 const SECRET_PATH = "/fake/private/project/path";
 const SECRET_KEY = "FAKE-CREDENTIAL-oc-key-000";
+const SECRET_SYSTEM = "FAKE-SYSTEM-you-are-a-leak-bot";
+const SECRET_SUMMARY = "FAKE-SUMMARY-internal-quarter-plans";
 
 function fakeFs(dirs: Record<string, string[]>): HistoryFs {
   return {
@@ -54,6 +56,8 @@ function assistant(extra: Record<string, unknown> = {}): Record<string, unknown>
     tokens: { input: 100, output: 40, reasoning: 7, cache: { read: 300, write: 20 } },
     path: { cwd: SECRET_PATH },
     content: SECRET_PROMPT,
+    system: SECRET_SYSTEM,
+    summary: SECRET_SUMMARY,
     ...extra,
   };
 }
@@ -234,6 +238,21 @@ describe("opencode history reader", () => {
     expect(result.report.status).toBe("partial");
   });
 
+  it("caps databases per scan and reports partial", async () => {
+    const names = Array.from(
+      { length: ImportTuning.filesPerScan + 2 },
+      (_, i) => `opencode-${i}.db`,
+    );
+    const reader = createOpenCodeHistoryReader({
+      openDatabase: () =>
+        openCodeDb("message", [{ id: "m1", sessionId: "s1", at, data: assistant() }]).db,
+    });
+    const result = await reader.read(ctx(fakeFs({ [DATA]: names })));
+    expect(result.report.status).toBe("partial");
+    expect(result.report.files).toBe(ImportTuning.filesPerScan);
+    expect(result.report.note).toContain("left out to bound the scan");
+  });
+
   it("never selects prompts, paths or credential tables", async () => {
     const { db, sql } = openCodeDb("message", [
       { id: "m1", sessionId: "s1", at, data: assistant() },
@@ -241,7 +260,7 @@ describe("opencode history reader", () => {
     const reader = createOpenCodeHistoryReader({ openDatabase: () => db });
     const result = await reader.read(ctx(files));
     const serialized = JSON.stringify(result);
-    for (const secret of [SECRET_PROMPT, SECRET_PATH, SECRET_KEY]) {
+    for (const secret of [SECRET_PROMPT, SECRET_PATH, SECRET_KEY, SECRET_SYSTEM, SECRET_SUMMARY]) {
       expect(serialized).not.toContain(secret);
     }
     const queries = sql.join("\n");

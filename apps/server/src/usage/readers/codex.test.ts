@@ -8,6 +8,8 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-06-10T12:00:00.000Z");
 const SECRET_PROMPT = "FAKE-PROMPT-delete-the-production-database";
 const SECRET_KEY = "FAKE-CREDENTIAL-codex-token-000";
+const SECRET_INSTRUCTIONS = "FAKE-BASE-INSTRUCTIONS-never-ship-this";
+const SECRET_SUMMARY = "FAKE-TURN-SUMMARY-leaked-roadmap-notes";
 
 type FileSpec = { body: string; mtimeMs?: number };
 
@@ -76,7 +78,11 @@ function counters(input: number, cached: number, output: number, reasoning = 0, 
 const meta = (id: string, ms: number, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ timestamp: iso(ms), type: "session_meta", payload: { id, ...extra } });
 const turn = (model: string, ms: number) =>
-  JSON.stringify({ timestamp: iso(ms), type: "turn_context", payload: { model, cwd: SECRET_KEY } });
+  JSON.stringify({
+    timestamp: iso(ms),
+    type: "turn_context",
+    payload: { model, cwd: SECRET_KEY, summary: SECRET_SUMMARY },
+  });
 const tokenCount = (
   ms: number,
   total: ReturnType<typeof counters> | null,
@@ -164,7 +170,7 @@ describe("codex history reader", () => {
       // Resumed in a new process: the counters restart at this request.
       tokenCount(t0 + 30_000, counters(300, 0, 20), counters(300, 0, 20)),
       tokenCount(t0 + 40_000, counters(500, 0, 50), counters(200, 0, 30)),
-      // An older snapshot replayed later is a decrease that matches no request: re-baselined, not billed.
+      // Older snapshot replayed: not billed and baseline stays at the prior cumulative (700).
       tokenCount(t0 + 50_000, counters(100, 0, 5), counters(400, 0, 40)),
       tokenCount(t0 + 60_000, counters(700, 0, 70), counters(200, 0, 20)),
     ].join("\n");
@@ -174,7 +180,7 @@ describe("codex history reader", () => {
       [600, 50],
       [300, 20],
       [200, 30],
-      [600, 65],
+      [200, 20],
     ]);
   });
 
@@ -286,7 +292,11 @@ describe("codex history reader", () => {
 
   it("never keeps message text, paths or credentials", async () => {
     const body = [
-      meta("sess-p", t0, { cwd: SECRET_KEY, instructions: SECRET_PROMPT }),
+      meta("sess-p", t0, {
+        cwd: SECRET_KEY,
+        instructions: SECRET_PROMPT,
+        base_instructions: SECRET_INSTRUCTIONS,
+      }),
       turn("gpt-5", t0 + 1),
       chatter(t0 + 2),
       tokenCount(t0 + 3000, counters(100, 20, 10), counters(100, 20, 10)),
@@ -294,8 +304,9 @@ describe("codex history reader", () => {
     const result = await read(body);
     expect(result.records).toHaveLength(1);
     const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain(SECRET_PROMPT);
-    expect(serialized).not.toContain(SECRET_KEY);
+    for (const secret of [SECRET_PROMPT, SECRET_KEY, SECRET_INSTRUCTIONS, SECRET_SUMMARY]) {
+      expect(serialized).not.toContain(secret);
+    }
     expect(serialized).not.toContain(FILE);
   });
 });
