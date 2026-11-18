@@ -108,21 +108,47 @@ export function formatPeriodLabel(key: string, resolution: UsageResolution): str
 }
 
 function addCalendarDays(day: string, offset: number, timeZone: string): string {
-  const ms = startOfCalendarDayMs(day, timeZone) + offset * 24 * 60 * 60 * 1000;
-  return calendarDayKey(ms, timeZone);
+  if (offset === 0) return day;
+  let current = day;
+  const step = offset > 0 ? 1 : -1;
+  for (let i = 0; i < Math.abs(offset); i += 1) {
+    current = stepCalendarDay(current, timeZone, step);
+  }
+  return current;
+}
+
+/** Any instant that falls on this local calendar day (for stepping, not necessarily midnight). */
+function momentOnCalendarDay(day: string, timeZone: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return 0;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const date = Number(match[3]);
+  const anchor = Date.UTC(year, month - 1, date, 12, 0, 0);
+  for (let hours = -36; hours <= 36; hours += 1) {
+    const ms = anchor + hours * 60 * 60 * 1000;
+    if (calendarDayKey(ms, timeZone) === day) return ms;
+  }
+  return anchor;
+}
+
+function stepCalendarDay(day: string, timeZone: string, dir: 1 | -1): string {
+  const anchor = momentOnCalendarDay(day, timeZone);
+  for (let hours = 1; hours <= 48; hours += 1) {
+    const next = calendarDayKey(anchor + dir * hours * 60 * 60 * 1000, timeZone);
+    if (next !== day) return next;
+  }
+  return day;
 }
 
 function startOfCalendarDayMs(day: string, timeZone: string): number {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
-  if (!match) return 0;
-  const guess = Date.parse(`${day}T12:00:00Z`);
-  const formatted = calendarDayKey(guess, timeZone);
-  if (formatted === day) return guess - 12 * 60 * 60 * 1000;
-  const parts = day.split("-").map(Number);
-  const year = parts[0] ?? 0;
-  const month = parts[1] ?? 1;
-  const date = parts[2] ?? 1;
-  return Date.UTC(year, month - 1, date, 12, 0, 0);
+  const anchor = momentOnCalendarDay(day, timeZone);
+  for (let hours = 0; hours <= 27; hours += 1) {
+    if (calendarDayKey(anchor - hours * 60 * 60 * 1000, timeZone) !== day) {
+      return anchor - (hours - 1) * 60 * 60 * 1000;
+    }
+  }
+  return anchor - 27 * 60 * 60 * 1000;
 }
 
 function* iterateCalendarDays(first: string, last: string, timeZone: string): Iterable<string> {

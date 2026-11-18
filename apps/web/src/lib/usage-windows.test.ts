@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { bucketPeriodKey, enumeratePeriodKeys, windowBounds } from "./usage-windows.ts";
+import {
+  bucketPeriodKey,
+  calendarDayKey,
+  enumeratePeriodKeys,
+  windowBounds,
+} from "./usage-windows.ts";
 
 describe("windowBounds", () => {
   it("uses a rolling 24 hours for day 1", () => {
@@ -24,6 +29,15 @@ describe("enumeratePeriodKeys", () => {
     const until = Date.parse("2026-11-18T12:00:00Z");
     const keys = enumeratePeriodKeys(since, until, "day", "UTC");
     expect(keys).toEqual(["2026-11-16", "2026-11-17", "2026-11-18"]);
+  });
+
+  it("terminates a 90-day window in America/New_York", () => {
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const zone = "America/New_York";
+    const { sinceMs, untilMs, resolution } = windowBounds(90, now, zone);
+    const keys = enumeratePeriodKeys(sinceMs, untilMs, resolution, zone);
+    expect(keys.length).toBe(90);
+    expect(keys.at(-1)).toBe(calendarDayKey(now, zone));
   });
 });
 
