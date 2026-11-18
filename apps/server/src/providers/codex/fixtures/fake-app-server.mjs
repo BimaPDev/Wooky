@@ -244,7 +244,21 @@ function handleClientRequest(msg) {
     if (authProbe === "requires-auth") {
       send({
         id: msg.id,
-        result: { account: null, requiresOpenaiAuth: true, userId: null },
+        result: { account: null, requiresOpenaiAuth: true },
+      });
+      return;
+    }
+    if (authProbe === "requires-auth-absent") {
+      send({
+        id: msg.id,
+        result: { requiresOpenaiAuth: true },
+      });
+      return;
+    }
+    if (authProbe === "no-openai-auth") {
+      send({
+        id: msg.id,
+        result: { requiresOpenaiAuth: false },
       });
       return;
     }
@@ -257,7 +271,6 @@ function handleClientRequest(msg) {
       result: {
         account: { type: "chatgpt", email: "user@example.com" },
         requiresOpenaiAuth: true,
-        userId: "user-1",
       },
     });
     return;

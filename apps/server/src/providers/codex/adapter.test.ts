@@ -110,7 +110,17 @@ describe("createCodexAdapter", () => {
     expect(status.problem).toBeNull();
   });
 
-  it("probe reports signed out when account/read requires OpenAI auth with no account", async () => {
+  it("probe reports signed out when account is absent and requiresOpenaiAuth is true", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--auth-probe", "requires-auth-absent"],
+    });
+    const status = await adapter.probe();
+    expect(status.authenticated).toBe(false);
+    expect(status.problem).toBe("Run `codex login`, then refresh.");
+  });
+
+  it("probe reports signed out when account is null and requiresOpenaiAuth is true", async () => {
     const adapter = createCodexAdapter({
       codexBin: process.execPath,
       codexArgs: [fakeServerPath, "--auth-probe", "requires-auth"],
@@ -124,6 +134,16 @@ describe("createCodexAdapter", () => {
     const adapter = createCodexAdapter({
       codexBin: process.execPath,
       codexArgs: [fakeServerPath, "--auth-probe", "signed-in"],
+    });
+    const status = await adapter.probe();
+    expect(status.authenticated).toBe(true);
+    expect(status.problem).toBeNull();
+  });
+
+  it("probe reports authenticated when requiresOpenaiAuth is false with no account", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--auth-probe", "no-openai-auth"],
     });
     const status = await adapter.probe();
     expect(status.authenticated).toBe(true);

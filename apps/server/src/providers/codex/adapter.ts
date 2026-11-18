@@ -100,10 +100,9 @@ function isErrnoCode(err: unknown, code: string): boolean {
 }
 
 function authFromAccountRead(response: AccountReadResponse): boolean | null {
-  if (response.requiresOpenaiAuth && !response.account) return false;
-  if (response.account) return true;
-  if (!response.requiresOpenaiAuth) return true;
-  return null;
+  if (response.account !== undefined && response.account !== null) return true;
+  if (response.requiresOpenaiAuth) return false;
+  return true;
 }
 
 function probeAuthProblem(authenticated: boolean | null): string | null {

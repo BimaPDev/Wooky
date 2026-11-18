@@ -156,9 +156,8 @@ export const InitializeResponseSchema = z.object({
 
 /** `account/read` (`GetAccountResponse` in codex app-server v2). */
 export const AccountReadResponseSchema = z.object({
-  account: z.unknown().nullable(),
+  account: z.unknown().nullable().optional(),
   requiresOpenaiAuth: z.boolean(),
-  userId: z.string().nullable().optional(),
 });
 export type AccountReadResponse = z.infer<typeof AccountReadResponseSchema>;
 
