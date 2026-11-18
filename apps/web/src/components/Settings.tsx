@@ -202,6 +202,18 @@ function GeneralPage() {
           />
         </SettingRow>
       </SettingsSection>
+      <SettingsSection title="Usage">
+        <SettingRow
+          title="Import usage from local agent history"
+          description="Reads token counts and model names from Claude Code, Cursor, OpenCode and Codex history on this machine. Message text is never read or stored."
+        >
+          <Toggle
+            checked={settings.importLocalHistory}
+            onChange={(checked) => void patchDeviceSettings({ importLocalHistory: checked })}
+            label="Import usage from local agent history"
+          />
+        </SettingRow>
+      </SettingsSection>
     </div>
   );
 }

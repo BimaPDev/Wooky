@@ -1,16 +1,31 @@
-import type { ProviderKind, ProviderLimits, Turn } from "@age/contracts";
-import { useEffect, useRef, useState } from "react";
+import type {
+  ProviderKind,
+  ProviderLimits,
+  UsageHistoryResult,
+  UsageHistorySource,
+  UsageWindowDays,
+} from "@age/contracts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { RpcCallError } from "../rpc/client.ts";
+import { visibleCostSegments } from "../lib/usage-cost-by-type.ts";
+import {
+  USAGE_SERIES_ORDER,
+  collectTurnRows,
+  turnProvidersFromSources,
+  usesImportedHistory,
+  type UsageSeriesId,
+} from "../lib/usage-merge.ts";
+import { buildUsageDashboardStats, type UsageDashboardStats } from "../lib/usage-stats.ts";
 import { backend } from "../state/backend.ts";
 import { closeSettings } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
-import { IconCheck, IconChevron, IconClose, IconRefresh } from "./Icons.tsx";
+import { IconCheck, IconChevron, IconClose, IconInfo, IconRefresh } from "./Icons.tsx";
 import { Modal } from "./Modal.tsx";
 
 type Metric = "cost" | "tokens" | "limits";
-type WindowDays = 1 | 7 | 30 | 90;
 type Breakdown = "model" | "time";
 
-const WINDOW_OPTIONS: { days: WindowDays; label: string }[] = [
+const WINDOW_OPTIONS: { days: UsageWindowDays; label: string }[] = [
   { days: 1, label: "Past 24h" },
   { days: 7, label: "7 days" },
   { days: 30, label: "30 days" },
@@ -23,43 +38,25 @@ const METRIC_OPTIONS: { value: Metric; label: string }[] = [
   { value: "limits", label: "Limits" },
 ];
 
-const PROVIDER_META: Record<ProviderKind, { label: string; color: string }> = {
-  codex: { label: "Codex", color: "var(--text)" },
-  claude: { label: "Claude Code", color: "var(--usage-claude)" },
-  cursor: { label: "Cursor", color: "var(--usage-cursor)" },
-  demo: { label: "Demo", color: "var(--accent)" },
-};
+const LIMITS_PROVIDERS: ProviderKind[] = ["codex", "claude", "cursor", "demo"];
 
-const PROVIDER_ORDER: ProviderKind[] = ["codex", "claude", "cursor", "demo"];
+const SERIES_META: Record<
+  UsageSeriesId,
+  { label: string; color: string; markClass?: ProviderKind }
+> = {
+  codex: { label: "Codex", color: "var(--text)", markClass: "codex" },
+  claude: { label: "Claude Code", color: "var(--usage-claude)", markClass: "claude" },
+  cursor: { label: "Cursor", color: "var(--usage-cursor)", markClass: "cursor" },
+  opencode: { label: "OpenCode", color: "var(--text)" },
+  demo: { label: "Demo", color: "var(--accent)", markClass: "demo" },
+};
 
 const TYPE_COLORS = {
   input: "color-mix(in srgb, var(--text) 60%, var(--bg-0))",
   cacheRead: "color-mix(in srgb, var(--text) 30%, var(--bg-0))",
+  cacheWrite: "color-mix(in srgb, var(--text) 45%, var(--bg-0))",
   output: "var(--text)",
   other: "color-mix(in srgb, var(--text) 44%, var(--bg-0))",
-};
-
-type PeriodBucket = {
-  key: string;
-  label: string;
-  costByProvider: Map<ProviderKind, number>;
-  tokensByProvider: Map<ProviderKind, number>;
-  costTotal: number;
-  tokensTotal: number;
-};
-
-type ProviderRow = {
-  name: ProviderKind;
-  cost: number;
-  tokens: number;
-  sessions: number;
-};
-
-type ModelRow = {
-  name: string;
-  provider: ProviderKind;
-  cost: number;
-  tokens: number;
 };
 
 type LimitsLoad =
@@ -67,21 +64,49 @@ type LimitsLoad =
   | { state: "ready"; rows: ProviderLimits[] }
   | { state: "error"; message: string };
 
+type HistoryLoad =
+  | { state: "loading" }
+  | { state: "ready"; data: UsageHistoryResult | null; fallbackNote?: string }
+  | { state: "error"; message: string };
+
+const EMPTY_HISTORY_SOURCES: UsageHistorySource[] = [];
+
+const EMPTY_STATS: UsageDashboardStats = {
+  sessions: 0,
+  cost: 0,
+  tokens: 0,
+  inputTokens: 0,
+  uncachedInput: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  output: 0,
+  cacheSavings: 0,
+  costByType: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, other: 0 },
+  unpricedRecords: 0,
+  providers: [],
+  models: [],
+  periods: [],
+  resolution: "day",
+};
+
 export function UsageDashboard() {
   const turns = useStore((state) => state.model.turns);
-  const [windowDays, setWindowDays] = useState<WindowDays>(1);
+  const [windowDays, setWindowDays] = useState<UsageWindowDays>(30);
   const [metric, setMetric] = useState<Metric>("cost");
   const [breakdown, setBreakdown] = useState<Breakdown>("model");
-  // Refresh re-renders, and stats are rebuilt against the current clock each render.
-  const [, setTick] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [limitsReq, setLimitsReq] = useState({ nonce: 0, refresh: false });
+  const [historyReq, setHistoryReq] = useState({ nonce: 0, refresh: false });
   const [limitsLoad, setLimitsLoad] = useState<{ key: string; value: LimitsLoad } | null>(null);
-  const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<ProviderKind>>(
-    () => new Set(),
-  );
-  const limitsKey = `${metric}:${limitsReq.nonce}:${limitsReq.refresh ? "1" : "0"}`;
+  const [historyLoad, setHistoryLoad] = useState<{ key: string; value: HistoryLoad } | null>(null);
+  const [hiddenSeries, setHiddenSeries] = useState<ReadonlySet<UsageSeriesId>>(() => new Set());
+  const [timeZone] = useState(() => {
+    const format = Intl.DateTimeFormat();
+    return format.resolvedOptions().timeZone;
+  });
 
-  const stats = buildUsageStats(turns, windowDays, hiddenProviders);
+  const limitsKey = `${metric}:${limitsReq.nonce}:${limitsReq.refresh ? "1" : "0"}`;
+  const historyKey = `${metric}:${windowDays}:${timeZone}:${historyReq.nonce}:${historyReq.refresh ? "1" : "0"}`;
 
   // sync: server usage.limits when the Limits tab is open
   useEffect(() => {
@@ -106,10 +131,98 @@ export function UsageDashboard() {
     };
   }, [metric, limitsReq, limitsKey]);
 
+  // sync: server usage.history for cost and token tabs
+  useEffect(() => {
+    if (metric === "limits") return;
+    let cancelled = false;
+    backend()
+      .call("usage.history", {
+        windowDays,
+        timeZone,
+        awaitRefresh: historyReq.refresh,
+      })
+      .then(
+        (data) =>
+          !cancelled && setHistoryLoad({ key: historyKey, value: { state: "ready", data } }),
+        (error: unknown) => {
+          if (cancelled) return;
+          if (error instanceof RpcCallError && error.code === "unavailable") {
+            setHistoryLoad({
+              key: historyKey,
+              value: {
+                state: "ready",
+                data: null,
+                fallbackNote:
+                  "Local history is unavailable on this server. Showing Wooky turns only.",
+              },
+            });
+            return;
+          }
+          setHistoryLoad({
+            key: historyKey,
+            value: {
+              state: "error",
+              message: error instanceof Error ? error.message : "Could not load usage history.",
+            },
+          });
+        },
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [metric, windowDays, timeZone, historyReq, historyKey]);
+
   const limitsCurrent: LimitsLoad =
     limitsLoad && limitsLoad.key === limitsKey ? limitsLoad.value : { state: "loading" };
 
-  // T3 AppRouteModal: large floating panel over a dimmed app, not a full-screen page.
+  const historyCurrent =
+    historyLoad && historyLoad.key === historyKey
+      ? historyLoad.value
+      : metric === "limits"
+        ? null
+        : ({ state: "loading" } satisfies HistoryLoad);
+
+  const historyData =
+    historyCurrent?.state === "ready"
+      ? historyCurrent.data
+      : historyCurrent?.state === "loading"
+        ? undefined
+        : null;
+  const fallbackNote = historyCurrent?.state === "ready" ? historyCurrent.fallbackNote : undefined;
+  const historySources = historyData?.sources ?? EMPTY_HISTORY_SOURCES;
+  const turnProviders = useMemo(() => turnProvidersFromSources(historySources), [historySources]);
+  const turnRows = useMemo(() => collectTurnRows(turns, turnProviders), [turns, turnProviders]);
+
+  const stats = useMemo(() => {
+    if (metric === "limits") return EMPTY_STATS;
+    if (historyCurrent?.state === "loading" && historyData === undefined) return EMPTY_STATS;
+    return buildUsageDashboardStats({
+      buckets: historyData?.buckets ?? [],
+      sources: historySources,
+      turnRows,
+      windowDays,
+      timeZone,
+      nowMs,
+      hiddenSeries,
+    });
+  }, [
+    metric,
+    historyCurrent?.state,
+    historyData,
+    historySources,
+    turnRows,
+    windowDays,
+    timeZone,
+    nowMs,
+    hiddenSeries,
+  ]);
+
+  const scanning =
+    metric !== "limits" &&
+    (historyCurrent?.state === "loading" || historySources.some((source) => source.refreshing));
+  const importedFooter = historySources.some((source) => usesImportedHistory(source.status));
+  const dimsOverview = scanning && stats.providers.length > 0;
+
   return (
     <Modal label="Usage" onClose={closeSettings} className="modal app-route-modal">
       <div className="usage-shell">
@@ -119,11 +232,11 @@ export function UsageDashboard() {
             <span className="crumb-sep" aria-hidden="true">
               /
             </span>
-            <span className="usage-crumb muted">This workspace</span>
+            <span className="usage-crumb muted">This machine</span>
             <span className="crumb-sep" aria-hidden="true">
               /
             </span>
-            <UsageProviderFilter hiddenProviders={hiddenProviders} onChange={setHiddenProviders} />
+            <UsageSeriesFilter hiddenSeries={hiddenSeries} onChange={setHiddenSeries} />
           </div>
           <div className="usage-topbar-actions">
             {metric !== "limits" ? (
@@ -134,7 +247,7 @@ export function UsageDashboard() {
                   value: String(option.days),
                   label: option.label,
                 }))}
-                onChange={(value) => setWindowDays(Number(value) as WindowDays)}
+                onChange={(value) => setWindowDays(Number(value) as UsageWindowDays)}
               />
             ) : null}
             <Segmented
@@ -152,9 +265,11 @@ export function UsageDashboard() {
               aria-label="Refresh"
               title="Refresh"
               onClick={() => {
-                setTick((n) => n + 1);
+                setNowMs(Date.now());
                 if (metric === "limits") {
                   setLimitsReq((prev) => ({ nonce: prev.nonce + 1, refresh: true }));
+                } else {
+                  setHistoryReq((prev) => ({ nonce: prev.nonce + 1, refresh: true }));
                 }
               }}
             >
@@ -175,20 +290,100 @@ export function UsageDashboard() {
         <div className="usage-scroll">
           <div className="usage-page">
             {metric === "limits" ? (
-              <UsageLimitsPanel load={limitsCurrent} hiddenProviders={hiddenProviders} />
-            ) : (
-              <UsageOverview
-                stats={stats}
-                metric={metric}
-                breakdown={breakdown}
-                onBreakdown={setBreakdown}
+              <UsageLimitsPanel
+                load={limitsCurrent}
+                hiddenProviders={hiddenFromSeries(hiddenSeries)}
               />
+            ) : (
+              <>
+                {scanning ? <UsageScanningBanner /> : null}
+                {historyCurrent?.state === "error" ? (
+                  <p className="usage-note muted">{historyCurrent.message}</p>
+                ) : null}
+                <UsageOverview
+                  stats={stats}
+                  metric={metric}
+                  breakdown={breakdown}
+                  onBreakdown={setBreakdown}
+                  dimmed={dimsOverview}
+                  pricing={historyData?.pricing ?? null}
+                  unpricedRecords={stats.unpricedRecords}
+                  fallbackNote={fallbackNote}
+                />
+                {importedFooter ? (
+                  <UsageImportFooter
+                    sources={historySources}
+                    pricing={historyData?.pricing ?? null}
+                  />
+                ) : null}
+                {!scanning && stats.providers.length === 0 ? (
+                  <p className="usage-empty muted">No usage found for this window.</p>
+                ) : null}
+              </>
             )}
           </div>
         </div>
       </div>
     </Modal>
   );
+}
+
+function hiddenFromSeries(hidden: ReadonlySet<UsageSeriesId>): ReadonlySet<ProviderKind> {
+  const out = new Set<ProviderKind>();
+  for (const id of hidden) {
+    if (id !== "opencode") out.add(id);
+  }
+  return out;
+}
+
+function UsageScanningBanner() {
+  return (
+    <div className="usage-scanning" role="status">
+      <p>Scanning your agent history…</p>
+      <div className="usage-scan-track" aria-hidden="true">
+        <span className="usage-scan-fill" />
+      </div>
+    </div>
+  );
+}
+
+function UsageImportFooter({
+  sources,
+  pricing,
+}: {
+  sources: readonly UsageHistorySource[];
+  pricing: UsageHistoryResult["pricing"] | null;
+}) {
+  const lines = sourceStatusLines(sources);
+  const pricingNote =
+    pricing?.status === "stale"
+      ? "Pricing data may be out of date."
+      : pricing?.status === "unavailable"
+        ? "Pricing data unavailable. Costs may show as zero."
+        : null;
+  if (lines.length === 0 && !pricingNote) return null;
+  return (
+    <footer className="usage-import-footer muted">
+      <p>Imported from local history</p>
+      {lines.map((line) => (
+        <p key={line}>{line}</p>
+      ))}
+      {pricingNote ? <p>{pricingNote}</p> : null}
+    </footer>
+  );
+}
+
+function sourceStatusLines(sources: readonly UsageHistorySource[]): string[] {
+  return sources.flatMap((source) => {
+    if (source.status === "partial") {
+      const detail = source.note ? `, ${source.note}` : "";
+      return [`${SERIES_META[source.origin].label}: partial${detail}`];
+    }
+    if (source.status === "failed") {
+      return [`${SERIES_META[source.origin].label}: import failed`];
+    }
+    return [];
+  });
 }
 
 function UsageLimitsPanel({
@@ -205,7 +400,7 @@ function UsageLimitsPanel({
     return <p className="usage-empty muted">{load.message}</p>;
   }
 
-  const rows = PROVIDER_ORDER.filter((provider) => !hiddenProviders.has(provider)).flatMap(
+  const rows = LIMITS_PROVIDERS.filter((provider) => !hiddenProviders.has(provider)).flatMap(
     (provider) => {
       const row = load.rows.find((entry) => entry.provider === provider);
       return row ? [row] : [];
@@ -226,7 +421,7 @@ function UsageLimitsPanel({
 }
 
 function ProviderLimitsCard({ row }: { row: ProviderLimits }) {
-  const meta = PROVIDER_META[row.provider];
+  const meta = SERIES_META[row.provider];
   return (
     <section className="usage-limits-card">
       <header className="usage-limits-card-head">
@@ -304,28 +499,54 @@ function UsageOverview({
   metric,
   breakdown,
   onBreakdown,
+  dimmed,
+  pricing,
+  unpricedRecords,
+  fallbackNote,
 }: {
-  stats: ReturnType<typeof buildUsageStats>;
+  stats: UsageDashboardStats;
   metric: "cost" | "tokens";
   breakdown: Breakdown;
   onBreakdown: (value: Breakdown) => void;
+  dimmed: boolean;
+  pricing: UsageHistoryResult["pricing"] | null;
+  unpricedRecords: number;
+  fallbackNote?: string;
 }) {
   const heroValue = metric === "cost" ? formatUsd(stats.cost) : formatTokens(stats.tokens);
   const peakModel = stats.models.reduce(
     (peak, model) => Math.max(peak, metric === "cost" ? model.cost : model.tokens),
     0,
   );
+  const costSegments = visibleCostSegments(stats.costByType).map((segment) => ({
+    label: segment.label,
+    value: segment.value,
+    color: TYPE_COLORS[segment.key],
+  }));
 
   return (
-    <div className="usage-overview">
+    <div className={dimmed ? "usage-overview usage-dimmed" : "usage-overview"}>
       <section className="usage-hero-grid">
         <div className="usage-hero-left">
           <div className="usage-hero-figure">
-            <p className="usage-total">{heroValue}</p>
-            <p className="muted">
+            <p className="usage-total tabular">{heroValue}</p>
+            <p className="muted usage-hero-caption">
               {formatCount(stats.sessions)} {stats.sessions === 1 ? "session" : "sessions"}
-              {metric === "cost" ? " · API estimate" : ""}
+              {metric === "cost" ? (
+                <>
+                  {" · "}
+                  <span className="usage-api-estimate">API estimate</span>
+                  <UsageEstimatePopover />
+                </>
+              ) : null}
             </p>
+            {unpricedRecords > 0 ? (
+              <p className="usage-note muted">{formatCount(unpricedRecords)} records unpriced</p>
+            ) : null}
+            {fallbackNote ? <p className="usage-note muted">{fallbackNote}</p> : null}
+            {pricing?.status === "stale" ? (
+              <p className="usage-note muted">API price table may be stale.</p>
+            ) : null}
           </div>
           {stats.providers.length === 0 ? (
             <p className="muted">No activity in this window.</p>
@@ -339,20 +560,23 @@ function UsageOverview({
                   : stats.tokens > 0
                     ? provider.tokens / stats.tokens
                     : 0;
+              const meta = SERIES_META[provider.id];
               return (
-                <div key={provider.name} className="usage-provider-row">
+                <div key={provider.id} className="usage-provider-row">
                   <div className="usage-provider-head">
                     <span className="usage-provider-title">
                       <span
                         className="usage-dot"
-                        style={{ background: PROVIDER_META[provider.name].color }}
+                        style={{ background: meta.color }}
                         aria-hidden="true"
                       />
-                      <span
-                        className={`provider-mark provider-${provider.name}`}
-                        aria-hidden="true"
-                      />
-                      <span>{PROVIDER_META[provider.name].label}</span>
+                      {meta.markClass ? (
+                        <span
+                          className={`provider-mark provider-${meta.markClass}`}
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      <span>{meta.label}</span>
                       <span className="muted usage-provider-sessions">
                         {formatCount(provider.sessions)}{" "}
                         {provider.sessions === 1 ? "session" : "sessions"}
@@ -379,7 +603,7 @@ function UsageOverview({
           </h2>
           <UsageChart
             periods={stats.periods}
-            providers={stats.providers.map((p) => p.name)}
+            series={stats.providers.map((p) => p.id)}
             metric={metric}
           />
         </div>
@@ -389,10 +613,10 @@ function UsageOverview({
         <h2>Totals</h2>
         <dl className="usage-totals-grid">
           <UsageStat label="Processed tokens" value={formatTokens(stats.tokens)} />
-          <UsageStat label="Cached input" value={formatTokens(stats.cached)} />
-          <UsageStat label="Uncached input" value={formatTokens(stats.uncached)} />
+          <UsageStat label="Cached input" value={formatTokens(stats.cacheRead)} />
+          <UsageStat label="Uncached input" value={formatTokens(stats.uncachedInput)} />
           <UsageStat label="Output" value={formatTokens(stats.output)} />
-          <UsageStat label="Cache savings" value={formatUsd(0)} />
+          <UsageStat label="Cache savings" value={formatUsd(stats.cacheSavings)} />
         </dl>
       </section>
 
@@ -402,18 +626,15 @@ function UsageOverview({
             <ShareBar
               label="Tokens by type"
               segments={[
-                { label: "Input", value: stats.uncached, color: TYPE_COLORS.input },
-                { label: "Cache read", value: stats.cached, color: TYPE_COLORS.cacheRead },
+                { label: "Input", value: stats.uncachedInput, color: TYPE_COLORS.input },
+                { label: "Cache read", value: stats.cacheRead, color: TYPE_COLORS.cacheRead },
+                { label: "Cache write", value: stats.cacheWrite, color: TYPE_COLORS.cacheWrite },
                 { label: "Output", value: stats.output, color: TYPE_COLORS.output },
               ]}
               format={formatTokens}
             />
           ) : (
-            <ShareBar
-              label="Cost by type"
-              segments={[{ label: "Other", value: stats.cost, color: TYPE_COLORS.other }]}
-              format={formatUsd}
-            />
+            <ShareBar label="Cost by type" segments={costSegments} format={formatUsd} />
           )}
         </section>
       ) : null}
@@ -463,16 +684,25 @@ function UsageOverview({
                         : 0;
                   const bar =
                     peakModel > 0 && value > 0 ? Math.max(2, (value / peakModel) * 100) : 0;
+                  const meta = SERIES_META[model.series];
                   return (
-                    <tr key={`${model.provider}:${model.name}`}>
+                    <tr key={`${model.series}:${model.name}`}>
                       <td className="muted">{index + 1}</td>
                       <td>
                         <div className="usage-model-cell">
                           <span className="usage-model-name">
-                            <span
-                              className={`provider-mark provider-${model.provider}`}
-                              aria-hidden="true"
-                            />
+                            {meta.markClass ? (
+                              <span
+                                className={`provider-mark provider-${meta.markClass}`}
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <span
+                                className="usage-dot"
+                                style={{ background: meta.color }}
+                                aria-hidden="true"
+                              />
+                            )}
                             <span className="mono">{model.name}</span>
                           </span>
                           {bar > 0 ? (
@@ -480,7 +710,7 @@ function UsageOverview({
                               className="usage-model-bar"
                               style={{
                                 width: `${bar}%`,
-                                background: PROVIDER_META[model.provider].color,
+                                background: meta.color,
                               }}
                               aria-hidden="true"
                             />
@@ -503,8 +733,8 @@ function UsageOverview({
                 <th>{stats.resolution === "hour" ? "Hour" : "Day"}</th>
                 <th className="num">{metric === "cost" ? "Cost" : "Tokens"}</th>
                 {stats.providers.map((provider) => (
-                  <th key={provider.name} className="num">
-                    {PROVIDER_META[provider.name].label}
+                  <th key={provider.id} className="num">
+                    {SERIES_META[provider.id].label}
                   </th>
                 ))}
               </tr>
@@ -512,8 +742,7 @@ function UsageOverview({
             <tbody>
               {stats.periods.toReversed().map((period) => {
                 const total = metric === "cost" ? period.costTotal : period.tokensTotal;
-                const byProvider =
-                  metric === "cost" ? period.costByProvider : period.tokensByProvider;
+                const bySeries = metric === "cost" ? period.costBySeries : period.tokensBySeries;
                 return (
                   <tr key={period.key}>
                     <td>{period.label}</td>
@@ -521,10 +750,10 @@ function UsageOverview({
                       {metric === "cost" ? formatUsd(total) : formatTokens(total)}
                     </td>
                     {stats.providers.map((provider) => (
-                      <td key={provider.name} className="num tabular muted">
+                      <td key={provider.id} className="num tabular muted">
                         {metric === "cost"
-                          ? formatUsd(byProvider.get(provider.name) ?? 0)
-                          : formatTokens(byProvider.get(provider.name) ?? 0)}
+                          ? formatUsd(bySeries.get(provider.id) ?? 0)
+                          : formatTokens(bySeries.get(provider.id) ?? 0)}
                       </td>
                     ))}
                   </tr>
@@ -538,39 +767,76 @@ function UsageOverview({
   );
 }
 
+function UsageEstimatePopover() {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+
+  // sync: close the API estimate popover when clicking outside
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointer);
+    return () => window.removeEventListener("pointerdown", onPointer);
+  }, [open]);
+
+  return (
+    <span className="usage-info-anchor" ref={root}>
+      <button
+        type="button"
+        className="usage-info-button"
+        aria-label="About API estimate"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <IconInfo />
+      </button>
+      {open ? (
+        <span className="usage-info-popover" role="tooltip">
+          Estimated cost at published API prices. This is not a subscription bill.
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function UsageChart({
   periods,
-  providers,
+  series,
   metric,
 }: {
-  periods: PeriodBucket[];
-  providers: ProviderKind[];
+  periods: UsageDashboardStats["periods"];
+  series: UsageSeriesId[];
   metric: "cost" | "tokens";
 }) {
   const width = 960;
   const height = 220;
   const top = 8;
-  const valueOf = (period: PeriodBucket, provider: ProviderKind) =>
-    (metric === "cost" ? period.costByProvider : period.tokensByProvider).get(provider) ?? 0;
+  const bottom = 6;
+  const plotHeight = height - top - bottom;
+  const valueOf = (period: UsageDashboardStats["periods"][number], id: UsageSeriesId) =>
+    (metric === "cost" ? period.costBySeries : period.tokensBySeries).get(id) ?? 0;
   const peak = periods.reduce(
-    (max, period) => Math.max(max, ...providers.map((provider) => valueOf(period, provider))),
+    (max, period) => Math.max(max, ...series.map((id) => valueOf(period, id))),
     0,
   );
   const scale = niceScale(peak);
   const stepX = periods.length < 2 ? 0 : width / (periods.length - 1);
+  const baseline = top + plotHeight;
   const y = (value: number) =>
-    scale.max === 0 ? height : height - (value / scale.max) * (height - top);
+    scale.max === 0 ? baseline : baseline - (value / scale.max) * plotHeight;
 
-  const paths = providers
-    .map((provider) => {
+  const paths = series
+    .map((id) => {
       const points = periods.map((period, index) => ({
         x: index * stepX,
-        y: y(valueOf(period, provider)),
+        y: y(valueOf(period, id)),
       }));
       const line = polyline(points);
-      const area = line === "" ? "" : `${line} L${width},${height} L0,${height} Z`;
-      const total = periods.reduce((sum, period) => sum + valueOf(period, provider), 0);
-      return { provider, line, area, total };
+      const area = line === "" ? "" : `${line} L${width},${baseline} L0,${baseline} Z`;
+      const total = periods.reduce((sum, period) => sum + valueOf(period, id), 0);
+      return { id, line, area, total };
     })
     .toSorted((a, b) => b.total - a.total);
 
@@ -594,15 +860,15 @@ function UsageChart({
             />
           ))}
           {paths.map((path) => (
-            <g key={path.provider}>
+            <g key={path.id}>
               {path.area ? (
-                <path d={path.area} fill={PROVIDER_META[path.provider].color} opacity={0.12} />
+                <path d={path.area} fill={SERIES_META[path.id].color} opacity={0.12} />
               ) : null}
               {path.line ? (
                 <path
                   d={path.line}
                   fill="none"
-                  stroke={PROVIDER_META[path.provider].color}
+                  stroke={SERIES_META[path.id].color}
                   strokeWidth={2}
                   vectorEffect="non-scaling-stroke"
                 />
@@ -700,23 +966,23 @@ function Segmented({
   );
 }
 
-function UsageProviderFilter({
-  hiddenProviders,
+function UsageSeriesFilter({
+  hiddenSeries,
   onChange,
 }: {
-  hiddenProviders: ReadonlySet<ProviderKind>;
-  onChange: (next: ReadonlySet<ProviderKind>) => void;
+  hiddenSeries: ReadonlySet<UsageSeriesId>;
+  onChange: (next: ReadonlySet<UsageSeriesId>) => void;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const visible = PROVIDER_ORDER.filter((provider) => !hiddenProviders.has(provider));
+  const visible = USAGE_SERIES_ORDER.filter((series) => !hiddenSeries.has(series));
   const label =
-    visible.length === PROVIDER_ORDER.length
+    visible.length === USAGE_SERIES_ORDER.length
       ? "All providers"
       : visible.length === 0
         ? "No providers"
         : visible.length === 1 && visible[0]
-          ? PROVIDER_META[visible[0]].label
+          ? SERIES_META[visible[0]].label
           : `${visible.length} providers`;
 
   // sync: close the provider filter when clicking outside
@@ -729,7 +995,7 @@ function UsageProviderFilter({
     return () => window.removeEventListener("pointerdown", onPointer);
   }, [open]);
 
-  const setHidden = (next: readonly ProviderKind[]) => onChange(new Set(next));
+  const setHidden = (next: readonly UsageSeriesId[]) => onChange(new Set(next));
 
   return (
     <div className="usage-filter" ref={root}>
@@ -748,29 +1014,30 @@ function UsageProviderFilter({
           <button
             type="button"
             role="menuitemcheckbox"
-            aria-checked={hiddenProviders.size === 0}
+            aria-checked={hiddenSeries.size === 0}
             className="usage-filter-item"
-            onClick={() => setHidden(hiddenProviders.size === 0 ? PROVIDER_ORDER : [])}
+            onClick={() => setHidden(hiddenSeries.size === 0 ? USAGE_SERIES_ORDER : [])}
           >
             <span className="usage-filter-check" aria-hidden="true">
-              {hiddenProviders.size === 0 ? <IconCheck /> : null}
+              {hiddenSeries.size === 0 ? <IconCheck /> : null}
             </span>
             All providers
           </button>
           <div className="usage-filter-sep" />
-          {PROVIDER_ORDER.map((provider) => {
-            const checked = !hiddenProviders.has(provider);
+          {USAGE_SERIES_ORDER.map((series) => {
+            const checked = !hiddenSeries.has(series);
+            const meta = SERIES_META[series];
             return (
               <button
-                key={provider}
+                key={series}
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={checked}
                 className="usage-filter-item"
                 onClick={() =>
                   setHidden(
-                    PROVIDER_ORDER.filter((entry) =>
-                      entry === provider ? checked : hiddenProviders.has(entry),
+                    USAGE_SERIES_ORDER.filter((entry) =>
+                      entry === series ? checked : hiddenSeries.has(entry),
                     ),
                   )
                 }
@@ -778,8 +1045,16 @@ function UsageProviderFilter({
                 <span className="usage-filter-check" aria-hidden="true">
                   {checked ? <IconCheck /> : null}
                 </span>
-                <span className={`provider-mark provider-${provider}`} aria-hidden="true" />
-                {PROVIDER_META[provider].label}
+                {meta.markClass ? (
+                  <span className={`provider-mark provider-${meta.markClass}`} aria-hidden="true" />
+                ) : (
+                  <span
+                    className="usage-dot"
+                    style={{ background: meta.color }}
+                    aria-hidden="true"
+                  />
+                )}
+                {meta.label}
               </button>
             );
           })}
@@ -787,151 +1062,6 @@ function UsageProviderFilter({
       ) : null}
     </div>
   );
-}
-
-function buildUsageStats(
-  turns: Record<string, Turn[]>,
-  windowDays: WindowDays,
-  hiddenProviders: ReadonlySet<ProviderKind>,
-) {
-  const now = Date.now();
-  const since = now - windowDays * 24 * 60 * 60 * 1000;
-  const resolution: "hour" | "day" = windowDays === 1 ? "hour" : "day";
-  const periodKeys = enumeratePeriods(since, now, resolution);
-  const periodMap = new Map<string, PeriodBucket>(
-    periodKeys.map((key) => [
-      key,
-      {
-        key,
-        label: formatPeriodLabel(key, resolution),
-        costByProvider: new Map(),
-        tokensByProvider: new Map(),
-        costTotal: 0,
-        tokensTotal: 0,
-      },
-    ]),
-  );
-
-  let sessions = 0;
-  let cost = 0;
-  let input = 0;
-  let output = 0;
-  let cached = 0;
-  const byProvider = new Map<ProviderKind, ProviderRow>();
-  const byModel = new Map<string, ModelRow>();
-
-  for (const list of Object.values(turns)) {
-    for (const turn of list) {
-      if (hiddenProviders.has(turn.provider)) continue;
-      const at = Date.parse(turn.endedAt ?? turn.startedAt);
-      if (!Number.isFinite(at) || at < since) continue;
-      sessions += 1;
-      const usage = turn.usage;
-      const turnCost = usage?.costUsd ?? 0;
-      const turnIn = usage?.inputTokens ?? 0;
-      const turnOut = usage?.outputTokens ?? 0;
-      const turnCached = usage?.cachedInputTokens ?? 0;
-      const tokens = turnIn + turnOut;
-      cost += turnCost;
-      input += turnIn;
-      output += turnOut;
-      cached += turnCached;
-
-      const provider = byProvider.get(turn.provider) ?? {
-        name: turn.provider,
-        cost: 0,
-        tokens: 0,
-        sessions: 0,
-      };
-      provider.cost += turnCost;
-      provider.tokens += tokens;
-      provider.sessions += 1;
-      byProvider.set(turn.provider, provider);
-
-      const modelKey = `${turn.provider}:${turn.model}`;
-      const model = byModel.get(modelKey) ?? {
-        name: turn.model,
-        provider: turn.provider,
-        cost: 0,
-        tokens: 0,
-      };
-      model.cost += turnCost;
-      model.tokens += tokens;
-      byModel.set(modelKey, model);
-
-      const period = periodMap.get(periodKeyFor(at, resolution));
-      if (period) {
-        period.costByProvider.set(
-          turn.provider,
-          (period.costByProvider.get(turn.provider) ?? 0) + turnCost,
-        );
-        period.tokensByProvider.set(
-          turn.provider,
-          (period.tokensByProvider.get(turn.provider) ?? 0) + tokens,
-        );
-        period.costTotal += turnCost;
-        period.tokensTotal += tokens;
-      }
-    }
-  }
-
-  return {
-    sessions,
-    cost,
-    tokens: input + output,
-    input,
-    output,
-    cached,
-    uncached: Math.max(0, input - cached),
-    providers: PROVIDER_ORDER.flatMap((name) => {
-      const row = byProvider.get(name);
-      return row ? [row] : [];
-    }),
-    models: [...byModel.values()].toSorted((a, b) => b.cost - a.cost || b.tokens - a.tokens),
-    periods: periodKeys.flatMap((key) => {
-      const period = periodMap.get(key);
-      return period ? [period] : [];
-    }),
-    resolution,
-  };
-}
-
-function enumeratePeriods(since: number, until: number, resolution: "hour" | "day"): string[] {
-  const keys: string[] = [];
-  const start = new Date(since);
-  if (resolution === "hour") {
-    start.setMinutes(0, 0, 0);
-    for (let t = start.getTime(); t <= until; t += 60 * 60 * 1000) {
-      keys.push(periodKeyFor(t, "hour"));
-    }
-  } else {
-    start.setHours(0, 0, 0, 0);
-    for (let t = start.getTime(); t <= until; t += 24 * 60 * 60 * 1000) {
-      keys.push(periodKeyFor(t, "day"));
-    }
-  }
-  return keys;
-}
-
-function periodKeyFor(ms: number, resolution: "hour" | "day"): string {
-  const date = new Date(ms);
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  if (resolution === "day") return `${y}-${m}-${d}`;
-  const h = String(date.getHours()).padStart(2, "0");
-  return `${y}-${m}-${d}T${h}`;
-}
-
-function formatPeriodLabel(key: string, resolution: "hour" | "day"): string {
-  if (resolution === "hour") {
-    const hour = Number(key.slice(11, 13));
-    const suffix = hour >= 12 ? "PM" : "AM";
-    const hour12 = hour % 12 === 0 ? 12 : hour % 12;
-    return `${hour12} ${suffix}`;
-  }
-  const date = new Date(`${key}T12:00:00`);
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function polyline(points: { x: number; y: number }[]): string {

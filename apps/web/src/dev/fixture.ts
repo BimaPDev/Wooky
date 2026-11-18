@@ -4,6 +4,7 @@ import {
   type AppearanceTheme,
   type DeviceSettings as DeviceSettingsValue,
   type FileDiff,
+  type Origin,
   type ProviderStatus,
   type ReadModel,
   type RpcMethod,
@@ -11,6 +12,9 @@ import {
   type RpcResult,
   type Thread,
   type Turn,
+  type UsageHistoryBucket,
+  type UsageHistoryResult,
+  type UsageWindowDays,
 } from "@age/contracts";
 import type { Backend } from "../state/backend.ts";
 import { RpcCallError } from "../rpc/client.ts";
@@ -557,7 +561,130 @@ let fixtureSettings: DeviceSettingsValue = DeviceSettings.parse({
   projectGrouping: true,
   confirmDelete: true,
   confirmArchive: true,
+  importLocalHistory: true,
 });
+
+function fixtureUsageMode(): string | null {
+  if (typeof location === "undefined") return null;
+  return new URLSearchParams(location.search).get("usage");
+}
+
+function dayKey(offset: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - offset);
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function makeBucket(
+  day: string,
+  origin: Origin,
+  model: string,
+  scale: number,
+  unpriced = false,
+): UsageHistoryBucket {
+  const input = Math.round(80_000 * scale);
+  const cacheRead = Math.round(400_000 * scale);
+  const cacheWrite = Math.round(20_000 * scale);
+  const output = Math.round(12_000 * scale);
+  const costUsd = unpriced ? 0 : Number((scale * 4.2).toFixed(2));
+  const split = unpriced
+    ? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, other: 0 }
+    : {
+        input: Number((costUsd * 0.12).toFixed(2)),
+        cacheRead: Number((costUsd * 0.5).toFixed(2)),
+        cacheWrite: Number((costUsd * 0.18).toFixed(2)),
+        output: Number((costUsd * 0.15).toFixed(2)),
+        other: Number((costUsd * 0.05).toFixed(2)),
+      };
+  return {
+    day,
+    origin,
+    model,
+    inputTokens: input,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    outputTokens: output,
+    costUsd,
+    costByType: split,
+    cacheSavingsUsd: unpriced ? 0 : Number((scale * 1.1).toFixed(2)),
+    records: Math.max(1, Math.round(scale * 6)),
+    unpricedRecords: unpriced ? Math.max(1, Math.round(scale * 6)) : 0,
+  };
+}
+
+function fixtureUsageHistory(windowDays: UsageWindowDays): UsageHistoryResult {
+  const mode = fixtureUsageMode();
+  if (mode === "empty") {
+    return {
+      version: 1,
+      buckets: [],
+      sources: [
+        { origin: "claude", status: "missing", files: 0, distinctSessions: 0, refreshing: false },
+        { origin: "cursor", status: "missing", files: 0, distinctSessions: 0, refreshing: false },
+        { origin: "codex", status: "missing", files: 0, distinctSessions: 0, refreshing: false },
+        { origin: "opencode", status: "missing", files: 0, distinctSessions: 0, refreshing: false },
+      ],
+      pricing: { status: "ok", asOf: new Date().toISOString() },
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  const days = Math.min(windowDays === 1 ? 1 : windowDays, 90);
+  const buckets: UsageHistoryBucket[] = [];
+  for (let offset = 0; offset < days; offset += 1) {
+    const day = dayKey(offset);
+    const wave = 0.35 + ((offset % 11) / 11) * 1.4;
+    buckets.push(makeBucket(day, "cursor", "default", wave * 1.1));
+    buckets.push(makeBucket(day, "claude", "claude-opus-5-5", wave * 0.55));
+    buckets.push(makeBucket(day, "codex", "gpt-5.2-codex", wave * 0.2));
+    buckets.push(makeBucket(day, "opencode", "gemini-flash", wave * 0.08, offset % 17 === 0));
+  }
+
+  const refreshing = mode === "refreshing";
+
+  return {
+    version: 1,
+    buckets,
+    sources: [
+      {
+        origin: "cursor",
+        status: "ok",
+        files: 33,
+        distinctSessions: 578,
+        refreshing,
+      },
+      {
+        origin: "claude",
+        status: "partial",
+        files: 158,
+        distinctSessions: 70,
+        refreshing: false,
+        note: "one transcript could not be read",
+      },
+      {
+        origin: "codex",
+        status: "ok",
+        files: 3,
+        distinctSessions: 12,
+        refreshing: refreshing,
+      },
+      {
+        origin: "opencode",
+        status: "ok",
+        files: 1,
+        distinctSessions: 6,
+        refreshing: false,
+      },
+    ],
+    pricing: refreshing
+      ? { status: "unavailable" }
+      : { status: "stale", asOf: new Date(Date.now() - 40 * 60 * 60 * 1000).toISOString() },
+    generatedAt: new Date().toISOString(),
+  };
+}
 
 function respond(method: RpcMethod, params: unknown): unknown {
   switch (method) {
@@ -635,6 +762,8 @@ function respond(method: RpcMethod, params: unknown): unknown {
     case "terminal.resize":
     case "terminal.close":
       return { ok: true as const };
+    case "usage.history":
+      return fixtureUsageHistory((params as RpcParams<"usage.history">).windowDays);
     case "usage.limits":
       return [
         {

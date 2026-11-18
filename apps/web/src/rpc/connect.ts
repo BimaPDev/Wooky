@@ -13,9 +13,17 @@ export function startConnection() {
   if (params.has("fixture")) {
     const fixture = createFixtureBackend();
     setBackend(fixture);
-    useStore.setState({ fixture: true, status: "open" });
+    const openUsage = params.get("page") === "usage";
+    useStore.setState({
+      fixture: true,
+      status: "open",
+      ...(openUsage ? { settingsOpen: true, settingsPage: "usage" as const } : {}),
+    });
     void fixture.call("snapshot", {}).then((model) => {
       receiveSnapshot(params.has("empty") ? emptyReadModel() : model);
+      if (openUsage) {
+        useStore.setState({ settingsOpen: true, settingsPage: "usage" });
+      }
       if (params.get("sidebar") === "closed") {
         useStore.setState({ sidebarOpen: false });
       }
