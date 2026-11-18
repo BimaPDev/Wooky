@@ -100,7 +100,12 @@ export const RpcMethods = {
       cols: z.number().int().positive().optional(),
       rows: z.number().int().positive().optional(),
     }),
-    result: z.object({ sessionId: TerminalSessionId, shell: z.string() }),
+    result: z.object({
+      sessionId: TerminalSessionId,
+      shell: z.string(),
+      /** CRLF on Windows shells, LF elsewhere. Absent on older servers; clients use LF. */
+      lineEnding: z.enum(["\n", "\r\n"]).optional(),
+    }),
   },
   "terminal.write": {
     params: z.object({ sessionId: TerminalSessionId, data: z.string() }),

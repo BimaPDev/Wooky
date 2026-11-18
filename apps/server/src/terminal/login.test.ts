@@ -41,12 +41,17 @@ describe("openSignInTerminal", () => {
 
   it.each(PROVIDERS)("runs %s via x-terminal-emulator on Linux", async (provider, command) => {
     const { calls, exec } = recording();
-    const result = await openSignInTerminal(provider, { platform: "linux", execFile: exec });
+    const result = await openSignInTerminal(provider, {
+      platform: "linux",
+      execFile: exec,
+      env: { SHELL: "/bin/bash" },
+      exists: () => false,
+    });
     expect(result).toEqual({ opened: true, command });
     expect(calls).toEqual([
       {
         file: "x-terminal-emulator",
-        args: ["-e", "/bin/sh", "-lc", command],
+        args: ["-e", "/bin/bash", "-ilc", command],
       },
     ]);
   });
@@ -104,6 +109,100 @@ describe("openSignInTerminal", () => {
       code: "unavailable",
       message: "Could not open a terminal.",
     });
+  });
+
+  it.each([
+    "36:116: execution error: Not authorized to send Apple events to Terminal. (-1743)",
+    "osascript failed: -1743",
+  ])("maps a macOS Automation denial (%s) to a settings hint", async (stderr) => {
+    const exec: SignInExecFile = async () => {
+      throw Object.assign(new Error("Command failed: osascript"), { stderr, status: 1 });
+    };
+    await expect(
+      openSignInTerminal("cursor", { platform: "darwin", execFile: exec }),
+    ).rejects.toMatchObject({
+      code: "unavailable",
+      message:
+        "Allow Wooky to control Terminal in System Settings → Privacy & Security → Automation, then try again.",
+    });
+  });
+
+  it("maps other macOS launch failures to the first stderr line, bounded at 200 characters", async () => {
+    const line = `x${"y".repeat(240)}`;
+    const exec: SignInExecFile = async () => {
+      throw Object.assign(new Error("Command failed: osascript"), {
+        stderr: `${line}\nignored second line\n`,
+        status: 1,
+      });
+    };
+    await expect(
+      openSignInTerminal("claude", { platform: "darwin", execFile: exec }),
+    ).rejects.toMatchObject({
+      code: "unavailable",
+      message: `Could not open Terminal: ${line.slice(0, 200)}`,
+    });
+  });
+
+  it.each([
+    ["/bin/bash", ["-ilc"]],
+    ["/usr/local/bin/zsh", ["-ilc"]],
+  ] as const)("runs the fixed command in %s as a login shell", async (shell, flags) => {
+    const { calls, exec } = recording();
+    await openSignInTerminal("cursor", {
+      platform: "linux",
+      execFile: exec,
+      env: { SHELL: shell },
+      exists: () => false,
+    });
+    expect(calls).toEqual([
+      { file: "x-terminal-emulator", args: ["-e", shell, ...flags, "agent login"] },
+    ]);
+  });
+
+  it("runs the fixed command in fish with separate login and command flags", async () => {
+    const { calls, exec } = recording();
+    await openSignInTerminal("codex", {
+      platform: "linux",
+      execFile: exec,
+      env: { SHELL: "/usr/bin/fish" },
+      exists: () => false,
+    });
+    expect(calls).toEqual([
+      {
+        file: "x-terminal-emulator",
+        args: ["-e", "/usr/bin/fish", "-l", "-c", "codex login"],
+      },
+    ]);
+  });
+
+  it("falls back to bash, then /bin/sh, when $SHELL is missing or not absolute", async () => {
+    const bash = recording();
+    await openSignInTerminal("claude", {
+      platform: "linux",
+      execFile: bash.exec,
+      env: { SHELL: "bash" },
+      exists: (path) => path === "/bin/bash",
+    });
+    expect(bash.calls).toEqual([
+      {
+        file: "x-terminal-emulator",
+        args: ["-e", "/bin/bash", "-ilc", "claude auth login"],
+      },
+    ]);
+
+    const sh = recording();
+    await openSignInTerminal("claude", {
+      platform: "linux",
+      execFile: sh.exec,
+      env: {},
+      exists: () => false,
+    });
+    expect(sh.calls).toEqual([
+      {
+        file: "x-terminal-emulator",
+        args: ["-e", "/bin/sh", "-ilc", "claude auth login"],
+      },
+    ]);
   });
 });
 

@@ -5,9 +5,9 @@ import { useStore } from "../state/store.ts";
 import { subscribeTerminal } from "../state/terminal.ts";
 import { IconClose } from "./Icons.tsx";
 
-/** Pipe-backed shells keep a trailing CR on the last argument. Send LF only. */
-export function terminalLine(text: string): string {
-  return `${text}\n`;
+/** Ending comes from `terminal.open`. Older servers omit it; those shells want LF. */
+export function terminalLine(text: string, lineEnding: "\n" | "\r\n" = "\n"): string {
+  return `${text}${lineEnding}`;
 }
 
 export function TerminalPane() {
@@ -39,10 +39,11 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
   const scrollRef = useRef<HTMLPreElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sessionRef = useRef<string | null>(null);
+  const lineEndingRef = useRef<"\n" | "\r\n">("\n");
 
   const writeTo = (id: string, text: string) =>
     backend()
-      .call("terminal.write", { sessionId: id, data: terminalLine(text) })
+      .call("terminal.write", { sessionId: id, data: terminalLine(text, lineEndingRef.current) })
       .then(
         () => setOutput((prev) => prev + `$ ${text}\n`),
         (err: unknown) => {
@@ -51,8 +52,9 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
         },
       );
 
-  const onReady = useEffectEvent((id: string) => {
+  const onReady = useEffectEvent((id: string, lineEnding: "\n" | "\r\n") => {
     sessionRef.current = id;
+    lineEndingRef.current = lineEnding;
     setSessionId(id);
     setStatus("ready");
   });
@@ -72,7 +74,7 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
           void backend().call("terminal.close", { sessionId: result.sessionId });
           return;
         }
-        onReady(result.sessionId);
+        onReady(result.sessionId, result.lineEnding === "\r\n" ? "\r\n" : "\n");
       } catch (err) {
         if (!cancelled) onOpenFailed(err);
       }

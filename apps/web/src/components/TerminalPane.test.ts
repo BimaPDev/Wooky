@@ -8,4 +8,14 @@ describe("terminalLine", () => {
     expect(terminalLine("echo hello")).toBe("echo hello\n");
     expect(terminalLine("")).toBe("\n");
   });
+
+  it("uses the line ending the server chose", () => {
+    expect(terminalLine("echo hello", "\n")).toBe("echo hello\n");
+    expect(terminalLine("echo hello", "\r\n")).toBe("echo hello\r\n");
+    expect(terminalLine("", "\r\n")).toBe("\r\n");
+  });
+
+  it("falls back to a line feed when no ending is passed", () => {
+    expect(terminalLine("agent login")).toBe("agent login\n");
+  });
 });
