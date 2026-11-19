@@ -1,5 +1,5 @@
 import { FLEET_LIMITS } from "@age/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { sendReviewNotes } from "../../state/actions.ts";
 import { useStore } from "../../state/store.ts";
 import { isBusy, reviewBarLabel, sendHint, sendLabel } from "./notes.ts";
@@ -9,15 +9,23 @@ export function ReviewBar({ threadId, count }: { threadId: string; count: number
   const busy = useStore((state) => isBusy(state.model.threads[threadId]?.status ?? "idle"));
   const [extra, setExtra] = useState("");
   const [sending, setSending] = useState(false);
-  const hint = sendHint(busy);
+  // A ref, not state: a double Enter in the same tick must send once.
+  const inFlight = useRef(false);
 
   const send = async () => {
-    if (sending) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setSending(true);
-    const ack = await sendReviewNotes(threadId, extra.trim());
-    setSending(false);
-    if (ack) setExtra("");
+    try {
+      const ack = await sendReviewNotes(threadId, extra.trim());
+      if (ack) setExtra("");
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+    }
   };
+
+  const status = sending ? "Sending the notes." : sendHint(busy);
 
   return (
     <form
@@ -29,7 +37,10 @@ export function ReviewBar({ threadId, count }: { threadId: string; count: number
       }}
     >
       <div className="review-bar-head">
-        <span className="review-bar-label">{reviewBarLabel(count)}</span>
+        <p className="review-bar-status" aria-live="polite">
+          <span className="review-bar-label">{reviewBarLabel(count)}</span>
+          {status ? <span className="review-bar-hint">{status}</span> : null}
+        </p>
         <button type="submit" className="button primary" disabled={sending}>
           {sendLabel(busy)}
         </button>
@@ -43,11 +54,6 @@ export function ReviewBar({ threadId, count }: { threadId: string; count: number
         aria-label="Message for the agent, optional"
         onChange={(event) => setExtra(event.target.value)}
       />
-      {hint ? (
-        <p className="review-bar-hint" aria-live="polite">
-          {hint}
-        </p>
-      ) : null}
     </form>
   );
 }

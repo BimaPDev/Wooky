@@ -1,5 +1,5 @@
 import { FLEET_LIMITS, type MergePreview, type MergeStrategy } from "@age/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Counts } from "../DiffView.tsx";
 import { Modal } from "../Modal.tsx";
 import { loadMergePreview, mergeThread } from "../../state/actions.ts";
@@ -17,6 +17,10 @@ export function MergeDialog({ threadId, onClose }: { threadId: string; onClose: 
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [strategy, setStrategy] = useState<MergeStrategy>("squash");
   const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  // A ref, not state: a second Enter in the same tick must not reach the server.
+  const submitted = useRef(false);
+  const firstControl = useRef<HTMLInputElement>(null);
 
   // sync: git.mergePreview for the worktree, fetched each time the dialog opens
   useEffect(() => {
@@ -39,24 +43,38 @@ export function MergeDialog({ threadId, onClose }: { threadId: string; onClose: 
   }, [threadId]);
 
   const preview = load.state === "ready" ? load.preview : null;
+  const merging = thread?.merge?.status === "merging";
   const block = mergeBlock({
     hasWorktree: Boolean(thread?.worktree),
     busy: isBusy(thread?.status ?? "idle"),
-    merging: thread?.merge?.status === "merging",
+    merging,
     conflicts: preview?.conflicts.length ?? 0,
   });
-  const canMerge = preview !== null && block === null;
+  const canMerge = preview !== null && block === null && !merging && !submitting;
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitted.current || !canMerge) return;
+    submitted.current = true;
+    setSubmitting(true);
+    const ack = await mergeThread(threadId, strategy, message.trim());
+    if (ack) {
+      onClose();
+      return;
+    }
+    // Rejected: the server's notice is already shown. Let the person try again.
+    submitted.current = false;
+    setSubmitting(false);
+  };
 
   return (
-    <Modal label="Merge into branch" onClose={onClose} className="modal">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!canMerge) return;
-          void mergeThread(threadId, strategy, message.trim());
-          onClose();
-        }}
-      >
+    <Modal
+      label="Merge into branch"
+      onClose={onClose}
+      className="modal"
+      initialFocusRef={firstControl}
+    >
+      <form onSubmit={submit}>
         <h2 className="modal-title">
           {preview ? `Merge into ${preview.targetBranch}` : "Merge into branch"}
         </h2>
@@ -92,6 +110,7 @@ export function MergeDialog({ threadId, onClose }: { threadId: string; onClose: 
           <legend>Strategy</legend>
           <label className="merge-choice">
             <input
+              ref={firstControl}
               type="radio"
               name="merge-strategy"
               value="squash"
@@ -127,7 +146,7 @@ export function MergeDialog({ threadId, onClose }: { threadId: string; onClose: 
             Cancel
           </button>
           <button type="submit" className="button primary" disabled={!canMerge}>
-            Merge
+            {submitting ? "Merging" : "Merge"}
           </button>
         </div>
       </form>

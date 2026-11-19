@@ -15,6 +15,8 @@ import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
 import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";
 import { saveTerminalOpen } from "../lib/shell.ts";
+import { anchorKey } from "../components/review/notes.ts";
+import { PENDING_SNIPPET_LIMIT, type PendingSnippet } from "../components/review/snippets.ts";
 import {
   addPane,
   focusPane,
@@ -415,11 +417,24 @@ export function splitWithRecent(): void {
 
 // ── Review notes and merge ──────────────────────────────
 
-export const addReviewNote = (
+/** Adds a note. The line's snippet waits in the store until the server names the note. */
+export async function addReviewNote(
   threadId: string,
   anchor: { path: string; line: number; side: "old" | "new" },
   body: string,
-) => dispatch({ type: "review.addNote", threadId, ...anchor, body });
+  snippet: string,
+) {
+  const pending: PendingSnippet = { threadId, key: anchorKey(anchor), snippet };
+  useStore.setState((state) => ({
+    pendingSnippets: [...state.pendingSnippets, pending].slice(-PENDING_SNIPPET_LIMIT),
+  }));
+  const ack = await dispatch({ type: "review.addNote", threadId, ...anchor, body });
+  if (!ack)
+    useStore.setState((state) => ({
+      pendingSnippets: state.pendingSnippets.filter((entry) => entry !== pending),
+    }));
+  return ack;
+}
 
 export const removeReviewNote = (threadId: string, noteId: string) =>
   dispatch({ type: "review.removeNote", threadId, noteId });

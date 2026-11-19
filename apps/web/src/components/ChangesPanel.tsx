@@ -23,6 +23,7 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
   const version = useStore((state) => state.diffVersion);
   const notes = useStore(useShallow((state) => reviewNotesFor(state.model, threadId)));
   const notesByPath = useMemo(() => groupNotesByPath(notes), [notes]);
+  const snippets = useStore((state) => state.reviewSnippets);
   const [load, setLoad] = useState<{ key: string; value: Load } | null>(null);
   const key = `${threadId}:${turnId ?? ""}:${version}`;
 
@@ -111,6 +112,7 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
                 defaultOpen={!focusPath || focusPath === file.path || current.files.length < 6}
                 threadId={threadId}
                 notes={notesByPath.get(file.path) ?? NO_NOTES}
+                snippets={snippets}
               />
             ))}
           </>
