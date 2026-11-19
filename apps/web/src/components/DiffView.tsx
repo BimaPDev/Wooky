@@ -1,38 +1,187 @@
-import type { FileDiff } from "@age/contracts";
-import { memo, useMemo, useState } from "react";
+import type { FileDiff, ReviewNote } from "@age/contracts";
+import { Fragment, memo, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { parseUnifiedDiff } from "../lib/diff.ts";
 import { IconChevron } from "./Icons.tsx";
+import {
+  anchorForLine,
+  anchorKey,
+  groupNotesByAnchor,
+  noteLabel,
+  type NoteAnchor,
+} from "./review/notes.ts";
+import { NoteComposer, ReviewNoteItem } from "./review/ReviewNotes.tsx";
 
-/** Unified diff body: line numbers, tinted additions and removals. */
-export const DiffLines = memo(function DiffLines({ patch }: { patch: string }) {
+const NO_NOTES: readonly ReviewNote[] = [];
+
+interface Compose {
+  row: number;
+  anchor: NoteAnchor;
+}
+
+/**
+ * Unified diff body: line numbers, tinted additions and removals. With a thread id and a path,
+ * each line takes a review note: a "+" in the gutter, Enter or c on a focused line.
+ */
+export const DiffLines = memo(function DiffLines({
+  patch,
+  threadId,
+  path,
+  notes = NO_NOTES,
+}: {
+  patch: string;
+  threadId?: string;
+  path?: string;
+  notes?: readonly ReviewNote[];
+}) {
   const hunks = useMemo(() => parseUnifiedDiff(patch), [patch]);
-  if (hunks.length === 0) return <p className="diff-empty">No textual changes.</p>;
-  return (
-    <table className="diff">
-      {hunks.map((hunk, h) => (
-        <tbody key={h}>
-          <tr className="diff-hunk">
-            <td colSpan={3}>{hunk.header}</td>
-          </tr>
-          {hunk.lines.map((line, i) => (
-            <tr key={i} className={`diff-line diff-${line.kind}`}>
-              <td className="diff-no" aria-hidden="true">
-                {line.oldNo ?? ""}
-              </td>
-              <td className="diff-no" aria-hidden="true">
-                {line.newNo ?? ""}
-              </td>
-              <td className="diff-text">
-                <span className="diff-sign" aria-hidden="true">
-                  {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
-                </span>
-                {line.kind === "meta" ? <em>{line.text}</em> : line.text}
-              </td>
+  const reviewPath = threadId !== undefined ? (path ?? null) : null;
+  const review =
+    threadId !== undefined && reviewPath !== null ? { threadId, path: reviewPath } : null;
+  const span = review ? 4 : 3;
+  const anchors = useMemo(
+    () =>
+      reviewPath === null
+        ? []
+        : hunks.flatMap((hunk) => hunk.lines.map((line) => anchorForLine(reviewPath, line))),
+    [hunks, reviewPath],
+  );
+  // Index of each hunk's first line in the flattened list of lines.
+  const offsets = useMemo(
+    () =>
+      hunks.map((_, h) => hunks.slice(0, h).reduce((total, hunk) => total + hunk.lines.length, 0)),
+    [hunks],
+  );
+  const notesByAnchor = useMemo(() => groupNotesByAnchor(notes), [notes]);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [compose, setCompose] = useState<Compose | null>(null);
+
+  const openAt = (row: number) => {
+    const anchor = anchors[row];
+    if (anchor) setCompose({ row, anchor });
+  };
+  const closeCompose = (row: number) => {
+    setCompose(null);
+    tableRef.current?.querySelector<HTMLElement>(`tr[data-row="${row}"]`)?.focus();
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    const rows = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("tr[data-row]"));
+    if (target === event.currentTarget) {
+      if (event.key === "ArrowDown" && rows[0]) {
+        event.preventDefault();
+        rows[0].focus();
+      }
+      return;
+    }
+    const index = rows.indexOf(target);
+    if (index < 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      rows[index + (event.key === "ArrowDown" ? 1 : -1)]?.focus();
+    } else if (
+      (event.key === "Enter" || event.key === "c") &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      event.preventDefault();
+      openAt(Number(target.dataset.row));
+    }
+  };
+
+  const table = (
+    <table className="diff" ref={tableRef}>
+      {hunks.map((hunk, h) => {
+        const offset = offsets[h] ?? 0;
+        return (
+          <tbody key={h}>
+            <tr className="diff-hunk">
+              <td colSpan={span}>{hunk.header}</td>
             </tr>
-          ))}
-        </tbody>
-      ))}
+            {hunk.lines.map((line, i) => {
+              const row = offset + i;
+              const anchor = anchors[row] ?? null;
+              const rowNotes = anchor
+                ? (notesByAnchor.get(anchorKey(anchor)) ?? NO_NOTES)
+                : NO_NOTES;
+              return (
+                <Fragment key={row}>
+                  <tr
+                    className={`diff-line diff-${line.kind}`}
+                    data-row={review ? row : undefined}
+                    tabIndex={review ? -1 : undefined}
+                  >
+                    {review ? (
+                      <td className="diff-gutter">
+                        {anchor ? (
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            className="diff-gutter-button"
+                            aria-label={`Add review note on ${noteLabel(anchor)}`}
+                            title="Add review note"
+                            onClick={() => openAt(row)}
+                          >
+                            +
+                          </button>
+                        ) : null}
+                      </td>
+                    ) : null}
+                    <td className="diff-no" aria-hidden="true">
+                      {line.oldNo ?? ""}
+                    </td>
+                    <td className="diff-no" aria-hidden="true">
+                      {line.newNo ?? ""}
+                    </td>
+                    <td className="diff-text">
+                      <span className="diff-sign" aria-hidden="true">
+                        {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
+                      </span>
+                      {line.kind === "meta" ? <em>{line.text}</em> : line.text}
+                    </td>
+                  </tr>
+                  {review && rowNotes.length > 0
+                    ? rowNotes.map((note) => (
+                        <tr key={note.id} className="review-note-row">
+                          <td colSpan={span}>
+                            <ReviewNoteItem threadId={review.threadId} note={note} />
+                          </td>
+                        </tr>
+                      ))
+                    : null}
+                  {review && anchor && compose?.row === row ? (
+                    <tr className="review-compose-row">
+                      <td colSpan={span}>
+                        <NoteComposer
+                          threadId={review.threadId}
+                          anchor={anchor}
+                          onDone={() => closeCompose(row)}
+                        />
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        );
+      })}
     </table>
+  );
+
+  if (hunks.length === 0) return <p className="diff-empty">No textual changes.</p>;
+  if (!review) return table;
+  return (
+    <div
+      className="diff-wrap"
+      role="group"
+      tabIndex={0}
+      aria-label={`Lines of ${review.path}. Arrow keys move between lines. Enter or c adds a note.`}
+      onKeyDown={onKeyDown}
+    >
+      {table}
+    </div>
   );
 });
 
@@ -52,7 +201,18 @@ export function Counts({ additions, deletions }: { additions: number; deletions:
   );
 }
 
-export function FileDiffView({ file, defaultOpen }: { file: FileDiff; defaultOpen: boolean }) {
+export function FileDiffView({
+  file,
+  defaultOpen,
+  threadId,
+  notes,
+}: {
+  file: FileDiff;
+  defaultOpen: boolean;
+  /** Set to review lines of this thread. Omit for a read-only diff. */
+  threadId?: string;
+  notes?: readonly ReviewNote[];
+}) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="file-diff" id={fileAnchor(file.path)}>
@@ -71,7 +231,12 @@ export function FileDiffView({ file, defaultOpen }: { file: FileDiff; defaultOpe
       </button>
       {open ? (
         file.patch ? (
-          <DiffLines patch={file.patch} />
+          <DiffLines
+            patch={file.patch}
+            threadId={threadId}
+            path={threadId !== undefined ? file.path : undefined}
+            notes={notes}
+          />
         ) : (
           <p className="diff-empty">Binary file, no preview.</p>
         )

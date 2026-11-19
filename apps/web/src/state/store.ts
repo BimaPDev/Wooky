@@ -9,6 +9,7 @@ import { applyEvent, emptyReadModel } from "@age/domain";
 import { create } from "zustand";
 import type { ConnectionStatus } from "../rpc/client.ts";
 import { pruneNavStack, type NavStack, type NavTarget } from "../lib/nav-history.ts";
+import { loadPanes, savePanes, syncPanes, type PaneLayout } from "../components/panes/layout.ts";
 
 export type Theme = "dark" | "light";
 
@@ -56,6 +57,8 @@ export interface AppState {
   nav: NavStack;
   /** When true, navigation actions must not push onto nav.past. */
   navSilent: boolean;
+  /** Split panes, remembered per window. Null when the main area shows one thread. */
+  panes: PaneLayout | null;
 }
 
 export function currentNavFromState(
@@ -93,7 +96,28 @@ export const useStore = create<AppState>(() => ({
   pickingFolder: false,
   nav: { past: [], future: [] },
   navSilent: false,
+  panes: loadPanes(),
 }));
+
+// sync: store selection and model changes keep the split panes and their saved layout in step
+useStore.subscribe((state, prev) => {
+  if (state.panes !== prev.panes) savePanes(state.panes);
+  if (
+    state.panes === prev.panes &&
+    state.model === prev.model &&
+    state.selectedThreadId === prev.selectedThreadId
+  )
+    return;
+  const next = syncPanes({
+    panes: state.panes,
+    selected: state.selectedThreadId,
+    prevSelected: prev.selectedThreadId,
+    threads: state.model.threads,
+    pruneMissing: state.model.seq > 0,
+  });
+  if (next.panes !== state.panes || next.selected !== state.selectedThreadId)
+    useStore.setState(next);
+});
 
 export function receiveSnapshot(model: ReadModel) {
   useStore.setState((state) => {

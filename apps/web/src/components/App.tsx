@@ -6,6 +6,9 @@ import { syncRootThemeClass } from "../state/theme.ts";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
 import { Dialogs } from "./Dialogs.tsx";
+import { PaneDock } from "./panes/PaneRow.tsx";
+import { splitLayout } from "./panes/layout.ts";
+import { usePaneShortcuts } from "./panes/shortcuts.ts";
 import { Palette } from "./Palette.tsx";
 import { projectMonogramIconDataUrl } from "./ProjectMonogram.tsx";
 import { Settings } from "./Settings.tsx";
@@ -39,6 +42,9 @@ export function App() {
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const changesOpen = useStore((state) => state.changes.open);
   const terminalOpen = useStore((state) => state.terminalOpen);
+  const splitActive = useStore(
+    (state) => splitLayout(state.panes, (id) => Boolean(state.model.threads[id])) !== null,
+  );
   const macDesktop = isMacDesktopShell();
   const desktopShell = isElectronShell();
 
@@ -102,6 +108,8 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  usePaneShortcuts();
+
   const bodyClass = changesOpen && threadId ? "workspace-body split" : "workspace-body";
   const shellClass = [
     "shell",
@@ -122,7 +130,9 @@ export function App() {
           <div className={terminalOpen ? "workspace-stack with-terminal" : "workspace-stack"}>
             <div className={bodyClass}>
               <main className="main">
-                {threadId ? (
+                {splitActive ? (
+                  <PaneDock />
+                ) : threadId ? (
                   <>
                     <ThreadView key={threadId} threadId={threadId} />
                     <Composer key={`composer-${threadId}`} threadId={threadId} />

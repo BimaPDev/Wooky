@@ -2,6 +2,8 @@ import type {
   Command,
   FileDiff,
   InteractionMode,
+  MergePreview,
+  MergeStrategy,
   ModelTarget,
   ProviderKind,
   QuestionAnswers,
@@ -14,9 +16,19 @@ import { backend } from "./backend.ts";
 import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";
 import { saveTerminalOpen } from "../lib/shell.ts";
 import {
+  addPane,
+  focusPane,
+  mostRecentThreadId,
+  removePane,
+  singlePane,
+  splitLayout,
+  type PaneLayout,
+} from "../components/panes/layout.ts";
+import {
   currentNavFromState,
   navTargetExists,
   useStore,
+  type AppState,
   type Dialog,
   type SettingsPage,
 } from "./store.ts";
@@ -306,4 +318,118 @@ export const promoteQueuedPrompt = (threadId: string, queueId: string) =>
 
 export function sharingThreadsForRevert(threadId: string) {
   return threadsSharingWorkspace(useStore.getState().model, threadId);
+}
+
+// ── Split panes ─────────────────────────────────────────
+
+const PANE_FULL_NOTICE = "A split holds four panes at most.";
+
+/** The split as it can be shown now: existing threads only, or null when the main area shows one thread. */
+function currentSplit(state: AppState): PaneLayout | null {
+  return splitLayout(state.panes, (id) => Boolean(state.model.threads[id]));
+}
+
+/** The focused pane's thread is the selection. Moving it resets the changes panel, as selectThread does. */
+function selectionFor(state: AppState, threadId: string | null): Partial<AppState> {
+  if (threadId === state.selectedThreadId) return { selectedThreadId: threadId };
+  return {
+    selectedThreadId: threadId,
+    changes: { ...state.changes, turnId: null, focusPath: null },
+  };
+}
+
+export function focusPaneThread(threadId: string): void {
+  const state = useStore.getState();
+  const split = currentSplit(state);
+  const index = split ? split.threadIds.indexOf(threadId) : -1;
+  if (!split || index < 0) return;
+  const focused = focusPane(split, index);
+  if (focused === state.panes && threadId === state.selectedThreadId) return;
+  useStore.setState({ panes: focused, ...selectionFor(state, threadId) });
+}
+
+/** ⌘1–4. Returns false when there is no pane at that position. */
+export function focusPaneIndex(index: number): boolean {
+  const threadId = currentSplit(useStore.getState())?.threadIds[index];
+  if (!threadId) return false;
+  focusPaneThread(threadId);
+  return true;
+}
+
+export function closePaneThread(threadId: string): void {
+  const state = useStore.getState();
+  const split = currentSplit(state);
+  if (!split || !split.threadIds.includes(threadId)) return;
+  const next = removePane(split, threadId);
+  const survivor = next.threadIds[next.focused] ?? state.selectedThreadId;
+  useStore.setState({
+    panes: next.threadIds.length >= 2 ? next : null,
+    ...selectionFor(state, survivor),
+  });
+}
+
+/** Store the widths a drag or a keyboard nudge settled on. Ignored when the split changed underneath. */
+export function setPaneWeights(weights: readonly number[]): void {
+  const state = useStore.getState();
+  const split = currentSplit(state);
+  if (!split || split.weights.length !== weights.length) return;
+  useStore.setState({ panes: { ...split, weights: [...weights] } });
+}
+
+/** Open a thread beside the others. With no split yet, it splits with the selected thread. */
+export function openInSplit(threadId: string): void {
+  const state = useStore.getState();
+  if (!state.model.threads[threadId]) return;
+  const selected = state.selectedThreadId;
+  const base =
+    currentSplit(state) ??
+    (selected && state.model.threads[selected] ? singlePane(selected) : null);
+  if (!base) {
+    selectThread(threadId);
+    return;
+  }
+  const added = addPane(base, threadId);
+  if (!added.ok) {
+    useStore.setState({ notice: PANE_FULL_NOTICE });
+    return;
+  }
+  if (added.layout.threadIds.length < 2) return;
+  useStore.setState({ panes: added.layout, ...selectionFor(state, threadId) });
+}
+
+/** Cmd+backslash splits with the most recently updated thread that is not already on screen. */
+export function splitWithRecent(): void {
+  const state = useStore.getState();
+  const shown = new Set(currentSplit(state)?.threadIds ?? []);
+  const selected = state.selectedThreadId;
+  const candidate = mostRecentThreadId(
+    state.model.threads,
+    (id) => id !== selected && !shown.has(id),
+  );
+  if (!candidate) {
+    useStore.setState({ notice: "No other thread to split with." });
+    return;
+  }
+  openInSplit(candidate);
+}
+
+// ── Review notes and merge ──────────────────────────────
+
+export const addReviewNote = (
+  threadId: string,
+  anchor: { path: string; line: number; side: "old" | "new" },
+  body: string,
+) => dispatch({ type: "review.addNote", threadId, ...anchor, body });
+
+export const removeReviewNote = (threadId: string, noteId: string) =>
+  dispatch({ type: "review.removeNote", threadId, noteId });
+
+export const sendReviewNotes = (threadId: string, extra: string) =>
+  dispatch({ type: "review.send", threadId, ...(extra ? { extra } : {}) });
+
+export const mergeThread = (threadId: string, strategy: MergeStrategy, message: string) =>
+  dispatch({ type: "thread.merge", threadId, strategy, ...(message ? { message } : {}) });
+
+export function loadMergePreview(threadId: string): Promise<MergePreview> {
+  return backend().call("git.mergePreview", { threadId });
 }
