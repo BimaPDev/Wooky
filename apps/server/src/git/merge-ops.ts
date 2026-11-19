@@ -18,14 +18,14 @@ interface MergeOpsDeps {
   commitWorktree?: (worktree: Worktree, message: string) => Promise<void>;
 }
 
-const AGE_IDENTITY = {
+const WOOKY_IDENTITY = {
   GIT_AUTHOR_NAME: "Wooky",
   GIT_AUTHOR_EMAIL: "age@localhost",
   GIT_COMMITTER_NAME: "Wooky",
   GIT_COMMITTER_EMAIL: "age@localhost",
 } as const;
 
-const AGE_BRANCH = /^age\/[\w./-]+$/;
+const WOOKY_BRANCH = /^age\/[\w./-]+$/;
 const MARKER_FILE = "age-merge-in-progress";
 const LOCK_FILE = "age-merge.lock";
 const UNPARSABLE_LOCK_STALE_MS = 60_000;
@@ -37,7 +37,7 @@ const heldLocks = new Set<string>();
 
 function isAgeBranch(branch: string): boolean {
   return (
-    AGE_BRANCH.test(branch) &&
+    WOOKY_BRANCH.test(branch) &&
     !branch.includes("..") &&
     !branch.includes("//") &&
     !branch.endsWith("/") &&
@@ -534,7 +534,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
       }
       const commit = await run(["commit", "-m", commitMessage], {
         cwd: top,
-        env: baseEnv(AGE_IDENTITY),
+        env: baseEnv(WOOKY_IDENTITY),
         allowFail: true,
       });
       if (commit.code !== 0) {

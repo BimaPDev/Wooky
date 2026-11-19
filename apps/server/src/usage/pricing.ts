@@ -433,7 +433,7 @@ export interface PricingService {
 }
 
 export interface PricingOptions {
-  /** AGE_HOME. The table is cached there as `usage-model-rates.json`. */
+  /** WOOKY_HOME. The table is cached there as `usage-model-rates.json`. */
   home: string;
   fetch?: typeof fetch;
   now?: () => number;

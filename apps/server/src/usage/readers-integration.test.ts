@@ -106,16 +106,16 @@ function sumChannels(
 }
 
 let userHome: string;
-let ageHome: string;
+let wookyHome: string;
 
 beforeEach(async () => {
   userHome = await mkdtemp(join(tmpdir(), "age-readers-int-user-"));
-  ageHome = await mkdtemp(join(tmpdir(), "age-readers-int-home-"));
+  wookyHome = await mkdtemp(join(tmpdir(), "age-readers-int-home-"));
 });
 
 afterEach(async () => {
   await rm(userHome, { recursive: true, force: true });
-  await rm(ageHome, { recursive: true, force: true });
+  await rm(wookyHome, { recursive: true, force: true });
 });
 
 async function touch(file: string, mtimeMs: number) {
@@ -251,9 +251,9 @@ async function seedAllFixtures() {
 describe("usage history readers integration", () => {
   it("scans all four origins through the worker without leaking planted secrets", async () => {
     await seedAllFixtures();
-    const host = createWorkerHost({ home: ageHome, userHome });
+    const host = createWorkerHost({ home: wookyHome, userHome });
     const service = createHistoryService({
-      home: ageHome,
+      home: wookyHome,
       userHome,
       now: () => NOW,
       pricing: pricing(),

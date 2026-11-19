@@ -90,7 +90,7 @@ export async function fetchCodexLimits(
 ): Promise<ProviderLimits> {
   const now = options.now ?? (() => new Date());
   const checkedAt = now().toISOString();
-  const envBin = process.env.AGE_CODEX_BIN?.trim();
+  const envBin = process.env.WOOKY_CODEX_BIN?.trim();
   const configuredBin = options.codexBin ?? (envBin && envBin.length > 0 ? envBin : "codex");
   const resolved = resolveCommand(configuredBin);
   const bin = resolved?.command ?? configuredBin;

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `pnpm dev`: the AGE server on a free port (state in .age-dev), then the web dev server.
+// `pnpm dev`: the AGE server on a free port (state in .wooky-dev), then the web dev server.
 // Each child leads its own process group, so shutdown reaches exactly what this script started.
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
@@ -8,9 +8,9 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
-const devHome = join(repo, ".age-dev");
+const devHome = join(repo, ".wooky-dev");
 const WEB_URL = "http://localhost:5173";
-const DEFAULT_PORT = 4317; // AGE_DEFAULT_PORT in packages/contracts
+const DEFAULT_PORT = 4317; // WOOKY_DEFAULT_PORT in packages/contracts
 const READY_TIMEOUT_MS = 60_000;
 const KILL_AFTER_MS = 3_000;
 const TAGS = { server: "server │", web: "web    │" };
@@ -115,7 +115,7 @@ function freePort() {
 }
 
 function startWeb(port) {
-  start("web", ["--filter", "@wooky/web", "dev"], { ...process.env, AGE_PORT: String(port) });
+  start("web", ["--filter", "@wooky/web", "dev"], { ...process.env, WOOKY_PORT: String(port) });
 }
 
 async function main() {
@@ -123,7 +123,7 @@ async function main() {
   process.on("SIGTERM", () => shutdown(143, "stopping AGE"));
 
   if (webOnly) {
-    startWeb(Number(process.env.AGE_PORT) || DEFAULT_PORT);
+    startWeb(Number(process.env.WOOKY_PORT) || DEFAULT_PORT);
     console.info(`${prefix("web")}dev server → ${WEB_URL}`);
     return;
   }
@@ -134,15 +134,15 @@ async function main() {
     markReady = resolve;
   });
   const timer = setTimeout(
-    () => shutdown(1, `server did not report AGE_LISTENING within ${READY_TIMEOUT_MS / 1000} s`),
+    () => shutdown(1, `server did not report WOOKY_LISTENING within ${READY_TIMEOUT_MS / 1000} s`),
     READY_TIMEOUT_MS,
   );
   start(
     "server",
     ["--filter", "@wooky/server", "dev", "--port", String(port), "--home", devHome],
-    { ...process.env, AGE_HOME: devHome, AGE_PORT: String(port) },
+    { ...process.env, WOOKY_HOME: devHome, WOOKY_PORT: String(port) },
     (line) => {
-      const match = /^AGE_LISTENING (\S+)/.exec(line);
+      const match = /^WOOKY_LISTENING (\S+)/.exec(line);
       if (match) markReady(match[1]);
     },
   );

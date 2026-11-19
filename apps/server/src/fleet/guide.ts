@@ -43,7 +43,7 @@ export function formatAgents(agents: readonly UsableAgent[]): string {
 }
 
 /**
- * The playbook `age agents guide` prints. The session prompt only points here, so every
+ * The playbook `wooky agents guide` prints. The session prompt only points here, so every
  * agent gets the full instructions when it is about to delegate, with the live agent list.
  */
 export function fleetGuide(agents: readonly UsableAgent[]): string {
@@ -71,7 +71,7 @@ pieces would edit the same lines. Coordination costs time and the user's quota.
 
 ${formatAgents(agents)}
 
-Run \`age agents providers\` to refresh this list. Pick a strong model for hard or vague
+Run \`wooky agents providers\` to refresh this list. Pick a strong model for hard or vague
 work and a fast one for mechanical work. Mixing providers is fine.
 
 ## Workflow
@@ -82,14 +82,14 @@ work and a fast one for mechanical work. Mixing providers is fine.
    this conversation, the user's request, or what you have read. Everything it needs must
    be in the prompt (see "Writing a brief").
 3. Spawn every independent worker before waiting on any of them:
-     age agents spawn --provider <kind> --model <id> --title "<short title>" --prompt-file brief-1.md
+     wooky agents spawn --provider <kind> --model <id> --title "<short title>" --prompt-file brief-1.md
    It prints the worker's thread id. Write long briefs to a file outside the repo (for
    example under $TMPDIR) and pass --prompt-file, or pipe them with --prompt-file -.
 4. Keep working on your own part while they run. When a worker finishes, its report arrives
    in this thread as a follow-up message. To block instead:
-     age agents wait <id> <id> ...      (exit 0: all finished, exit 2: timeout, wait again)
+     wooky agents wait <id> <id> ...      (exit 0: all finished, exit 2: timeout, wait again)
 5. Review each result:
-     age agents result <id>             (status, summary, diff stat, worktree path)
+     wooky agents result <id>             (status, summary, diff stat, worktree path)
      git -C <worktree> status
      git -C <worktree> log --oneline
      git -C <worktree> diff
@@ -114,12 +114,12 @@ A good brief reads like a ticket for a capable engineer who just joined:
 
 ## Commands
 
-  age agents providers [--json]
-  age agents spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--prompt-file <path>|-] -- <prompt>
-  age agents list [--json]
-  age agents wait [--timeout <seconds>] <threadId>...
-  age agents result <threadId> [--json]
-  age agents guide
+  wooky agents providers [--json]
+  wooky agents spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--prompt-file <path>|-] -- <prompt>
+  wooky agents list [--json]
+  wooky agents wait [--timeout <seconds>] <threadId>...
+  wooky agents result <threadId> [--json]
+  wooky agents guide
 
 --runtime-mode defaults to yours. With approve, the user must approve each gated action in
 the worker's thread, so prefer auto-edits for unattended work unless the user wants control.

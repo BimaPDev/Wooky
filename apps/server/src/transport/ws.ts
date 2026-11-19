@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import {
-  AGE_WS_PATH,
+  WOOKY_WS_PATH,
   type AgeEvent,
   type RpcError,
   type RpcMethod,
@@ -203,7 +203,7 @@ function createHandlers(
   };
 }
 
-/** Attaches the RPC WebSocket at AGE_WS_PATH. Returns a function that closes every socket. */
+/** Attaches the RPC WebSocket at WOOKY_WS_PATH. Returns a function that closes every socket. */
 export function attachWebSocket(
   server: Server,
   services: Services,
@@ -237,7 +237,7 @@ export function attachWebSocket(
 
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const { pathname } = new URL(req.url ?? "/", "http://localhost");
-    if (pathname !== AGE_WS_PATH) return refuse(socket, "404 Not Found");
+    if (pathname !== WOOKY_WS_PATH) return refuse(socket, "404 Not Found");
     if (!originAllowed(req.headers.origin, req.headers.host, allowedHosts))
       return refuse(socket, "403 Forbidden");
     wss.handleUpgrade(req, socket, head, (ws) => serve(ws, req));

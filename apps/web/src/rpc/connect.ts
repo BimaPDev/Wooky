@@ -1,4 +1,4 @@
-import { AGE_WS_PATH } from "@wooky/contracts";
+import { WOOKY_WS_PATH } from "@wooky/contracts";
 import { emptyReadModel } from "@wooky/domain";
 import { createFixtureBackend } from "../dev/fixture.ts";
 import { handleThemesPush, loadDeviceSettings } from "../state/appearance.ts";
@@ -34,7 +34,7 @@ export function startConnection() {
   }
   let firstOpen = true;
   const client = createRpcClient({
-    url: `${location.origin.replace(/^http/, "ws")}${AGE_WS_PATH}`,
+    url: `${location.origin.replace(/^http/, "ws")}${WOOKY_WS_PATH}`,
     socketFactory: browserSocket,
     getSeq: () => useStore.getState().model.seq,
     onSnapshot: receiveSnapshot,

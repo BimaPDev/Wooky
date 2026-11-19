@@ -55,7 +55,7 @@ describe("cursor honours provider settings", () => {
           binaryPath: process.execPath,
           extraArgs: ["--sandbox", "enabled"],
           // The fake agent writes its argv to this file, which proves env reached the child.
-          env: { AGE_FAKE_CURSOR_LOG_ARGV: argvFile },
+          env: { WOOKY_FAKE_CURSOR_LOG_ARGV: argvFile },
         }),
     });
     const events = await collect(adapter.runTurn(input({ prompt: "hello there" })));
@@ -124,14 +124,14 @@ describe("claude honours provider settings", () => {
         settings({
           binaryPath: process.execPath,
           extraArgs: ["--max-turns", "3", "-x"],
-          env: { AGE_TEST_ENV_VALUE: "yes" },
+          env: { WOOKY_TEST_ENV_VALUE: "yes" },
         }),
     });
     await collect(adapter.runTurn(input({ model: "default" })));
     const options = calls[0]?.options as Options;
     expect(options.pathToClaudeCodeExecutable).toBe(process.execPath);
     expect(options.extraArgs).toEqual({ "max-turns": "3" });
-    expect(options.env?.AGE_TEST_ENV_VALUE).toBe("yes");
+    expect(options.env?.WOOKY_TEST_ENV_VALUE).toBe("yes");
     expect(options.env?.PATH).toBe(process.env.PATH);
   });
 

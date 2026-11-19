@@ -6,13 +6,13 @@
 # `pnpm --filter @wooky/desktop start`.
 #
 # Usage: apps/desktop/scripts/make-local-app.sh [output-dir]   (default: apps/desktop/out)
-# Env:   WOOKY_AGE_HOME  AGE_HOME baked into the bundle (default: <repo>/.age-dev)
+# Env:   WOOKY_HOME baked into the bundle (default: <repo>/.wooky-dev)
 set -euo pipefail
 
 desktop_dir="$(cd "$(dirname "$0")/.." && pwd)"
 repo_root="$(cd "$desktop_dir/../.." && pwd)"
 out_dir="${1:-$desktop_dir/out}"
-age_home="${WOOKY_AGE_HOME:-$repo_root/.age-dev}"
+wooky_home="${WOOKY_HOME:-$repo_root/.wooky-dev}"
 bundle_id="app.wooky.desktop"
 name="Wooky"
 
@@ -36,8 +36,8 @@ $pb -c "Set :CFBundleName $name" "$plist"
 $pb -c "Set :CFBundleDisplayName $name" "$plist"
 $pb -c "Set :CFBundleIdentifier $bundle_id" "$plist"
 $pb -c "Delete :ElectronAsarIntegrity" "$plist" 2>/dev/null || true
-$pb -c "Add :LSEnvironment:AGE_HOME string $age_home" "$plist" 2>/dev/null ||
-  $pb -c "Set :LSEnvironment:AGE_HOME $age_home" "$plist"
+$pb -c "Add :LSEnvironment:WOOKY_HOME string $wooky_home" "$plist" 2>/dev/null ||
+  $pb -c "Set :LSEnvironment:WOOKY_HOME $wooky_home" "$plist"
 $pb -c "Add :NSAppleEventsUsageDescription string Wooky opens Terminal so you can sign in to your coding agents." "$plist" 2>/dev/null ||
   $pb -c "Set :NSAppleEventsUsageDescription Wooky opens Terminal so you can sign in to your coding agents." "$plist"
 
@@ -64,11 +64,11 @@ cat >"$stub/package.json" <<JSON
 { "name": "wooky-local", "productName": "$name", "version": "0.0.0", "type": "module", "main": "main.mjs" }
 JSON
 # Finder/Dock launches get launchd's bare PATH; add the usual tool dirs so the server
-# can find git and the agent CLIs. AGE_HOME also comes from LSEnvironment above.
+# can find git and the agent CLIs. WOOKY_HOME also comes from LSEnvironment above.
 node_bin="$(dirname "$(command -v node)")"
 js() { node -p 'JSON.stringify(process.argv[1])' "$1"; }
 cat >"$stub/main.mjs" <<JS
-process.env.AGE_HOME ||= $(js "$age_home");
+process.env.WOOKY_HOME ||= $(js "$wooky_home");
 const extra = [$(js "$node_bin"), process.env.HOME + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"];
 process.env.PATH = [...extra, process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin"].join(":");
 await import($(js "file://$desktop_dir/dist/main.js"));

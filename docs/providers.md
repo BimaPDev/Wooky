@@ -179,7 +179,7 @@ One process per turn. Frames are JSON-RPC 2.0, one JSON object per line. A line
 over 1 MiB is dropped and the next line is read. Every inbound object is checked
 with zod. A line that is not a JSON-RPC 2.0 message is dropped. Unknown
 notification methods, and unknown `session/update` discriminators, are passed to
-the debug channel (`AGE_DEBUG=1` prints them). They do not fail the turn.
+the debug channel (`WOOKY_DEBUG=1` prints them). They do not fail the turn.
 
 The client advertises no filesystem and no terminal capabilities, so the agent
 uses its own tools. `fs/read_text_file` and `fs/write_text_file` are not
@@ -232,7 +232,7 @@ whether they have been used. Models are the agent's `models` list as
 `<agentId>/<modelId>` with source `custom`, or just `<agentId>` when that list
 is omitted. `providers.acp.extraArgs` are appended after the agent's `args`.
 `providers.acp.env` overrides the agent's `env` on the same key. Neither is logged.
-The fleet variables (`AGE_THREAD_ID`, `AGE_SERVER_URL`, the `age` shim on `PATH`)
+The fleet variables (`WOOKY_THREAD_ID`, `WOOKY_SERVER_URL`, the `wooky` shim on `PATH`)
 are applied on top, and the coordinator instructions are prefixed to the first
 prompt of a new session.
 

@@ -80,11 +80,11 @@ describe("resolveLaunch", () => {
 describe("withUserEnv", () => {
   it("returns process.env itself when empty, else a merged copy", () => {
     expect(withUserEnv({})).toBe(process.env);
-    const merged = withUserEnv({ AGE_TEST_ENV_VALUE: "yes" });
+    const merged = withUserEnv({ WOOKY_TEST_ENV_VALUE: "yes" });
     expect(merged).not.toBe(process.env);
-    expect(merged.AGE_TEST_ENV_VALUE).toBe("yes");
+    expect(merged.WOOKY_TEST_ENV_VALUE).toBe("yes");
     expect(merged.PATH).toBe(process.env.PATH);
-    expect(process.env.AGE_TEST_ENV_VALUE).toBeUndefined();
+    expect(process.env.WOOKY_TEST_ENV_VALUE).toBeUndefined();
   });
 });
 

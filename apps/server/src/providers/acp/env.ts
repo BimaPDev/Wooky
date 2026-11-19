@@ -2,7 +2,7 @@ import { fleetChildEnv } from "../agent-env.ts";
 
 /**
  * Merge process env, then each settings layer (later wins). A thread id also
- * applies the fleet overlay (AGE_THREAD_ID and the age shim on PATH).
+ * applies the fleet overlay (WOOKY_THREAD_ID and the wooky shim on PATH).
  * Callers must not log the result: settings env is local-only.
  */
 export function childEnv(

@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname;
-const SKIP = new Set(["node_modules", "dist", "out", "release", ".git", ".age", ".age-dev"]);
+const SKIP = new Set(["node_modules", "dist", "out", "release", ".git", ".wooky", ".wooky-dev"]);
 
 function walk(dir, files = []) {
   let entries;

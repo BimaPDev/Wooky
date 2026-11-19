@@ -45,7 +45,7 @@ let modelsCache: {
 const CAPABILITIES = { rewind: false, questions: false, planMode: false, queue: true };
 
 export function createCursorAdapter(options: CursorAdapterOptions = {}): ProviderAdapter {
-  const configuredBin = options.cursorBin ?? process.env.AGE_CURSOR_BIN ?? "cursor-agent";
+  const configuredBin = options.cursorBin ?? process.env.WOOKY_CURSOR_BIN ?? "cursor-agent";
   const configuredPrefix = options.cursorArgsPrefix ?? [];
 
   const launch = () => {

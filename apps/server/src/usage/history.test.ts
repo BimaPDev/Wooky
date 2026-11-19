@@ -64,12 +64,12 @@ const line = (row: Row) =>
   });
 
 let userHome: string;
-let ageHome: string;
+let wookyHome: string;
 let clock: number;
 
 beforeEach(async () => {
   userHome = await mkdtemp(join(tmpdir(), "age-history-user-"));
-  ageHome = await mkdtemp(join(tmpdir(), "age-history-home-"));
+  wookyHome = await mkdtemp(join(tmpdir(), "age-history-home-"));
   clock = NOW;
   fakeReaderRuns.clear();
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -78,7 +78,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.restoreAllMocks();
   await rm(userHome, { recursive: true, force: true });
-  await rm(ageHome, { recursive: true, force: true });
+  await rm(wookyHome, { recursive: true, force: true });
 });
 
 async function writeFake(origin: Origin, name: string, rows: Row[]) {
@@ -87,7 +87,7 @@ async function writeFake(origin: Origin, name: string, rows: Row[]) {
   await writeFile(join(dir, name), rows.map(line).join("\n") + "\n");
 }
 
-const cachePath = () => join(ageHome, CACHE_FILE_NAME);
+const cachePath = () => join(wookyHome, CACHE_FILE_NAME);
 
 function newCore(
   readers: readonly HistoryReader[],
@@ -368,7 +368,7 @@ describe("scan core", () => {
     await core.handle({ kind: "scan", nowMs: NOW });
     const stored = JSON.parse(await readFile(cachePath(), "utf8"));
     expect(stored.origins.claude.records).toHaveLength(1);
-    expect(await readdir(ageHome)).toEqual([CACHE_FILE_NAME]);
+    expect(await readdir(wookyHome)).toEqual([CACHE_FILE_NAME]);
   });
 
   it("a failing reader does not fail the others and leaks no path", async () => {
@@ -704,7 +704,7 @@ function newService(
 ) {
   const host = inProcessHost(newCore(readers));
   const service = createHistoryService({
-    home: ageHome,
+    home: wookyHome,
     now: () => clock,
     pricing: pricing(),
     host,
@@ -863,7 +863,7 @@ describe("usage.history service", () => {
       close: async () => undefined,
     };
     const service = createHistoryService({
-      home: ageHome,
+      home: wookyHome,
       now: () => clock,
       pricing: pricing(),
       host: broken,
@@ -893,7 +893,7 @@ class FakeWorker extends EventEmitter {
 describe("worker host close", () => {
   const hostWith = (worker: FakeWorker, timer?: HistoryTimer) =>
     createWorkerHost({
-      home: ageHome,
+      home: wookyHome,
       userHome,
       spawn: () => worker,
       ...(timer === undefined ? {} : { timer }),
@@ -951,12 +951,12 @@ describe("worker round trip", () => {
       { at: NOW - 2 * DAY, output: 1, session: "round-trip-session" },
     ]);
     const host = createWorkerHost({
-      home: ageHome,
+      home: wookyHome,
       userHome,
       readersModule: FIXTURE_READERS_URL,
     });
     const service = createHistoryService({
-      home: ageHome,
+      home: wookyHome,
       now: () => clock,
       pricing: pricing(),
       host,

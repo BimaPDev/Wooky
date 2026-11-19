@@ -166,15 +166,15 @@ The server classifies `text`:
 ## Command line
 
 ```
-age theme set <file>
-age theme list
-age theme use <id>
-age theme off
+wooky theme set <file>
+wooky theme list
+wooky theme use <id>
+wooky theme off
 ```
 
 `set` imports a file (AGE JSON, t3code JSON or SVG) and activates it. `list` prints
 installed theme ids, one per line. `use` activates one by id. `off` returns to `default`.
-These commands write under `AGE_HOME` and do not require a running server; a live server
+These commands write under `WOOKY_HOME` and do not require a running server; a live server
 pushes the change to connected clients.
 
 A theme or settings change made outside the client, including this CLI, is pushed to

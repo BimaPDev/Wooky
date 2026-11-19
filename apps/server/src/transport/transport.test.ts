@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { AGE_WS_PATH, type AgeEvent, RpcPush, RpcResponse } from "@wooky/contracts";
+import { WOOKY_WS_PATH, type AgeEvent, RpcPush, RpcResponse } from "@wooky/contracts";
 import { createFolderPicker } from "../process/folder-picker.ts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer, type ServerOptions } from "../server.ts";
@@ -48,7 +48,7 @@ async function boot(options: Partial<ServerOptions> = {}) {
 }
 
 async function connect(server: RunningServer) {
-  const socket = new WebSocket(`${server.url.replace("http", "ws")}${AGE_WS_PATH}`);
+  const socket = new WebSocket(`${server.url.replace("http", "ws")}${WOOKY_WS_PATH}`);
   sockets.push(socket);
   const pending = new Map<number, (response: RpcResponse) => void>();
   const pushes: AgeEvent[] = [];
@@ -148,7 +148,7 @@ describe("transport", () => {
   });
 
   it("runs a demo turn end to end", async () => {
-    const fake = createFakeGit({ changed: ["AGE_DEMO.md"] });
+    const fake = createFakeGit({ changed: ["WOOKY_DEMO.md"] });
     const { server, userHome } = await boot({ git: fake.git });
     const client = await connect(server);
     await client.call("subscribe", { fromSeq: 0 });
@@ -177,7 +177,7 @@ describe("transport", () => {
     });
     expect(await client.call("git.diff", { threadId: thread.thread.id })).toMatchObject({
       ok: true,
-      result: [{ path: "AGE_DEMO.md", status: "modified" }],
+      result: [{ path: "WOOKY_DEMO.md", status: "modified" }],
     });
     expect(fake.calls.at(-1)).toMatch(/^diff refs\/age\/checkpoints\/.+\/before null$/);
   });
@@ -301,7 +301,7 @@ describe("transport", () => {
 
   it("rejects WebSocket upgrades from foreign origins", async () => {
     const { server } = await boot();
-    const url = `${server.url.replace("http", "ws")}${AGE_WS_PATH}`;
+    const url = `${server.url.replace("http", "ws")}${WOOKY_WS_PATH}`;
     expect(await rejectedUpgrade(url, "http://evil.example")).toBe(403);
     const local = new WebSocket(url, { origin: "http://localhost:5173" });
     sockets.push(local);

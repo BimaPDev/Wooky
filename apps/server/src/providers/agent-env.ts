@@ -3,8 +3,8 @@ import type { ThreadRole } from "@wooky/contracts";
 
 interface AgentRuntime {
   serverUrl: string;
-  /** Absolute path of the `age` shim on PATH. */
-  ageBin: string;
+  /** Absolute path of the `wooky` shim on PATH. */
+  wookyBin: string;
   issueToken?: (threadId: string) => string;
 }
 
@@ -24,27 +24,27 @@ export function currentAgentRuntime(): AgentRuntime | null {
 }
 
 /**
- * Environment a provider child needs to call `age agents` back into this server.
- * `PATH` is prefixed with the directory that contains `ageBin`.
+ * Environment a provider child needs to call `wooky agents` back into this server.
+ * `PATH` is prefixed with the directory that contains `wookyBin`.
  */
 export function agentEnv(input: {
   threadId: string;
   serverUrl: string;
-  ageBin: string;
+  wookyBin: string;
   env?: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
   const env = input.env ?? process.env;
   const current = env.PATH ?? env.Path ?? "";
-  const binDir = dirname(input.ageBin);
+  const binDir = dirname(input.wookyBin);
   const path = current.length > 0 ? `${binDir}${delimiter}${current}` : binDir;
   const issued =
     currentAgentRuntime()?.issueToken?.(input.threadId) ??
-    (env.AGE_AGENT_TOKEN as string | undefined);
+    (env.WOOKY_AGENT_TOKEN as string | undefined);
   return {
-    AGE_THREAD_ID: input.threadId,
-    AGE_SERVER_URL: input.serverUrl,
+    WOOKY_THREAD_ID: input.threadId,
+    WOOKY_SERVER_URL: input.serverUrl,
     PATH: path,
-    ...(issued ? { AGE_AGENT_TOKEN: issued } : {}),
+    ...(issued ? { WOOKY_AGENT_TOKEN: issued } : {}),
   };
 }
 
@@ -60,7 +60,7 @@ export function fleetChildEnv(
     ...agentEnv({
       threadId,
       serverUrl: current.serverUrl,
-      ageBin: current.ageBin,
+      wookyBin: current.wookyBin,
       env: base,
     }),
   };
@@ -68,8 +68,8 @@ export function fleetChildEnv(
 
 export function coordinatorInstructions(): string {
   return [
-    "You can delegate subtasks to other agents with the age CLI. Workers run in their own git worktrees and cannot spawn further workers.",
-    "Run `age agents guide` for the full playbook (workflow, brief writing, commands, limits) and the live list of usable agents and models.",
+    "You can delegate subtasks to other agents with the wooky CLI. Workers run in their own git worktrees and cannot spawn further workers.",
+    "Run `wooky agents guide` for the full playbook (workflow, brief writing, commands, limits) and the live list of usable agents and models.",
   ].join("\n");
 }
 

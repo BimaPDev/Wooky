@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 
-process.env.AGE_SKIP_SHELL_ENV ??= "1";
+process.env.WOOKY_SKIP_SHELL_ENV ??= "1";
 
 export default defineConfig({
   test: {

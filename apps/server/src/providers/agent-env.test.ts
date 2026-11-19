@@ -16,17 +16,17 @@ describe("agentEnv", () => {
     setAgentRuntime(null);
   });
 
-  it("sets the thread, the server, and a PATH prefix for the age shim", () => {
+  it("sets the thread, the server, and a PATH prefix for the wooky shim", () => {
     const env = agentEnv({
       threadId: "thread-1",
       serverUrl: "http://127.0.0.1:4317",
-      ageBin: "/tmp/age-home/bin/age",
+      wookyBin: "/tmp/wooky-home/bin/wooky",
       env: { PATH: "/usr/bin" },
     });
     expect(env).toEqual({
-      AGE_THREAD_ID: "thread-1",
-      AGE_SERVER_URL: "http://127.0.0.1:4317",
-      PATH: `/tmp/age-home/bin${delimiter}/usr/bin`,
+      WOOKY_THREAD_ID: "thread-1",
+      WOOKY_SERVER_URL: "http://127.0.0.1:4317",
+      PATH: `/tmp/wooky-home/bin${delimiter}/usr/bin`,
     });
   });
 
@@ -34,41 +34,41 @@ describe("agentEnv", () => {
     const env = agentEnv({
       threadId: "thread-1",
       serverUrl: "http://127.0.0.1:9",
-      ageBin: "/tmp/age-home/bin/age",
+      wookyBin: "/tmp/wooky-home/bin/wooky",
       env: {},
     });
-    expect(env.PATH).toBe("/tmp/age-home/bin");
+    expect(env.PATH).toBe("/tmp/wooky-home/bin");
   });
 
   it("merges into the child environment only after the server publishes", () => {
     expect(fleetChildEnv("thread-1", { PATH: "/usr/bin" })).toEqual({ PATH: "/usr/bin" });
-    setAgentRuntime({ serverUrl: "http://127.0.0.1:9", ageBin: "/opt/age/bin/age" });
+    setAgentRuntime({ serverUrl: "http://127.0.0.1:9", wookyBin: "/opt/wooky/bin/wooky" });
     expect(fleetChildEnv("thread-1", { PATH: "/usr/bin", HOME: "/users/a" })).toEqual({
-      PATH: `/opt/age/bin${delimiter}/usr/bin`,
+      PATH: `/opt/wooky/bin${delimiter}/usr/bin`,
       HOME: "/users/a",
-      AGE_THREAD_ID: "thread-1",
-      AGE_SERVER_URL: "http://127.0.0.1:9",
+      WOOKY_THREAD_ID: "thread-1",
+      WOOKY_SERVER_URL: "http://127.0.0.1:9",
     });
-    expect(currentAgentRuntime()?.ageBin).toBe("/opt/age/bin/age");
+    expect(currentAgentRuntime()?.wookyBin).toBe("/opt/wooky/bin/wooky");
   });
 });
 
 describe("fleet instructions", () => {
-  it("keeps the coordinator note short and points at age agents guide", () => {
+  it("keeps the coordinator note short and points at wooky agents guide", () => {
     const text = coordinatorInstructions();
     expect(text.split("\n").length).toBeLessThanOrEqual(5);
-    expect(text).toContain("age agents guide");
-    expect(text).toContain("age CLI");
+    expect(text).toContain("wooky agents guide");
+    expect(text).toContain("wooky CLI");
     expect(text).toContain("git worktrees");
     expect(text).toContain("cannot spawn");
-    expect(text).not.toContain("age agents spawn");
-    expect(text).not.toContain("age agents wait");
+    expect(text).not.toContain("wooky agents spawn");
+    expect(text).not.toContain("wooky agents wait");
   });
 
   it("selects the worker note only for workers", () => {
     expect(instructionsForRole("worker")).toBe(workerNote());
     expect(workerNote().split("\n")).toHaveLength(1);
-    expect(workerNote()).not.toContain("age agents spawn");
+    expect(workerNote()).not.toContain("wooky agents spawn");
     expect(instructionsForRole("solo")).toBe(coordinatorInstructions());
     expect(instructionsForRole("coordinator")).toBe(coordinatorInstructions());
     expect(instructionsForRole(undefined)).toBe(coordinatorInstructions());

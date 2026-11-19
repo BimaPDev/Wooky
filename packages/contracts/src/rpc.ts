@@ -226,7 +226,7 @@ export const RpcMethods = {
     result: UsageHistoryResult,
   },
   /**
-   * Every thread the server knows, for the fleet board and `age agents list`.
+   * Every thread the server knows, for the fleet board and `wooky agents list`.
    * The same rows are `fleetRows` in `@wooky/domain`; the RPC exists for the CLI.
    */
   "fleet.overview": {
@@ -251,7 +251,7 @@ export const RpcMethods = {
     params: z.object({ id: Id }),
     result: z.object({ removed: z.boolean() }),
   },
-  /** `age agents spawn`. Same fields as `thread.spawn`, without a command id. */
+  /** `wooky agents spawn`. Same fields as `thread.spawn`, without a command id. */
   "agents.spawn": {
     params: ThreadSpawnParams.extend({
       ...AgentsAuthFields,
@@ -259,12 +259,12 @@ export const RpcMethods = {
     }),
     result: z.object({ threadId: Id }),
   },
-  /** `age agents list`. Overview rows whose parent is this coordinator. */
+  /** `wooky agents list`. Overview rows whose parent is this coordinator. */
   "agents.list": {
     params: z.object({ parentThreadId: Id.optional(), ...AgentsAuthFields }),
     result: z.array(FleetRow),
   },
-  /** `age agents wait`. Blocks until each thread is done or failed, or the timeout fires. */
+  /** `wooky agents wait`. Blocks until each thread is done or failed, or the timeout fires. */
   "agents.wait": {
     params: z.object({
       threadIds: z.array(Id),
@@ -276,7 +276,7 @@ export const RpcMethods = {
       pending: z.array(Id),
     }),
   },
-  /** `age agents result`. Summary of the worker's latest report. */
+  /** `wooky agents result`. Summary of the worker's latest report. */
   "agents.result": {
     params: z.object({ threadId: Id, ...AgentsAuthFields }),
     result: AgentResult,
@@ -326,7 +326,7 @@ export type RpcPush = z.infer<typeof RpcPush>;
 export const ServerMessage = z.union([RpcResponse, RpcPush]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
 
-export const AGE_WS_PATH = "/ws";
-export const AGE_DEFAULT_PORT = 4317;
+export const WOOKY_WS_PATH = "/ws";
+export const WOOKY_DEFAULT_PORT = 4317;
 /** How long the server waits for the folder dialog before killing its child. */
 export const PICK_FOLDER_TIMEOUT_MS = 10 * 60 * 1000;

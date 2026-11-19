@@ -23,13 +23,13 @@ Desktop window (after the server is running):
 ```sh
 pnpm --filter @wooky/desktop build
 # macOS / Linux
-AGE_DESKTOP_URL=http://127.0.0.1:4317 pnpm --filter @wooky/desktop start
+WOOKY_DESKTOP_URL=http://127.0.0.1:4317 pnpm --filter @wooky/desktop start
 # Windows PowerShell
-$env:AGE_DESKTOP_URL="http://127.0.0.1:4317"; pnpm --filter @wooky/desktop start
+$env:WOOKY_DESKTOP_URL="http://127.0.0.1:4317"; pnpm --filter @wooky/desktop start
 ```
 
 `pnpm dev` (server + hot-reload web UI) uses POSIX process groups and is macOS/Linux only for now.
-State lives in `~/.age` (override with `--home` or `AGE_HOME`).
+State lives in `~/.wooky` (override with `--home` or `WOOKY_HOME`).
 
 ## Checks
 

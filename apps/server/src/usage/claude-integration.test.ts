@@ -45,18 +45,18 @@ function assistantLine(overrides: Record<string, unknown> = {}): string {
 }
 
 let userHome: string;
-let ageHome: string;
+let wookyHome: string;
 let clock: number;
 
 beforeEach(async () => {
   userHome = await mkdtemp(join(tmpdir(), "age-claude-int-user-"));
-  ageHome = await mkdtemp(join(tmpdir(), "age-claude-int-home-"));
+  wookyHome = await mkdtemp(join(tmpdir(), "age-claude-int-home-"));
   clock = NOW;
 });
 
 afterEach(async () => {
   await rm(userHome, { recursive: true, force: true });
-  await rm(ageHome, { recursive: true, force: true });
+  await rm(wookyHome, { recursive: true, force: true });
 });
 
 async function writeJsonl(rel: string, content: string, mtimeMs: number) {
@@ -66,7 +66,7 @@ async function writeJsonl(rel: string, content: string, mtimeMs: number) {
   await utimes(file, mtimeMs / 1000, mtimeMs / 1000);
 }
 
-const cachePath = () => join(ageHome, CACHE_FILE_NAME);
+const cachePath = () => join(wookyHome, CACHE_FILE_NAME);
 
 function sumChannels(
   buckets: {
@@ -147,9 +147,9 @@ describe("claude usage history integration", () => {
       freshMtime,
     );
 
-    const host = createWorkerHost({ home: ageHome, userHome });
+    const host = createWorkerHost({ home: wookyHome, userHome });
     const service = createHistoryService({
-      home: ageHome,
+      home: wookyHome,
       userHome,
       now: () => clock,
       pricing: pricing(),

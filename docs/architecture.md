@@ -6,7 +6,7 @@
  web / desktop client ──ws /ws──▶ age server ──▶ provider adapters ──▶ claude / cursor-agent / codex / demo
         ▲   (commands, snapshot,       │
         └── pushed events)             ├── orchestrator (pure)
-                                       ├── event store (node:sqlite, AGE_HOME/state.sqlite)
+                                       ├── event store (node:sqlite, WOOKY_HOME/state.sqlite)
                                        ├── effect runner
                                        └── git service (worktrees, checkpoints, diffs)
 ```
@@ -78,9 +78,9 @@ from the last applied `seq`; duplicates are ignored by the reducer.
 
 ## Process contract
 
-`age` (apps/server/src/bin.ts) accepts `--port <n>` (0 = random), `--host`, `--home <dir>`
-(default `AGE_HOME` or `~/.age`) and `--web-dist <dir>` (static UI to serve). When ready it
-prints exactly one stdout line `AGE_LISTENING http://<host>:<port>`; the desktop shell and
+`wooky` (apps/server/src/bin.ts) accepts `--port <n>` (0 = random), `--host`, `--home <dir>`
+(default `WOOKY_HOME` or `~/.wooky`) and `--web-dist <dir>` (static UI to serve). When ready it
+prints exactly one stdout line `WOOKY_LISTENING http://<host>:<port>`; the desktop shell and
 dev runner wait for it. It exits cleanly on SIGINT/SIGTERM, aborting running turns.
 
 Checkpoint refs are deterministic, so `turn.started.checkpointBefore` is decided purely:

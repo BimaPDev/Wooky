@@ -13,7 +13,7 @@ export const ATTACHMENTS_DIR = "attachments";
 const ID_PATTERN = /^[0-9a-f-]{36}$/;
 
 /**
- * Attached files live at AGE_HOME/attachments/<id>/<name>. The prompt names that path, so
+ * Attached files live at WOOKY_HOME/attachments/<id>/<name>. The prompt names that path, so
  * any agent CLI can read the file with its own tools. Sent attachments stay on disk because
  * the transcript points at them; only files removed before sending are deleted.
  */

@@ -8,11 +8,11 @@ import type { TurnInput } from "../types.ts";
 import { createCursorAdapter } from "./adapter.ts";
 
 const SCRIPT = `import { writeFileSync } from "node:fs";
-const file = process.env.AGE_FLEET_CAPTURE;
+const file = process.env.WOOKY_FLEET_CAPTURE;
 if (file) {
   writeFileSync(file, JSON.stringify({
-    AGE_THREAD_ID: process.env.AGE_THREAD_ID ?? null,
-    AGE_SERVER_URL: process.env.AGE_SERVER_URL ?? null,
+    WOOKY_THREAD_ID: process.env.WOOKY_THREAD_ID ?? null,
+    WOOKY_SERVER_URL: process.env.WOOKY_SERVER_URL ?? null,
     PATH: process.env.PATH ?? "",
     argv: process.argv.slice(2),
   }));
@@ -49,12 +49,12 @@ async function collect(gen: AsyncIterable<ProviderEvent>) {
 
 describe("cursor fleet env", () => {
   let home = "";
-  const previous = process.env.AGE_FLEET_CAPTURE;
+  const previous = process.env.WOOKY_FLEET_CAPTURE;
 
   afterEach(async () => {
     setAgentRuntime(null);
-    if (previous === undefined) delete process.env.AGE_FLEET_CAPTURE;
-    else process.env.AGE_FLEET_CAPTURE = previous;
+    if (previous === undefined) delete process.env.WOOKY_FLEET_CAPTURE;
+    else process.env.WOOKY_FLEET_CAPTURE = previous;
     if (home) await rm(home, { recursive: true, force: true });
     home = "";
   });
@@ -65,10 +65,10 @@ describe("cursor fleet env", () => {
     const script = join(home, "fake-agent.mjs");
     const capture = join(home, "capture.json");
     await writeFile(script, SCRIPT, "utf8");
-    process.env.AGE_FLEET_CAPTURE = capture;
+    process.env.WOOKY_FLEET_CAPTURE = capture;
     setAgentRuntime({
       serverUrl: "http://127.0.0.1:4317",
-      ageBin: join(home, "bin", "age"),
+      wookyBin: join(home, "bin", "wooky"),
     });
     const adapter = createCursorAdapter({
       cursorBin: process.execPath,
@@ -78,17 +78,17 @@ describe("cursor fleet env", () => {
     const done = events.filter((event) => event.type === "done").at(-1);
     expect(done?.status).toBe("completed");
     return JSON.parse(await readFile(capture, "utf8")) as {
-      AGE_THREAD_ID: string | null;
-      AGE_SERVER_URL: string | null;
+      WOOKY_THREAD_ID: string | null;
+      WOOKY_SERVER_URL: string | null;
       PATH: string;
       argv: string[];
     };
   }
 
-  it("passes the age environment and prefixes the first prompt", async () => {
+  it("passes the wooky environment and prefixes the first prompt", async () => {
     const captured = await run(turn());
-    expect(captured.AGE_THREAD_ID).toBe("thread-1");
-    expect(captured.AGE_SERVER_URL).toBe("http://127.0.0.1:4317");
+    expect(captured.WOOKY_THREAD_ID).toBe("thread-1");
+    expect(captured.WOOKY_SERVER_URL).toBe("http://127.0.0.1:4317");
     expect(captured.PATH.startsWith(`${join(home, "bin")}${delimiter}`)).toBe(true);
     expect(captured.argv.at(-1)).toBe(`${coordinatorInstructions()}\n\ntest prompt`);
 
@@ -99,6 +99,6 @@ describe("cursor fleet env", () => {
   it("prefixes the worker note and not the coordinator instructions", async () => {
     const captured = await run(turn({ role: "worker" }));
     expect(captured.argv.at(-1)).toBe(`${workerNote()}\n\ntest prompt`);
-    expect(captured.argv.at(-1)).not.toContain("age agents spawn");
+    expect(captured.argv.at(-1)).not.toContain("wooky agents spawn");
   });
 });

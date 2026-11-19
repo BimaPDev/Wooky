@@ -408,9 +408,9 @@ describe("hydrateLoginShellPath", () => {
     expect(env.PATH).toBe("/usr/bin");
   });
 
-  it("skips when AGE_SKIP_SHELL_ENV is set", async () => {
+  it("skips when WOOKY_SKIP_SHELL_ENV is set", async () => {
     const spawnShell = vi.fn<SpawnShell>();
-    const env = { PATH: "/usr/bin", AGE_SKIP_SHELL_ENV: "1" };
+    const env = { PATH: "/usr/bin", WOOKY_SKIP_SHELL_ENV: "1" };
     const result = await hydrateLoginShellPath({ platform: "darwin", env, spawnShell });
     expect(result).toEqual({ source: "skipped", added: [] });
     expect(spawnShell).not.toHaveBeenCalled();

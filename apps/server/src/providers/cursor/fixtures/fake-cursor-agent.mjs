@@ -8,13 +8,13 @@ import { fileURLToPath } from "node:url";
 import { writeFile, rename } from "node:fs/promises";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const mode = process.env.AGE_FAKE_CURSOR_MODE ?? "replay";
-const fixture = process.env.AGE_FAKE_CURSOR_FIXTURE ?? join(here, "turn-complete.ndjson");
+const mode = process.env.WOOKY_FAKE_CURSOR_MODE ?? "replay";
+const fixture = process.env.WOOKY_FAKE_CURSOR_FIXTURE ?? join(here, "turn-complete.ndjson");
 
 const args = process.argv.slice(2);
 
-if (process.env.AGE_FAKE_CURSOR_LOG_ARGV) {
-  await writeFile(process.env.AGE_FAKE_CURSOR_LOG_ARGV, JSON.stringify(args));
+if (process.env.WOOKY_FAKE_CURSOR_LOG_ARGV) {
+  await writeFile(process.env.WOOKY_FAKE_CURSOR_LOG_ARGV, JSON.stringify(args));
 }
 
 if (args.includes("--version")) {
@@ -29,7 +29,7 @@ if (args.includes("--version")) {
 }
 
 if (args.includes("status")) {
-  const auth = process.env.AGE_FAKE_CURSOR_AUTH ?? "logged-in";
+  const auth = process.env.WOOKY_FAKE_CURSOR_AUTH ?? "logged-in";
   if (auth === "logged-in") {
     process.stdout.write("✓ Logged in as user@example.com\n");
   } else {
@@ -45,10 +45,10 @@ if (args.includes("--list-models")) {
 
 if (mode === "hang") {
   process.stdout.write(`PID ${process.pid}\n`);
-  if (process.env.AGE_FAKE_CURSOR_PID_FILE) {
-    const tmp = `${process.env.AGE_FAKE_CURSOR_PID_FILE}.tmp`;
+  if (process.env.WOOKY_FAKE_CURSOR_PID_FILE) {
+    const tmp = `${process.env.WOOKY_FAKE_CURSOR_PID_FILE}.tmp`;
     await writeFile(tmp, String(process.pid));
-    await rename(tmp, process.env.AGE_FAKE_CURSOR_PID_FILE);
+    await rename(tmp, process.env.WOOKY_FAKE_CURSOR_PID_FILE);
   }
   process.stdin.resume();
   setInterval(() => {}, 2 ** 31 - 1);

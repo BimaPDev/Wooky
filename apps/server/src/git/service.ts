@@ -50,7 +50,7 @@ const INHERITED_GIT_VARS = [
   "GIT_PAGER",
 ] as const;
 
-const AGE_IDENTITY = {
+const WOOKY_IDENTITY = {
   GIT_AUTHOR_NAME: "Wooky",
   GIT_AUTHOR_EMAIL: "age@localhost",
   GIT_COMMITTER_NAME: "Wooky",
@@ -62,7 +62,7 @@ const TRUNCATION_NOTICE = "\n… diff truncated\n";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_STDOUT_CAP = 64 * 1024 * 1024;
 
-const AGE_REF = /^refs\/age\/[A-Za-z0-9._/-]+$/;
+const WOOKY_REF = /^refs\/age\/[A-Za-z0-9._/-]+$/;
 
 interface RunOptions {
   cwd: string;
@@ -194,7 +194,7 @@ export function createGitService(options?: {
 
   async function assertAgeRef(cwd: string, ref: string): Promise<void> {
     const shaped =
-      AGE_REF.test(ref) &&
+      WOOKY_REF.test(ref) &&
       !ref.includes("..") &&
       !ref.includes("//") &&
       !ref.endsWith("/") &&
@@ -220,7 +220,7 @@ export function createGitService(options?: {
     const dir = await mkdtemp(join(tmpdir(), "age-git-"));
     const indexFile = join(dir, "index");
     try {
-      return await fn(baseEnv({ ...AGE_IDENTITY, GIT_INDEX_FILE: indexFile }));
+      return await fn(baseEnv({ ...WOOKY_IDENTITY, GIT_INDEX_FILE: indexFile }));
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -322,7 +322,7 @@ export function AppearanceSettings() {
         </div>
         <p className="settings-help">
           Themes live as JSON under{" "}
-          <code className="mono">{catalog?.themesDir ?? "AGE_HOME/themes"}</code>. Drag a .json or
+          <code className="mono">{catalog?.themesDir ?? "WOOKY_HOME/themes"}</code>. Drag a .json or
           .svg file onto the gallery to import it.
         </p>
         {status ? (

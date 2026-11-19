@@ -3,9 +3,9 @@ import { appendFileSync, writeFileSync } from "node:fs";
 export const FAKE_ACP_VERSION = "0.0.1-fake";
 
 const args = process.argv.slice(2);
-const scenario = process.env.AGE_FAKE_ACP_SCENARIO ?? "stream";
-const logFile = process.env.AGE_FAKE_ACP_LOG ?? "";
-const envFile = process.env.AGE_FAKE_ACP_ENV_FILE ?? "";
+const scenario = process.env.WOOKY_FAKE_ACP_SCENARIO ?? "stream";
+const logFile = process.env.WOOKY_FAKE_ACP_LOG ?? "";
+const envFile = process.env.WOOKY_FAKE_ACP_ENV_FILE ?? "";
 
 if (args[0] === "--version") {
   process.stdout.write("opencode 9.9.9\n");
@@ -23,9 +23,9 @@ if (envFile) {
   writeFileSync(
     envFile,
     JSON.stringify({
-      AGE_THREAD_ID: process.env.AGE_THREAD_ID ?? null,
-      AGE_SERVER_URL: process.env.AGE_SERVER_URL ?? null,
-      MARKER: process.env.AGE_TEST_ENV_MARKER ?? null,
+      WOOKY_THREAD_ID: process.env.WOOKY_THREAD_ID ?? null,
+      WOOKY_SERVER_URL: process.env.WOOKY_SERVER_URL ?? null,
+      MARKER: process.env.WOOKY_TEST_ENV_MARKER ?? null,
       OPENCODE_PERMISSION: process.env.OPENCODE_PERMISSION ?? null,
     }),
   );
@@ -66,7 +66,7 @@ function update(sessionUpdate) {
 
 const loadSession = scenario !== "no-load";
 const authMethods =
-  process.env.AGE_FAKE_ACP_AUTH === "1"
+  process.env.WOOKY_FAKE_ACP_AUTH === "1"
     ? [{ id: "login", name: "Login", description: "Sign in" }]
     : [];
 
@@ -106,7 +106,7 @@ async function runPrompt(id) {
     process.stdout.write(`${"x".repeat(9_000)}\n`);
   }
   if (scenario === "permission") {
-    const kind = process.env.AGE_FAKE_ACP_TOOL_KIND ?? "execute";
+    const kind = process.env.WOOKY_FAKE_ACP_TOOL_KIND ?? "execute";
     update({
       sessionUpdate: "tool_call",
       toolCallId: "call_1",

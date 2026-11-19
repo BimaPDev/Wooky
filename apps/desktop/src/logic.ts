@@ -6,7 +6,7 @@ const WINDOW_TEXT = "#f3f0ff";
 
 const STDERR_TAIL_CHARS = 4_000;
 const LINE_BUFFER_CHARS = 8_192;
-const LISTENING_LINE = /^AGE_LISTENING (\S+)$/;
+const LISTENING_LINE = /^WOOKY_LISTENING (\S+)$/;
 const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(["clipboard-sanitized-write"]);
 
 export class ServerStartError extends Error {
@@ -19,7 +19,7 @@ export class ServerStartError extends Error {
   }
 }
 
-/** Returns the URL when `line` is `AGE_LISTENING <http(s) url>`, otherwise undefined. */
+/** Returns the URL when `line` is `WOOKY_LISTENING <http(s) url>`, otherwise undefined. */
 export function parseListeningLine(line: string): string | undefined {
   const url = LISTENING_LINE.exec(line.trim())?.[1];
   if (!url) return undefined;
@@ -77,7 +77,7 @@ export interface ChildEvents {
 }
 
 /**
- * Resolves with the URL from the first `AGE_LISTENING` line. Rejects on the deadline, or if the
+ * Resolves with the URL from the first `WOOKY_LISTENING` line. Rejects on the deadline, or if the
  * process exits first. Both rejections carry the stderr tail.
  */
 export function awaitListening(child: ChildEvents, timeoutMs: number): Promise<string> {
@@ -137,7 +137,7 @@ export function buildServerLaunch(input: ServerLaunchInput): ServerLaunch {
     if (value !== undefined) env[key] = value;
   }
   env.ELECTRON_RUN_AS_NODE = "1";
-  env.AGE_HOME = input.home;
+  env.WOOKY_HOME = input.home;
   return {
     command: input.execPath,
     args: [

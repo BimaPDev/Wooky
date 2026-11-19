@@ -30,12 +30,12 @@ describe("parseModelsFromList", () => {
 
 describe("probe version timeout", () => {
   afterEach(() => {
-    delete process.env.AGE_FAKE_CURSOR_MODE;
+    delete process.env.WOOKY_FAKE_CURSOR_MODE;
   });
 
   it("keeps installed true when --version times out", async () => {
-    const prev = process.env.AGE_FAKE_CURSOR_MODE;
-    process.env.AGE_FAKE_CURSOR_MODE = "version-hang";
+    const prev = process.env.WOOKY_FAKE_CURSOR_MODE;
+    process.env.WOOKY_FAKE_CURSOR_MODE = "version-hang";
     try {
       const adapter = createCursorAdapter({
         cursorBin: process.execPath,
@@ -46,8 +46,8 @@ describe("probe version timeout", () => {
       expect(status.version).toBeNull();
       expect(status.problem).toBe("Cursor Agent did not respond. Try again.");
     } finally {
-      if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
-      else process.env.AGE_FAKE_CURSOR_MODE = prev;
+      if (prev === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
+      else process.env.WOOKY_FAKE_CURSOR_MODE = prev;
     }
   }, 10_000);
 });
@@ -68,8 +68,8 @@ describe("probe with nonexistent binary", () => {
   });
 
   it("probe problem text names agent login when signed out", async () => {
-    const prev = process.env.AGE_FAKE_CURSOR_AUTH;
-    process.env.AGE_FAKE_CURSOR_AUTH = "signed-out";
+    const prev = process.env.WOOKY_FAKE_CURSOR_AUTH;
+    process.env.WOOKY_FAKE_CURSOR_AUTH = "signed-out";
     try {
       const adapter = createCursorAdapter({
         cursorBin: process.execPath,
@@ -81,8 +81,8 @@ describe("probe with nonexistent binary", () => {
         "Cursor Agent is not signed in. Run `agent login`, then refresh.",
       );
     } finally {
-      if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_AUTH;
-      else process.env.AGE_FAKE_CURSOR_AUTH = prev;
+      if (prev === undefined) delete process.env.WOOKY_FAKE_CURSOR_AUTH;
+      else process.env.WOOKY_FAKE_CURSOR_AUTH = prev;
     }
   });
 

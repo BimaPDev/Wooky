@@ -82,7 +82,7 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
     listFiles: async () => [],
     async diff(_cwd, from, to): Promise<FileDiff[]> {
       calls.push(`diff ${from} ${to}`);
-      return (options.changed ?? ["AGE_DEMO.md"]).map((path) => ({
+      return (options.changed ?? ["WOOKY_DEMO.md"]).map((path) => ({
         path,
         status: "modified",
         additions: 1,
@@ -95,7 +95,7 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
       targetBranch: "main",
       ahead: 1,
       behind: 0,
-      files: [{ path: "AGE_DEMO.md", additions: 1, deletions: 0 }],
+      files: [{ path: "WOOKY_DEMO.md", additions: 1, deletions: 0 }],
       conflicts: [],
     }),
     mergeWorktree: async () => ({ ok: true, commit: "deadbeef", targetBranch: "main" }),

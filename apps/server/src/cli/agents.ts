@@ -13,7 +13,7 @@ import { fleetGuide, formatAgents, usableAgents } from "../fleet/guide.ts";
 import { discoverServerUrl } from "../presence.ts";
 import { rpcCall } from "./rpc-client.ts";
 
-const USAGE = `Usage: age agents <command>
+const USAGE = `Usage: wooky agents <command>
 
   providers [--json]
   guide
@@ -22,7 +22,7 @@ const USAGE = `Usage: age agents <command>
   wait [--timeout <seconds>] <threadId>...
   result <threadId> [--json]
 
-providers and guide list usable agents. spawn and list use $AGE_THREAD_ID as the parent thread. The server is $AGE_SERVER_URL, or AGE_HOME/server.json when that process is still running. --timeout is seconds, default ${FLEET_LIMITS.maxAgentsWaitMs / 1000}.`;
+providers and guide list usable agents. spawn and list use $WOOKY_THREAD_ID as the parent thread. The server is $WOOKY_SERVER_URL, or WOOKY_HOME/server.json when that process is still running. --timeout is seconds, default ${FLEET_LIMITS.maxAgentsWaitMs / 1000}.`;
 
 const DEFAULT_TIMEOUT_SECONDS = FLEET_LIMITS.maxAgentsWaitMs / 1000;
 const RPC_TIMEOUT_MS = 30_000;
@@ -160,7 +160,7 @@ async function spawn(
     ...(title ? { title } : {}),
     ...(runtimeMode ? { runtimeMode } : {}),
     ...(key ? { idempotencyKey: key } : {}),
-    ...(env.AGE_AGENT_TOKEN ? { agentToken: env.AGE_AGENT_TOKEN } : {}),
+    ...(env.WOOKY_AGENT_TOKEN ? { agentToken: env.WOOKY_AGENT_TOKEN } : {}),
   });
   io.stdout.write(`${spawned.threadId}\n`);
   return 0;
@@ -176,7 +176,7 @@ async function list(
   if (positionals.length > 0) throw new Error("Unexpected argument.");
   const rows = await call(env, "agents.list", {
     parentThreadId: requireParent(env),
-    ...(env.AGE_AGENT_TOKEN ? { agentToken: env.AGE_AGENT_TOKEN } : {}),
+    ...(env.WOOKY_AGENT_TOKEN ? { agentToken: env.WOOKY_AGENT_TOKEN } : {}),
   });
   if (flags.has("json")) {
     io.stdout.write(`${JSON.stringify(rows.map(stableRow), null, 2)}\n`);
@@ -204,7 +204,7 @@ async function wait(
     {
       threadIds: positionals,
       timeoutMs,
-      ...(env.AGE_AGENT_TOKEN ? { agentToken: env.AGE_AGENT_TOKEN } : {}),
+      ...(env.WOOKY_AGENT_TOKEN ? { agentToken: env.WOOKY_AGENT_TOKEN } : {}),
     },
     timeoutMs + RPC_TIMEOUT_MS,
   );
@@ -226,7 +226,7 @@ async function showResult(
   if (!threadId || positionals.length !== 1) throw new Error("result needs one thread id.");
   const report = await call(env, "agents.result", {
     threadId,
-    ...(env.AGE_AGENT_TOKEN ? { agentToken: env.AGE_AGENT_TOKEN } : {}),
+    ...(env.WOOKY_AGENT_TOKEN ? { agentToken: env.WOOKY_AGENT_TOKEN } : {}),
   });
   if (flags.has("json")) {
     io.stdout.write(`${JSON.stringify(stableResult(report), null, 2)}\n`);
@@ -242,8 +242,8 @@ async function showResult(
 }
 
 function requireParent(env: NodeJS.ProcessEnv): string {
-  const id = env.AGE_THREAD_ID?.trim();
-  if (!id) throw new Error("AGE_THREAD_ID is not set. Run age agents from an AGE turn.");
+  const id = env.WOOKY_THREAD_ID?.trim();
+  if (!id) throw new Error("WOOKY_THREAD_ID is not set. Run wooky agents from a Wooky turn.");
   return id;
 }
 

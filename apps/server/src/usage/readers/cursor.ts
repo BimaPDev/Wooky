@@ -171,10 +171,10 @@ function accountCachePaths(ctx: HistoryReaderContext): string[] {
     seen.add(dir);
     dirs.push(dir);
   };
-  const ageHome = ctx.env["AGE_HOME"]?.trim();
-  if (ageHome && path.isAbsolute(ageHome)) add(ageHome);
+  const wookyHome = ctx.env["WOOKY_HOME"]?.trim();
+  if (wookyHome && path.isAbsolute(wookyHome)) add(wookyHome);
   add(path.join(ctx.homeDir, ".t3", "userdata"));
-  add(path.join(ctx.homeDir, ".age"));
+  add(path.join(ctx.homeDir, ".wooky"));
   return dirs.map((dir) => path.join(dir, ACCOUNT_CACHE_NAME));
 }
 

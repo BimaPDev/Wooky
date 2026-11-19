@@ -236,7 +236,7 @@ describe("effect runner with the demo adapter", () => {
     expect(finished).toMatchObject({
       status: "completed",
       checkpointAfter: `refs/age/checkpoints/${threadId}/${turnId}/after`,
-      changedFiles: ["AGE_DEMO.md"],
+      changedFiles: ["WOOKY_DEMO.md"],
       usage: { inputTokens: "Add a line".length, outputTokens: 12 },
       error: null,
       nativeRef: `demo:${turnId}`,
@@ -246,7 +246,7 @@ describe("effect runner with the demo adapter", () => {
       `capture refs/age/checkpoints/${threadId}/${turnId}/after`,
       `diff refs/age/checkpoints/${threadId}/${turnId}/before refs/age/checkpoints/${threadId}/${turnId}/after`,
     ]);
-    expect(await readFile(join(h.root, "AGE_DEMO.md"), "utf8")).toBe("- Add a line\n");
+    expect(await readFile(join(h.root, "WOOKY_DEMO.md"), "utf8")).toBe("- Add a line\n");
     expect(h.store.model.threads[threadId]).toMatchObject({
       status: "idle",
       providerSessionId: `demo-${threadId}`,
@@ -254,7 +254,9 @@ describe("effect runner with the demo adapter", () => {
     const answer = h.store.model.turns[threadId]?.[0]?.items.find(
       (item) => item.kind === "message",
     );
-    expect(answer).toMatchObject({ text: "Done. I added a line to AGE_DEMO.md and ran echo ok." });
+    expect(answer).toMatchObject({
+      text: "Done. I added a line to WOOKY_DEMO.md and ran echo ok.",
+    });
   });
 
   it("asks for approvals and continues when allowed", async () => {
@@ -289,7 +291,7 @@ describe("effect runner with the demo adapter", () => {
       "edit:done",
       "command:done",
     ]);
-    expect(await readFile(join(h.root, "AGE_DEMO.md"), "utf8")).toBe("- Edit please\n");
+    expect(await readFile(join(h.root, "WOOKY_DEMO.md"), "utf8")).toBe("- Edit please\n");
   });
 
   it("marks denied tools as failed and does not write the file", async () => {
@@ -319,7 +321,7 @@ describe("effect runner with the demo adapter", () => {
         .filter((item) => item.kind === "tool")
         .map((item) => item.kind === "tool" && item.status),
     ).toEqual(["done", "failed", "failed"]);
-    await expect(readFile(join(h.root, "AGE_DEMO.md"), "utf8")).rejects.toThrow(/ENOENT/);
+    await expect(readFile(join(h.root, "WOOKY_DEMO.md"), "utf8")).rejects.toThrow(/ENOENT/);
   });
 
   it("asks only for commands in auto-edits mode", async () => {

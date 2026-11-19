@@ -30,7 +30,7 @@ export interface WorkerHost {
 }
 
 export interface WorkerHostOptions {
-  /** AGE_HOME. The scan cache lives there. */
+  /** WOOKY_HOME. The scan cache lives there. */
   home: string;
   /** User home the readers look under. */
   userHome: string;
@@ -153,7 +153,7 @@ export interface HistoryTimer {
 }
 
 export interface HistoryServiceOptions {
-  /** AGE_HOME: where the scan cache and the rate table live. Tests pass a temp directory. */
+  /** WOOKY_HOME: where the scan cache and the rate table live. Tests pass a temp directory. */
   home: string;
   /** User home the readers look under. Default: the OS home. */
   userHome?: string;

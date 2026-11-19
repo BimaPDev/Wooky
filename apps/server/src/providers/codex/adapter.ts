@@ -335,7 +335,7 @@ async function handleApprovalRequest(
 }
 
 export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapter {
-  const envBin = process.env.AGE_CODEX_BIN?.trim();
+  const envBin = process.env.WOOKY_CODEX_BIN?.trim();
   const configuredBin = options?.codexBin ?? (envBin && envBin.length > 0 ? envBin : "codex");
   const configuredArgs = options?.codexArgs;
 

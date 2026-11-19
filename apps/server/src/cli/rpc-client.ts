@@ -1,5 +1,5 @@
 import {
-  AGE_WS_PATH,
+  WOOKY_WS_PATH,
   RpcMethods,
   type RpcMethod,
   type RpcParams,
@@ -21,7 +21,7 @@ class RpcClientError extends Error {
 function webSocketUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = AGE_WS_PATH;
+  url.pathname = WOOKY_WS_PATH;
   url.search = "";
   url.hash = "";
   return url.toString();

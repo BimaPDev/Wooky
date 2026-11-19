@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "bin": {
-    "age": "./src/bin.ts"
+    "wooky": "./src/bin.ts"
   },
   "scripts": {
-    "dev": "AGE_SKIP_SHELL_ENV=1 tsx watch src/bin.ts",
+    "dev": "WOOKY_SKIP_SHELL_ENV=1 tsx watch src/bin.ts",
     "start": "tsx src/bin.ts",
     "typecheck": "tsc -p tsconfig.json"
   },

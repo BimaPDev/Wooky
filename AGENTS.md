@@ -35,14 +35,14 @@ reviewable. AGE has no model and no account of its own.
 
 ## Layout
 
-| Path                 | Owns                                                                    |
-| -------------------- | ----------------------------------------------------------------------- |
-| `packages/contracts` | zod schemas for the wire and storage. No logic. Imports only `zod`.     |
-| `packages/domain`    | Pure read-model reducer + selectors, shared by server and clients.      |
-| `apps/server`        | WebSocket RPC, orchestrator, event store, adapters, git, the `age` bin. |
-| `apps/web`           | React + Vite UI. Talks to the server only via `/ws`.                    |
-| `apps/desktop`       | Electron shell that starts the server and loads the web UI.             |
-| `scripts`            | Checks and dev runner.                                                  |
+| Path                 | Owns                                                                      |
+| -------------------- | ------------------------------------------------------------------------- |
+| `packages/contracts` | zod schemas for the wire and storage. No logic. Imports only `zod`.       |
+| `packages/domain`    | Pure read-model reducer + selectors, shared by server and clients.        |
+| `apps/server`        | WebSocket RPC, orchestrator, event store, adapters, git, the `wooky` bin. |
+| `apps/web`           | React + Vite UI. Talks to the server only via `/ws`.                      |
+| `apps/desktop`       | Electron shell that starts the server and loads the web UI.               |
+| `scripts`            | Checks and dev runner.                                                    |
 
 ## Architecture in one paragraph
 
@@ -109,7 +109,7 @@ user's quota; do not run them unless the task says so.
 
 ## Never
 
-- Never write to the user's real data directory (`~/.age`) from tests or dev. Dev uses
-  `AGE_HOME=.age-dev`.
+- Never write to the user's real data directory (`~/.wooky`) from tests or dev. Dev uses
+  `WOOKY_HOME=.wooky-dev`.
 - Never commit plans, scratch notes, screenshots or secrets.
 - Never start long-lived background processes you do not stop.

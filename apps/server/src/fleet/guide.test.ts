@@ -90,11 +90,11 @@ describe("fleetGuide", () => {
         models: [{ id: "sonnet", label: "Sonnet" }],
       },
     ]);
-    expect(text).toContain("age agents spawn");
-    expect(text).toContain("age agents wait");
-    expect(text).toContain("age agents result");
-    expect(text).toContain("age agents guide");
-    expect(text).toContain("age agents providers");
+    expect(text).toContain("wooky agents spawn");
+    expect(text).toContain("wooky agents wait");
+    expect(text).toContain("wooky agents result");
+    expect(text).toContain("wooky agents guide");
+    expect(text).toContain("wooky agents providers");
     expect(text).toContain("--provider claude  (Claude)");
     expect(text).toContain("sonnet  (Sonnet)");
     expect(text).toContain(String(FLEET_LIMITS.maxLiveWorkers));

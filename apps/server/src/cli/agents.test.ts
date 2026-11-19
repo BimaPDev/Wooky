@@ -103,16 +103,16 @@ const row = {
   lastActivityAt: "2026-01-01T00:00:00.000Z",
 };
 
-describe("age agents", () => {
-  it("requires AGE_THREAD_ID for spawn and list", async () => {
+describe("wooky agents", () => {
+  it("requires WOOKY_THREAD_ID for spawn and list", async () => {
     const captured = capture();
     const code = await runAgentsCli(
       ["list"],
-      { AGE_SERVER_URL: "http://127.0.0.1:1" },
+      { WOOKY_SERVER_URL: "http://127.0.0.1:1" },
       captured.io,
     );
     expect(code).toBe(1);
-    expect(captured.stderr()).toContain("AGE_THREAD_ID is not set");
+    expect(captured.stderr()).toContain("WOOKY_THREAD_ID is not set");
   });
 
   it("errors when no server is published and the pid in server.json is stale", async () => {
@@ -124,7 +124,7 @@ describe("age agents", () => {
     const captured = capture();
     const code = await runAgentsCli(
       ["list"],
-      { AGE_HOME: home, AGE_THREAD_ID: "parent-1" },
+      { WOOKY_HOME: home, WOOKY_THREAD_ID: "parent-1" },
       captured.io,
     );
     expect(code).toBe(1);
@@ -152,7 +152,7 @@ describe("age agents", () => {
             "the",
             "bug",
           ],
-          { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+          { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
           captured.io,
         );
         expect(code).toBe(0);
@@ -183,7 +183,7 @@ describe("age agents", () => {
         const captured = capture();
         const code = await runAgentsCli(
           ["spawn", "--provider", "claude", "--model", "haiku", "--prompt-file", file],
-          { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+          { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
           captured.io,
         );
         expect(code).toBe(0);
@@ -201,7 +201,7 @@ describe("age agents", () => {
         captured.io.stdin = Readable.from(["from stdin\n"]);
         const code = await runAgentsCli(
           ["spawn", "--provider", "cursor", "--model", "auto", "--prompt-file", "-"],
-          { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+          { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
           captured.io,
         );
         expect(code).toBe(0);
@@ -218,7 +218,7 @@ describe("age agents", () => {
         expect(
           await runAgentsCli(
             ["list"],
-            { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+            { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
             plain.io,
           ),
         ).toBe(0);
@@ -228,7 +228,7 @@ describe("age agents", () => {
         expect(
           await runAgentsCli(
             ["list", "--json"],
-            { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+            { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
             json.io,
           ),
         ).toBe(0);
@@ -247,7 +247,7 @@ describe("age agents", () => {
         const captured = capture();
         const code = await runAgentsCli(
           ["wait", "--timeout", "1", "a", "b"],
-          { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+          { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
           captured.io,
         );
         expect(seen.method).toBe("agents.wait");
@@ -265,7 +265,7 @@ describe("age agents", () => {
         const captured = capture();
         const code = await runAgentsCli(
           ["wait", "a"],
-          { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+          { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
           captured.io,
         );
         expect(code).toBe(0);
@@ -288,7 +288,7 @@ describe("age agents", () => {
         expect(
           await runAgentsCli(
             ["result", "worker-1"],
-            { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+            { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
             plain.io,
           ),
         ).toBe(0);
@@ -298,7 +298,7 @@ describe("age agents", () => {
         expect(
           await runAgentsCli(
             ["result", "worker-1", "--json"],
-            { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+            { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
             json.io,
           ),
         ).toBe(0);
@@ -313,7 +313,7 @@ describe("age agents", () => {
         expect(
           await runAgentsCli(
             ["result", "--json", "worker-1"],
-            { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+            { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
             json.io,
           ),
         ).toBe(0);
@@ -322,7 +322,7 @@ describe("age agents", () => {
     );
   });
 
-  it("uses a live server.json when AGE_SERVER_URL is unset", async () => {
+  it("uses a live server.json when WOOKY_SERVER_URL is unset", async () => {
     const home = await tempDir("age-home");
     await withServer(
       () => [],
@@ -334,7 +334,7 @@ describe("age agents", () => {
         const captured = capture();
         const code = await runAgentsCli(
           ["list", "--json"],
-          { AGE_HOME: home, AGE_THREAD_ID: "parent-1" },
+          { WOOKY_HOME: home, WOOKY_THREAD_ID: "parent-1" },
           captured.io,
         );
         expect(code).toBe(0);
@@ -352,7 +352,7 @@ describe("age agents", () => {
         const captured = capture();
         const code = await runAgentsCli(
           ["result", "worker-1"],
-          { AGE_THREAD_ID: "parent-1", AGE_SERVER_URL: url },
+          { WOOKY_THREAD_ID: "parent-1", WOOKY_SERVER_URL: url },
           captured.io,
         );
         expect(code).toBe(1);
@@ -403,15 +403,15 @@ describe("age agents", () => {
       },
       async (url) => {
         const plain = capture();
-        expect(await runAgentsCli(["providers"], { AGE_SERVER_URL: url }, plain.io)).toBe(0);
+        expect(await runAgentsCli(["providers"], { WOOKY_SERVER_URL: url }, plain.io)).toBe(0);
         expect(plain.stdout()).toBe(
           ["--provider claude  (Claude)", "  sonnet  (Sonnet)", "  haiku", ""].join("\n"),
         );
 
         const json = capture();
-        expect(await runAgentsCli(["providers", "--json"], { AGE_SERVER_URL: url }, json.io)).toBe(
-          0,
-        );
+        expect(
+          await runAgentsCli(["providers", "--json"], { WOOKY_SERVER_URL: url }, json.io),
+        ).toBe(0);
         expect(JSON.parse(json.stdout())).toEqual(usableAgents(providers, ["codex"]));
       },
     );
@@ -438,7 +438,7 @@ describe("age agents", () => {
       },
       async (url) => {
         const captured = capture();
-        expect(await runAgentsCli(["guide"], { AGE_SERVER_URL: url }, captured.io)).toBe(0);
+        expect(await runAgentsCli(["guide"], { WOOKY_SERVER_URL: url }, captured.io)).toBe(0);
         expect(captured.stdout()).toBe(`${fleetGuide(usableAgents(providers))}\n`);
       },
     );

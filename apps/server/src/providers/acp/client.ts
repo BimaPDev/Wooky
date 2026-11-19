@@ -4,9 +4,9 @@ import { parseIncoming, type RpcIdValue } from "./protocol.ts";
 
 const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
 
-/** Prints ACP protocol noise when `AGE_DEBUG=1`. Never includes the child environment. */
+/** Prints ACP protocol noise when `WOOKY_DEBUG=1`. Never includes the child environment. */
 export function acpDebug(message: string): void {
-  if (process.env.AGE_DEBUG === "1") console.info(message);
+  if (process.env.WOOKY_DEBUG === "1") console.info(message);
 }
 const STDERR_CAP_BYTES = 4 * 1024;
 
