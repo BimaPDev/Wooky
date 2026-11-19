@@ -1,7 +1,7 @@
 import type { ProviderKind, RuntimeMode, Thread } from "@age/contracts";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { configureThread } from "../state/actions.ts";
-import { useStore } from "../state/store.ts";
+import { NO_DISABLED_PROVIDERS, useStore } from "../state/store.ts";
 import { IconCheckSmall, IconLock, IconPen, IconSearch, IconShield } from "./Icons.tsx";
 import { useMinuteClock } from "./failover/clock.ts";
 import {
@@ -234,7 +234,9 @@ function PermissionsPanel({ thread }: { thread: Thread }) {
 
 function ProviderModelPanel({ thread }: { thread: Thread }) {
   const providers = useStore((state) => state.providers);
-  const disabledProviders = useStore((state) => state.deviceSettings?.disabledProviders ?? []);
+  const disabledProviders = useStore(
+    (state) => state.deviceSettings?.disabledProviders ?? NO_DISABLED_PROVIDERS,
+  );
   const disabled = useMemo(() => new Set(disabledProviders), [disabledProviders]);
   const cooldowns = useStore((state) => state.model.cooldowns);
   const nowMs = useMinuteClock();

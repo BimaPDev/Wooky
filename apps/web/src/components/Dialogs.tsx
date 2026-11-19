@@ -8,7 +8,7 @@ import {
   sharingThreadsForRevert,
   suggestPaths,
 } from "../state/actions.ts";
-import { useStore, type Dialog } from "../state/store.ts";
+import { NO_DISABLED_PROVIDERS, useStore, type Dialog } from "../state/store.ts";
 import { isAvailable, runtimeModes } from "./labels.ts";
 import { Modal } from "./Modal.tsx";
 
@@ -131,7 +131,9 @@ function ConfirmDialog({ dialog }: { dialog: Extract<Dialog, { kind: "confirm" }
 function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null }) {
   const projects = useStore((state) => state.model.projects);
   const providers = useStore((state) => state.providers);
-  const disabledProviders = useStore((state) => state.deviceSettings?.disabledProviders ?? []);
+  const disabledProviders = useStore(
+    (state) => state.deviceSettings?.disabledProviders ?? NO_DISABLED_PROVIDERS,
+  );
   const disabled = useMemo(() => new Set(disabledProviders), [disabledProviders]);
   const selectedProject = useStore((state) =>
     state.selectedThreadId ? state.model.threads[state.selectedThreadId]?.projectId : undefined,

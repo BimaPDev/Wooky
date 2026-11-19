@@ -1,7 +1,7 @@
 import type { ProviderKind, RuntimeMode } from "@age/contracts";
 import { useMemo, useState } from "react";
 import { closeFanoutDialog, startFanout } from "../../state/actions.ts";
-import { useStore } from "../../state/store.ts";
+import { NO_DISABLED_PROVIDERS, useStore } from "../../state/store.ts";
 import { isAvailable, runtimeModes } from "../labels.ts";
 import { Modal } from "../Modal.tsx";
 import { FANOUT_MAX_TARGETS, FANOUT_MIN_TARGETS, fanoutTargetError } from "./helpers.ts";
@@ -23,7 +23,9 @@ function FanoutDialogBody({
   dialog: { projectId: string; prompt: string; runtimeMode: RuntimeMode };
 }) {
   const providers = useStore((state) => state.providers);
-  const disabledProviders = useStore((state) => state.deviceSettings?.disabledProviders ?? []);
+  const disabledProviders = useStore(
+    (state) => state.deviceSettings?.disabledProviders ?? NO_DISABLED_PROVIDERS,
+  );
   const disabled = useMemo(() => new Set(disabledProviders), [disabledProviders]);
   const available = useMemo(
     () => providers.filter((provider) => isAvailable(provider, disabled)),

@@ -11,7 +11,7 @@ import {
   setPaletteOpen,
   toggleChanges,
 } from "../state/actions.ts";
-import { useStore } from "../state/store.ts";
+import { NO_DISABLED_PROVIDERS, useStore } from "../state/store.ts";
 import { toggleTheme } from "../state/theme.ts";
 import { isAvailable, shortcut } from "./labels.ts";
 import { Modal } from "./Modal.tsx";
@@ -32,7 +32,9 @@ function PaletteDialog() {
   const projects = useStore((state) => state.model.projects);
   const threads = useStore((state) => state.model.threads);
   const providers = useStore((state) => state.providers);
-  const disabledProviders = useStore((state) => state.deviceSettings?.disabledProviders ?? []);
+  const disabledProviders = useStore(
+    (state) => state.deviceSettings?.disabledProviders ?? NO_DISABLED_PROVIDERS,
+  );
   const selected = useStore((state) => state.selectedThreadId);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);

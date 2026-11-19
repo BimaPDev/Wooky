@@ -2,6 +2,7 @@ import type {
   AgeEvent,
   AppearanceTheme,
   DeviceSettings,
+  ProviderKind,
   ProviderStatus,
   ReadModel,
   RuntimeMode,
@@ -185,3 +186,6 @@ function newestThreadId(model: ReadModel): string | null {
     if (!best || thread.updatedAt > best.at) best = { id: thread.id, at: thread.updatedAt };
   return best?.id ?? null;
 }
+
+/** Stable fallback for selectors, so a missing list never yields a new array per read. */
+export const NO_DISABLED_PROVIDERS: readonly ProviderKind[] = [];
