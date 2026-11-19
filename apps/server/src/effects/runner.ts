@@ -11,6 +11,14 @@ import {
   type Worktree,
 } from "@age/contracts";
 import { activeTurn, handoffTranscript, latestPlan } from "@age/domain";
+import {
+  buildWorkerReportEvents,
+  coordinatorFollowUpPrompt,
+  shouldReportWorker,
+  turnSummary,
+  workerAlreadyReported,
+  workerDiffStat,
+} from "../fleet/worker-report.ts";
 import type { GitService } from "../git/types.ts";
 import {
   checkpointRef,
@@ -61,6 +69,7 @@ const RECOVERABLE: ReadonlySet<Effect["kind"]> = new Set([
   "worktree.create",
   "worktree.remove",
   "session.rewind",
+  "thread.merge",
 ]);
 
 /**
@@ -151,6 +160,8 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         return;
       case "session.rewind":
         return rewindSession(effect);
+      case "thread.merge":
+        return runMerge(effect);
     }
   }
 
@@ -610,6 +621,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     }
     const recorded = store.model.turns[threadId]?.find((candidate) => candidate.id === turnId);
     if (recorded?.status === "completed") promoteHead(threadId);
+    await maybeReportWorker(thread, threadId, turnId, status, error);
     if (deviceSettings && dispatch) {
       const committed = store
         .eventsAfter(0)
@@ -629,6 +641,109 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           now: now(),
         }).catch((cause) => console.error("Failover after turn failed", cause));
       }
+    }
+  }
+
+  async function runMerge(effect: Extract<Effect, { kind: "thread.merge" }>): Promise<void> {
+    const at = now();
+    const mergeMerging = store.model.threads[effect.threadId]?.merge;
+    const targetBranch = mergeMerging?.targetBranch;
+    try {
+      const result = await git.mergeWorktree(
+        effect.projectRoot,
+        effect.worktree,
+        effect.strategy,
+        effect.title,
+        effect.message,
+      );
+      const branch = result.ok ? result.targetBranch : (result.targetBranch ?? targetBranch);
+      if (result.ok) {
+        append([
+          {
+            type: "thread.mergeChanged",
+            commandId: null,
+            threadId: effect.threadId,
+            merge: {
+              status: "merged",
+              targetBranch: branch,
+              commit: result.commit,
+              at,
+            },
+          },
+        ]);
+        return;
+      }
+      append([
+        {
+          type: "thread.mergeChanged",
+          commandId: null,
+          threadId: effect.threadId,
+          merge: {
+            status: result.kind === "conflict" ? "conflict" : "failed",
+            targetBranch: branch,
+            message: result.message,
+            at,
+          },
+        },
+      ]);
+    } catch (error) {
+      append([
+        {
+          type: "thread.mergeChanged",
+          commandId: null,
+          threadId: effect.threadId,
+          merge: {
+            status: "failed",
+            targetBranch,
+            message: messageOf(error),
+            at,
+          },
+        },
+      ]);
+    }
+  }
+
+  async function maybeReportWorker(
+    thread: ReadModel["threads"][string],
+    threadId: string,
+    turnId: string,
+    status: FinishStatus,
+    error: string | null,
+  ): Promise<void> {
+    if (!thread || !shouldReportWorker(thread, status)) return;
+    if (workerAlreadyReported(store, threadId, turnId)) return;
+    const parentId = thread.parentThreadId;
+    if (!parentId) return;
+    const project = store.model.projects[thread.projectId];
+    const summary = turnSummary(store.model, threadId, turnId, status, error);
+    const diffStat =
+      thread.worktree && project
+        ? await workerDiffStat(git, project.root, thread.worktree.branch)
+        : undefined;
+    append(
+      buildWorkerReportEvents({
+        coordinatorThreadId: parentId,
+        worker: thread,
+        turnId,
+        summary,
+        diffStat,
+      }),
+    );
+    if (!dispatch) return;
+    const coordinator = store.model.threads[parentId];
+    if (!coordinator) return;
+    const prompt = coordinatorFollowUpPrompt({ worker: thread, turnId, summary, diffStat });
+    const busy = coordinator.status === "running" || coordinator.status === "waiting";
+    try {
+      dispatch({
+        commandId: `worker-report:${threadId}:${turnId}`,
+        type: "turn.start",
+        threadId: parentId,
+        prompt,
+        ...(busy ? { whenBusy: "queue" as const } : {}),
+      });
+    } catch (cause) {
+      console.error("Could not queue a worker report on the coordinator", cause);
     }
   }
 

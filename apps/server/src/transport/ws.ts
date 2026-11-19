@@ -23,6 +23,7 @@ import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
 import { openSignInTerminal } from "../terminal/login.ts";
 import type { TerminalManager } from "../terminal/session.ts";
+import type { FleetService } from "../fleet/service.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
 
@@ -39,6 +40,7 @@ interface Services {
   terminals: TerminalManager;
   limits: LimitsService;
   history: HistoryService;
+  fleet: FleetService;
 }
 
 interface Connection {
@@ -57,7 +59,7 @@ type Handlers = {
 };
 
 function createHandlers(
-  { store, dispatcher, providers, queries, themes, terminals, limits, history }: Services,
+  { store, dispatcher, providers, queries, themes, terminals, limits, history, fleet }: Services,
   notifyThemes: (changedIds: string[]) => void,
   folderPicker: FolderPicker,
   allowRemotePicker: boolean,
@@ -140,17 +142,13 @@ function createHandlers(
     },
     "usage.limits": ({ refresh }) => limits.get({ refresh }),
     "usage.history": (params) => history.get(params),
-    "fleet.overview": unavailable,
-    "git.mergePreview": unavailable,
-    "agents.spawn": unavailable,
-    "agents.list": unavailable,
-    "agents.wait": unavailable,
-    "agents.result": unavailable,
+    "fleet.overview": () => fleet.overview(),
+    "git.mergePreview": (params) => fleet.mergePreview(params),
+    "agents.spawn": (params) => fleet.spawn(params),
+    "agents.list": (params) => fleet.list(params),
+    "agents.wait": (params) => fleet.wait(params),
+    "agents.result": (params) => fleet.result(params),
   };
-}
-
-function unavailable(): never {
-  throw new ServiceError("unavailable", "not implemented");
 }
 
 /** Attaches the RPC WebSocket at AGE_WS_PATH. Returns a function that closes every socket. */

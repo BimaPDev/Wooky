@@ -21,6 +21,7 @@ import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { createProviderRegistry } from "../providers/registry.ts";
 import type { ProviderAdapter, TurnInput } from "../providers/types.ts";
 import { openEventStore, type EventStore } from "../store/event-store.ts";
+import { childrenOf } from "@age/domain";
 import { createFakeGit, tempDir, testContext, waitForEvent } from "../testing.ts";
 import { createEffectRunner, type EffectRunner } from "./runner.ts";
 
@@ -1615,5 +1616,68 @@ describe("failover effect runner", () => {
     const { turnId } = h.startTurn(threadId, "x");
     const finished = await finishedFor(h.store, turnId);
     expect(finished.failure).toEqual(rateLimit);
+  });
+});
+
+describe("fleet worker reports", () => {
+  it("queues a coordinator follow-up once per worker turn", async () => {
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* () {
+          yield {
+            type: "item",
+            item: { kind: "message", id: "m1", role: "assistant", text: "shipped" },
+          };
+          yield { type: "done", status: "completed", error: null };
+        }),
+      ],
+    });
+    const coordId = h.createThread("full");
+    h.dispatch({
+      type: "thread.spawn",
+      parentThreadId: coordId,
+      provider: "demo",
+      model: "demo",
+      prompt: "work",
+    });
+    await h.runner.idle();
+    const workerId = childrenOf(h.store.model, coordId).at(-1)?.id ?? "";
+    expect(workerId).not.toBe("");
+    const turnId = h.store.model.turns[workerId]?.[0]?.id ?? "";
+    await waitForEvent(
+      h.store,
+      "worker.reported",
+      (event) => event.workerThreadId === workerId && event.turnId === turnId,
+    );
+    const dupes = h.store
+      .eventsAfter(0)
+      .filter(
+        (event) =>
+          event.type === "worker.reported" &&
+          event.workerThreadId === workerId &&
+          event.turnId === turnId,
+      );
+    expect(dupes).toHaveLength(1);
+    const coordinator = h.store.model.threads[coordId];
+    const queued = coordinator?.queue.length ?? 0;
+    const started = h.store.model.turns[coordId]?.length ?? 0;
+    expect(queued + started).toBeGreaterThan(0);
+  });
+});
+
+describe("fleet merge effect", () => {
+  it("records merged after the git effect succeeds", async () => {
+    const fake = createFakeGit();
+    const h = await harness({ git: fake.git });
+    const threadId = h.createThread("full", "demo", true);
+    await h.runner.idle();
+    await waitForEvent(h.store, "thread.worktreeBound", (event) => event.threadId === threadId);
+    h.dispatch({ type: "thread.merge", threadId, strategy: "merge" });
+    await waitForEvent(
+      h.store,
+      "thread.mergeChanged",
+      (event) => event.threadId === threadId && event.merge.status === "merged",
+    );
+    expect(h.store.model.threads[threadId]?.merge?.status).toBe("merged");
   });
 });

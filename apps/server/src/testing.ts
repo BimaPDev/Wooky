@@ -89,6 +89,15 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
         deletions: 0,
       }));
     },
+    diffBranchStat: async () => ({ files: 1, additions: 2, deletions: 0 }),
+    mergePreview: async () => ({
+      targetBranch: "main",
+      ahead: 1,
+      behind: 0,
+      files: [{ path: "AGE_DEMO.md", additions: 1, deletions: 0 }],
+      conflicts: [],
+    }),
+    mergeWorktree: async () => ({ ok: true, commit: "deadbeef", targetBranch: "main" }),
   };
   return { git, calls };
 }
