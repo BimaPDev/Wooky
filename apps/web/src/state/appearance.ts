@@ -1,5 +1,6 @@
 import type { AppearanceTheme, DeviceSettings, ThemeColorRoles, ThemesPush } from "@age/contracts";
 import { backend } from "./backend.ts";
+import { LruCache } from "./lru.ts";
 import { useStore } from "./store.ts";
 import { setTheme, syncRootThemeClass } from "./theme.ts";
 import { BASE_PALETTES as BASE, WHITE } from "./theme-data.ts";
@@ -150,7 +151,8 @@ export function resolvePalette(theme: AppearanceTheme, mode: Mode = theme.appear
   return derived;
 }
 
-const stillSvgCache = new Map<string, string>();
+export const STILL_IMAGE_CACHE_LIMIT = 8;
+export const stillImageCache = new LruCache<string | null>(STILL_IMAGE_CACHE_LIMIT);
 
 function decodeBase64Utf8(b64: string): string {
   const binary = atob(b64);
@@ -191,7 +193,7 @@ function freezeSvgWithDomParser(svg: string): string | null {
   return new XMLSerializer().serializeToString(doc);
 }
 
-function freezeSvgFallback(svg: string): string {
+function freezeSvgFallback(svg: string): string | null {
   const withoutSelfClosing = svg.replace(
     /<(animate|animateTransform|animateMotion|set)\b[^>]*\/\s*>/g,
     "",
@@ -207,28 +209,95 @@ function freezeSvgFallback(svg: string): string {
   if (/<svg\b[^>]*\/\s*>/i.test(withoutSmil)) {
     return withoutSmil.replace(/\/\s*>$/, `>${styleTag}</svg>`);
   }
-  return withoutSmil;
+  return null;
+}
+
+function freezeSvgMarkup(svg: string): string | null {
+  const hasDomParser = typeof DOMParser !== "undefined" && typeof XMLSerializer !== "undefined";
+  if (hasDomParser) {
+    try {
+      const parsed = freezeSvgWithDomParser(svg);
+      if (parsed !== null) return parsed;
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    return freezeSvgFallback(svg);
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Strip SMIL animation elements and disable CSS animations/transitions inside
- * a base64 SVG data URL. Memoized per input.
+ * a base64 SVG data URL. Memoized per input. Returns null when the still
+ * cannot be produced — never the animated original.
  */
-export function stillSvgDataUrl(dataUrl: string): string {
+export function stillSvgDataUrl(dataUrl: string): string | null {
   if (!dataUrl.startsWith(SVG_DATA_URL_PREFIX)) return dataUrl;
-  const cached = stillSvgCache.get(dataUrl);
+  const cached = stillImageCache.get(dataUrl);
   if (cached !== undefined) return cached;
 
   try {
     const rawSvg = decodeBase64Utf8(dataUrl.slice(SVG_DATA_URL_PREFIX.length));
-    const hasDomParser = typeof DOMParser !== "undefined" && typeof XMLSerializer !== "undefined";
-    const stillSvg = hasDomParser ? freezeSvgWithDomParser(rawSvg) : freezeSvgFallback(rawSvg);
-    if (stillSvg === null) return dataUrl;
+    const stillSvg = freezeSvgMarkup(rawSvg);
+    if (stillSvg === null) {
+      stillImageCache.set(dataUrl, null);
+      return null;
+    }
     const encoded = `${SVG_DATA_URL_PREFIX}${encodeBase64Utf8(stillSvg)}`;
-    stillSvgCache.set(dataUrl, encoded);
+    stillImageCache.set(dataUrl, encoded);
     return encoded;
   } catch {
-    return dataUrl;
+    stillImageCache.set(dataUrl, null);
+    return null;
+  }
+}
+
+async function blobToPngDataUrl(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `data:image/png;base64,${btoa(binary)}`;
+}
+
+async function rasterToPngDataUrl(bitmap: ImageBitmap): Promise<string | null> {
+  if (typeof OffscreenCanvas !== "undefined") {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return blobToPngDataUrl(blob);
+  }
+  if (typeof document === "undefined") return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(bitmap, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+/** First-frame PNG data URL for an animated raster wallpaper. Memoized; null on failure. */
+export async function stillRasterDataUrl(dataUrl: string): Promise<string | null> {
+  const cached = stillImageCache.get(dataUrl);
+  if (cached !== undefined) return cached;
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const still = await rasterToPngDataUrl(bitmap);
+      stillImageCache.set(dataUrl, still);
+      return still;
+    } finally {
+      bitmap.close();
+    }
+  } catch {
+    stillImageCache.set(dataUrl, null);
+    return null;
   }
 }
 
@@ -366,12 +435,14 @@ function writeStyle(css: string) {
 }
 
 export function applyAppearanceTheme(theme: AppearanceTheme | null) {
-  const settings = useStore.getState().deviceSettings;
-  writeStyle(buildAppearanceCss(theme, interfaceOf(settings)));
-  if (settings && typeof document !== "undefined") {
-    document.documentElement.dataset.chatWidth = settings.chatWidth;
+  const { deviceSettings, previewAppearance } = useStore.getState();
+  if (previewAppearance === null) {
+    writeStyle(buildAppearanceCss(theme, interfaceOf(deviceSettings)));
   }
-  useStore.setState({ activeAppearance: theme, previewAppearance: null });
+  if (deviceSettings && typeof document !== "undefined") {
+    document.documentElement.dataset.chatWidth = deviceSettings.chatWidth;
+  }
+  useStore.setState({ activeAppearance: theme });
 }
 
 function reapply() {
@@ -393,8 +464,11 @@ export async function loadDeviceSettings() {
   }
 }
 
+let themesPushGeneration = 0;
+
 /** Handle server `{ push: "themes", activeThemeId, changedIds }` notifications. */
 export async function handleThemesPush(push: ThemesPush) {
+  const token = ++themesPushGeneration;
   try {
     const prev = useStore.getState();
     const prevActiveId =
@@ -403,6 +477,7 @@ export async function handleThemesPush(push: ThemesPush) {
       backend().call("themes.list", {}),
       backend().call("settings.get", {}),
     ]);
+    if (token !== themesPushGeneration) return;
     useStore.setState({ deviceSettings: settings });
     applyColorMode(settings.colorMode);
     const nextId = settings.activeThemeId || push.activeThemeId || "default";
@@ -416,11 +491,13 @@ export async function handleThemesPush(push: ThemesPush) {
       prev.activeAppearance?.id !== nextId;
     if (activeChanged || push.changedIds.includes(nextId)) {
       const theme = await backend().call("themes.get", { id: nextId });
+      if (token !== themesPushGeneration) return;
       applyAppearanceTheme(theme);
     } else {
       applyAppearanceTheme(prev.activeAppearance);
     }
   } catch (error) {
+    if (token !== themesPushGeneration) return;
     console.error("Wooky: themes push sync failed", error);
   }
 }
@@ -493,14 +570,11 @@ export async function deleteTheme(id: string) {
 export function previewThemeLocally(theme: AppearanceTheme) {
   writeStyle(buildAppearanceCss(theme, interfaceOf(useStore.getState().deviceSettings)));
   useStore.setState({ previewAppearance: theme });
-  if (typeof document !== "undefined") {
-    document.documentElement.dataset.theme = theme.appearance;
-    document.documentElement.classList.toggle("dark", theme.appearance === "dark");
-  }
+  syncRootThemeClass(theme.appearance);
 }
 
 export function restoreSavedTheme() {
-  const mode = useStore.getState().theme;
-  syncRootThemeClass(mode);
+  useStore.setState({ previewAppearance: null });
+  syncRootThemeClass(useStore.getState().theme);
   reapply();
 }

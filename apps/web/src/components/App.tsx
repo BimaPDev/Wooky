@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { dismissNotice, openDialog, setPaletteOpen } from "../state/actions.ts";
 import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
 import { useStore, type Theme } from "../state/store.ts";
+import { syncRootThemeClass } from "../state/theme.ts";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
 import { Dialogs } from "./Dialogs.tsx";
@@ -55,9 +56,7 @@ export function App() {
 
   // sync: document root attribute and dark class drive the CSS theme tokens + WCO vars
   useEffect(() => {
-    if (forcedTheme) document.documentElement.dataset.theme = forcedTheme;
-    else delete document.documentElement.dataset.theme;
-    document.documentElement.classList.toggle("dark", effectiveMode === "dark");
+    syncRootThemeClass(forcedTheme, effectiveMode);
     document.documentElement.classList.toggle("wco", desktopShell);
     document.documentElement.classList.toggle("desktop-darwin", macDesktop);
   }, [forcedTheme, effectiveMode, desktopShell, macDesktop]);
@@ -114,7 +113,7 @@ export function App() {
 
   return (
     <>
-      <Wallpaper mode={effectiveMode} />
+      <Wallpaper />
       <div className={shellClass}>
         {sidebarOpen ? <Sidebar macDesktop={macDesktop} /> : null}
         <div className="workspace">

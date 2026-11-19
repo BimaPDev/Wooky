@@ -11,9 +11,8 @@ export function loadTheme(): Theme | null {
   }
 }
 
-export function syncRootThemeClass(theme: Theme | null) {
+export function syncRootThemeClass(theme: Theme | null, effective: Theme = effectiveTheme(theme)) {
   if (typeof document === "undefined") return;
-  const effective = effectiveTheme(theme);
   if (theme) document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
   document.documentElement.classList.toggle("dark", effective === "dark");
