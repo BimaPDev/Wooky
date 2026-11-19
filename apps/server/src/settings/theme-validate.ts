@@ -1,4 +1,4 @@
-import type { AppearanceTheme as Theme } from "@age/contracts";
+import type { AppearanceTheme as Theme } from "@wooky/contracts";
 import { assertSafeCss } from "./css-safety.ts";
 import { sanitizeThemeCss } from "./theme-css.ts";
 import { assertSafeSvg } from "./wallpapers/scenes.ts";

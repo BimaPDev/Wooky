@@ -48,8 +48,8 @@ describe("claude fleet env", () => {
     setAgentRuntime(null);
   });
 
-  it("appends coordinator instructions and the age environment", async () => {
-    setAgentRuntime({ serverUrl: "http://127.0.0.1:4317", ageBin: "/tmp/age-home/bin/age" });
+  it("appends coordinator instructions and the wooky environment", async () => {
+    setAgentRuntime({ serverUrl: "http://127.0.0.1:4317", wookyBin: "/tmp/wooky-home/bin/wooky" });
     const { fake, calls } = fakeQuery();
     const adapter = createClaudeAdapter({ query: fake });
     await drain(adapter.runTurn(turn()));
@@ -61,15 +61,15 @@ describe("claude fleet env", () => {
         preset: "claude_code",
         append: coordinatorInstructions(),
       });
-      expect(options.env?.AGE_THREAD_ID).toBe("th1");
-      expect(options.env?.AGE_SERVER_URL).toBe("http://127.0.0.1:4317");
-      expect(options.env?.PATH?.startsWith(`/tmp/age-home/bin${delimiter}`)).toBe(true);
+      expect(options.env?.WOOKY_THREAD_ID).toBe("th1");
+      expect(options.env?.WOOKY_SERVER_URL).toBe("http://127.0.0.1:4317");
+      expect(options.env?.PATH?.startsWith(`/tmp/wooky-home/bin${delimiter}`)).toBe(true);
     }
     expect(calls[0]?.prompt).toBe("do it");
   });
 
   it("appends the one-line worker note", async () => {
-    setAgentRuntime({ serverUrl: "http://127.0.0.1:4317", ageBin: "/tmp/age-home/bin/age" });
+    setAgentRuntime({ serverUrl: "http://127.0.0.1:4317", wookyBin: "/tmp/wooky-home/bin/wooky" });
     const { fake, calls } = fakeQuery();
     await drain(createClaudeAdapter({ query: fake }).runTurn(turn({ role: "worker" })));
     const options = calls[0]?.options;

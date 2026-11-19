@@ -65,7 +65,7 @@ async function main() {
   }
   const server = await startServer(config);
   listening.server = server;
-  process.stdout.write(`AGE_LISTENING ${server.url}\n`);
+  process.stdout.write(`WOOKY_LISTENING ${server.url}\n`);
 }
 
 main().catch((error: unknown) => {

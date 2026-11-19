@@ -1,10 +1,11 @@
 import { useStore, type Theme } from "./store.ts";
 
-const KEY = "age.theme";
+const KEY = "wooky.theme";
+const LEGACY_KEY = "age.theme";
 
 export function loadTheme(): Theme | null {
   try {
-    const value = localStorage.getItem(KEY);
+    const value = localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY);
     return value === "dark" || value === "light" ? value : null;
   } catch {
     return null;

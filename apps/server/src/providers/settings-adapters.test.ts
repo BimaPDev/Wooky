@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ProviderEvent, ProviderSettings } from "@age/contracts";
+import type { ProviderEvent, ProviderSettings } from "@wooky/contracts";
 import type { Options, query } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClaudeAdapter } from "./claude/adapter.ts";
@@ -45,7 +45,7 @@ afterEach(async () => {
 
 describe("cursor honours provider settings", () => {
   it("runs the configured binary with extra args before the prompt and the user env", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "age-cursor-settings-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-cursor-settings-"));
     dirs.push(dir);
     const argvFile = join(dir, "argv.json");
     const adapter = createCursorAdapter({
@@ -55,7 +55,7 @@ describe("cursor honours provider settings", () => {
           binaryPath: process.execPath,
           extraArgs: ["--sandbox", "enabled"],
           // The fake agent writes its argv to this file, which proves env reached the child.
-          env: { AGE_FAKE_CURSOR_LOG_ARGV: argvFile },
+          env: { WOOKY_FAKE_CURSOR_LOG_ARGV: argvFile },
         }),
     });
     const events = await collect(adapter.runTurn(input({ prompt: "hello there" })));
@@ -124,14 +124,14 @@ describe("claude honours provider settings", () => {
         settings({
           binaryPath: process.execPath,
           extraArgs: ["--max-turns", "3", "-x"],
-          env: { AGE_TEST_ENV_VALUE: "yes" },
+          env: { WOOKY_TEST_ENV_VALUE: "yes" },
         }),
     });
     await collect(adapter.runTurn(input({ model: "default" })));
     const options = calls[0]?.options as Options;
     expect(options.pathToClaudeCodeExecutable).toBe(process.execPath);
     expect(options.extraArgs).toEqual({ "max-turns": "3" });
-    expect(options.env?.AGE_TEST_ENV_VALUE).toBe("yes");
+    expect(options.env?.WOOKY_TEST_ENV_VALUE).toBe("yes");
     expect(options.env?.PATH).toBe(process.env.PATH);
   });
 

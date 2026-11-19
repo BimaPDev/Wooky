@@ -1,4 +1,4 @@
-import type { FleetStatus } from "@age/contracts";
+import type { FleetStatus } from "@wooky/contracts";
 
 export function FleetStatusMark({ status }: { status: FleetStatus }) {
   switch (status) {

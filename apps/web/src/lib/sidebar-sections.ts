@@ -1,4 +1,4 @@
-import type { Thread } from "@age/contracts";
+import type { Thread } from "@wooky/contracts";
 
 export function isWorkingStatus(status: Thread["status"]): boolean {
   return status === "running" || status === "waiting";

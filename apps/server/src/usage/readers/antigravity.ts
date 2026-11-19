@@ -481,11 +481,11 @@ function antigravityRoots(ctx: HistoryReaderContext): string[] {
     path.join(ctx.homeDir, ".gemini", "antigravity-backup"),
     path.join(ctx.homeDir, ".config", "antigravity"),
     path.join(ctx.homeDir, ".t3", "userdata", "providers", "antigravity"),
-    path.join(ctx.homeDir, ".age", "providers", "antigravity"),
+    path.join(ctx.homeDir, ".wooky", "providers", "antigravity"),
   ];
-  const ageHome = ctx.env["AGE_HOME"]?.trim();
-  if (ageHome && path.isAbsolute(ageHome)) {
-    roots.push(path.join(ageHome, "providers", "antigravity"));
+  const wookyHome = ctx.env["WOOKY_HOME"]?.trim();
+  if (wookyHome && path.isAbsolute(wookyHome)) {
+    roots.push(path.join(wookyHome, "providers", "antigravity"));
   }
   return roots;
 }

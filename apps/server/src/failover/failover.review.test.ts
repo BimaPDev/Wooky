@@ -5,8 +5,8 @@ import {
   type ModelTarget,
   type ProviderStatus,
   type TurnFailure,
-} from "@age/contracts";
-import { emptyReadModel, handoffTranscript, pickFallback } from "@age/domain";
+} from "@wooky/contracts";
+import { emptyReadModel, handoffTranscript, pickFallback } from "@wooky/domain";
 import { cooledDownIfNeeded } from "./cooldown.ts";
 import { buildAvailable } from "./availability.ts";
 import { failoverCommandId, maybeFailoverAfterTurn } from "./policy.ts";

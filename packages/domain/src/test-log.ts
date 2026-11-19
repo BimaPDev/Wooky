@@ -1,4 +1,4 @@
-import type { AgeEvent, PendingEvent, ReadModel, Thread, TimelineItem } from "@age/contracts";
+import type { AgeEvent, PendingEvent, ReadModel, Thread, TimelineItem } from "@wooky/contracts";
 import { applyEvents, emptyReadModel } from "./project.ts";
 
 type Draft = PendingEvent extends infer E

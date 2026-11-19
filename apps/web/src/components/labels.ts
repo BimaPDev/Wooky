@@ -1,4 +1,4 @@
-import type { ProviderKind, ProviderStatus, RuntimeMode } from "@age/contracts";
+import type { ProviderKind, ProviderStatus, RuntimeMode } from "@wooky/contracts";
 
 export const providerLabels: Record<ProviderKind, string> = {
   claude: "Claude Code",

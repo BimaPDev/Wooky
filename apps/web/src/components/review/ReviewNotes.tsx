@@ -1,4 +1,4 @@
-import { FLEET_LIMITS, type ReviewNote } from "@age/contracts";
+import { FLEET_LIMITS, type ReviewNote } from "@wooky/contracts";
 import { useState } from "react";
 import { addReviewNote, removeReviewNote } from "../../state/actions.ts";
 import { IconTrash } from "../Icons.tsx";

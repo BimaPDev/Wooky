@@ -7,8 +7,8 @@ import type {
   ReadModel,
   Thread,
   TurnFailure,
-} from "@age/contracts";
-import { pickFallback } from "@age/domain";
+} from "@wooky/contracts";
+import { pickFallback } from "@wooky/domain";
 import type { LimitsService } from "../usage/limits.ts";
 import type { EventStore } from "../store/event-store.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";

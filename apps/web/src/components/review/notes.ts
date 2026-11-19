@@ -1,4 +1,4 @@
-import type { ReviewNote, ReviewSide, ThreadStatus } from "@age/contracts";
+import type { ReviewNote, ReviewSide, ThreadStatus } from "@wooky/contracts";
 import type { DiffLine } from "../../lib/diff.ts";
 
 /** Where a note sits: one line of one file, on the old or the new side of the diff. */

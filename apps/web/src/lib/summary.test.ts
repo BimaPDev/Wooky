@@ -1,4 +1,4 @@
-import type { TimelineItem } from "@age/contracts";
+import type { TimelineItem } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { formatDuration, summarizeTurn } from "./summary.ts";
 

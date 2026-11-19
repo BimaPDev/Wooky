@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DeviceSettings, ProviderStatus } from "@age/contracts";
+import type { DeviceSettings, ProviderStatus } from "@wooky/contracts";
 import {
   AGENT_PRESETS,
   agentFromPreset,

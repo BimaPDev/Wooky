@@ -2,7 +2,7 @@ import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { AGE_WS_PATH, RpcPush, ThemesPush } from "@age/contracts";
+import { WOOKY_WS_PATH, RpcPush, ThemesPush } from "@wooky/contracts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer } from "../server.ts";
 import { tempDir } from "../testing.ts";
@@ -26,7 +26,7 @@ describe("themes push", () => {
     });
     servers.push(server);
 
-    const socket = new WebSocket(`${server.url.replace("http", "ws")}${AGE_WS_PATH}`);
+    const socket = new WebSocket(`${server.url.replace("http", "ws")}${WOOKY_WS_PATH}`);
     sockets.push(socket);
     const pushes: ThemesPush[] = [];
     const waiters: ((push: ThemesPush) => void)[] = [];
@@ -79,7 +79,7 @@ describe("themes push", () => {
       adapters: [createDemoAdapter({ stepMs: 0 })],
     });
     servers.push(server);
-    const socket = new WebSocket(`${server.url.replace("http", "ws")}${AGE_WS_PATH}`);
+    const socket = new WebSocket(`${server.url.replace("http", "ws")}${WOOKY_WS_PATH}`);
     sockets.push(socket);
     const got = new Promise<ThemesPush>((resolve) => {
       socket.on("message", (data) => {
@@ -106,7 +106,7 @@ describe("themes push", () => {
     });
     servers.push(server);
 
-    const socket = new WebSocket(`${server.url.replace("http", "ws")}${AGE_WS_PATH}`);
+    const socket = new WebSocket(`${server.url.replace("http", "ws")}${WOOKY_WS_PATH}`);
     sockets.push(socket);
     const pushes: ThemesPush[] = [];
     const seen = new Set<string>();

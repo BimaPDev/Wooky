@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHistoryService, createWorkerHost } from "./history.ts";
 import type { PricingService } from "./pricing.ts";
-import type { Origin } from "@age/contracts";
+import type { Origin } from "@wooky/contracts";
 
 const NOW = Date.UTC(2026, 10, 18, 12, 0, 0);
 const HOUR = 3_600_000;
@@ -106,16 +106,16 @@ function sumChannels(
 }
 
 let userHome: string;
-let ageHome: string;
+let wookyHome: string;
 
 beforeEach(async () => {
-  userHome = await mkdtemp(join(tmpdir(), "age-readers-int-user-"));
-  ageHome = await mkdtemp(join(tmpdir(), "age-readers-int-home-"));
+  userHome = await mkdtemp(join(tmpdir(), "wooky-readers-int-user-"));
+  wookyHome = await mkdtemp(join(tmpdir(), "wooky-readers-int-home-"));
 });
 
 afterEach(async () => {
   await rm(userHome, { recursive: true, force: true });
-  await rm(ageHome, { recursive: true, force: true });
+  await rm(wookyHome, { recursive: true, force: true });
 });
 
 async function touch(file: string, mtimeMs: number) {
@@ -251,9 +251,9 @@ async function seedAllFixtures() {
 describe("usage history readers integration", () => {
   it("scans all four origins through the worker without leaking planted secrets", async () => {
     await seedAllFixtures();
-    const host = createWorkerHost({ home: ageHome, userHome });
+    const host = createWorkerHost({ home: wookyHome, userHome });
     const service = createHistoryService({
-      home: ageHome,
+      home: wookyHome,
       userHome,
       now: () => NOW,
       pricing: pricing(),

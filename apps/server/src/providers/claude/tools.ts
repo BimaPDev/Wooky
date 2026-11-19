@@ -1,5 +1,5 @@
 import { workspaceRelative as relPath } from "../paths.ts";
-import type { ToolKind } from "@age/contracts";
+import type { ToolKind } from "@wooky/contracts";
 import { clip, firstLine } from "./text.ts";
 
 const KINDS = new Map<string, ToolKind>([

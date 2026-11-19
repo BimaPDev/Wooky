@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ProviderEvent } from "@age/contracts";
+import type { ProviderEvent } from "@wooky/contracts";
 import { createCursorAdapter, CURSOR_FAKE_AGENT_SCRIPT } from "./adapter.ts";
 // @ts-expect-error test fixture is plain ESM without types
 import { FAKE_CURSOR_AGENT_VERSION } from "./fixtures/fake-cursor-agent.mjs";
@@ -35,11 +35,11 @@ function baseInput(overrides: Record<string, unknown> = {}) {
 }
 
 const FAKE_ENV_KEYS = [
-  "AGE_FAKE_CURSOR_MODE",
-  "AGE_FAKE_CURSOR_PID_FILE",
-  "AGE_FAKE_CURSOR_LOG_ARGV",
-  "AGE_FAKE_CURSOR_FIXTURE",
-  "AGE_FAKE_CURSOR_AUTH",
+  "WOOKY_FAKE_CURSOR_MODE",
+  "WOOKY_FAKE_CURSOR_PID_FILE",
+  "WOOKY_FAKE_CURSOR_LOG_ARGV",
+  "WOOKY_FAKE_CURSOR_FIXTURE",
+  "WOOKY_FAKE_CURSOR_AUTH",
 ] as const;
 
 describe("createCursorAdapter e2e", () => {
@@ -61,8 +61,8 @@ describe("createCursorAdapter e2e", () => {
   });
 
   it("emits failed with stderr tail on crash", async () => {
-    const prev = process.env.AGE_FAKE_CURSOR_MODE;
-    process.env.AGE_FAKE_CURSOR_MODE = "crash";
+    const prev = process.env.WOOKY_FAKE_CURSOR_MODE;
+    process.env.WOOKY_FAKE_CURSOR_MODE = "crash";
     try {
       const adapter = createCursorAdapter({
         cursorBin: process.execPath,
@@ -74,8 +74,8 @@ describe("createCursorAdapter e2e", () => {
       expect(done?.error).toContain("simulated crash");
       expect(done).not.toHaveProperty("failure");
     } finally {
-      if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
-      else process.env.AGE_FAKE_CURSOR_MODE = prev;
+      if (prev === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
+      else process.env.WOOKY_FAKE_CURSOR_MODE = prev;
     }
   });
 
@@ -101,12 +101,12 @@ describe("createCursorAdapter e2e", () => {
   }
 
   it("interrupts a hanging turn and kills the fake process group", async () => {
-    const work = await mkdtemp(join(tmpdir(), "age-cursor-abort-"));
+    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-abort-"));
     const pidFile = join(work, "pid");
-    const prevMode = process.env.AGE_FAKE_CURSOR_MODE;
-    const prevPid = process.env.AGE_FAKE_CURSOR_PID_FILE;
-    process.env.AGE_FAKE_CURSOR_MODE = "hang";
-    process.env.AGE_FAKE_CURSOR_PID_FILE = pidFile;
+    const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
+    const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+    process.env.WOOKY_FAKE_CURSOR_MODE = "hang";
+    process.env.WOOKY_FAKE_CURSOR_PID_FILE = pidFile;
 
     const ac = new AbortController();
     const adapter = createCursorAdapter({
@@ -131,10 +131,10 @@ describe("createCursorAdapter e2e", () => {
     try {
       await rm(work, { recursive: true, force: true });
     } finally {
-      if (prevMode === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
-      else process.env.AGE_FAKE_CURSOR_MODE = prevMode;
-      if (prevPid === undefined) delete process.env.AGE_FAKE_CURSOR_PID_FILE;
-      else process.env.AGE_FAKE_CURSOR_PID_FILE = prevPid;
+      if (prevMode === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
+      else process.env.WOOKY_FAKE_CURSOR_MODE = prevMode;
+      if (prevPid === undefined) delete process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+      else process.env.WOOKY_FAKE_CURSOR_PID_FILE = prevPid;
     }
   });
 
@@ -152,7 +152,7 @@ describe("createCursorAdapter e2e", () => {
   });
 
   it("attaches quota failure on a usage-limit result stream", async () => {
-    process.env.AGE_FAKE_CURSOR_FIXTURE = join(dirname(fakeBin), "usage-limit.ndjson");
+    process.env.WOOKY_FAKE_CURSOR_FIXTURE = join(dirname(fakeBin), "usage-limit.ndjson");
     const adapter = createCursorAdapter({
       cursorBin: process.execPath,
       cursorArgsPrefix: [fakeBin],
@@ -168,8 +168,8 @@ describe("createCursorAdapter e2e", () => {
   });
 
   it("emits exactly one failed done for a stdout null line", async () => {
-    const prev = process.env.AGE_FAKE_CURSOR_MODE;
-    process.env.AGE_FAKE_CURSOR_MODE = "null-line";
+    const prev = process.env.WOOKY_FAKE_CURSOR_MODE;
+    process.env.WOOKY_FAKE_CURSOR_MODE = "null-line";
     try {
       const adapter = createCursorAdapter({
         cursorBin: process.execPath,
@@ -180,18 +180,18 @@ describe("createCursorAdapter e2e", () => {
       expect(dones).toHaveLength(1);
       expect(dones[0]?.status).toBe("completed");
     } finally {
-      if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
-      else process.env.AGE_FAKE_CURSOR_MODE = prev;
+      if (prev === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
+      else process.env.WOOKY_FAKE_CURSOR_MODE = prev;
     }
   });
 
   it("finishes with failed when the child dies on a signal", async () => {
-    const work = await mkdtemp(join(tmpdir(), "age-cursor-signal-"));
+    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-signal-"));
     const pidFile = join(work, "pid");
-    const prevMode = process.env.AGE_FAKE_CURSOR_MODE;
-    const prevPid = process.env.AGE_FAKE_CURSOR_PID_FILE;
-    process.env.AGE_FAKE_CURSOR_MODE = "hang";
-    process.env.AGE_FAKE_CURSOR_PID_FILE = pidFile;
+    const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
+    const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+    process.env.WOOKY_FAKE_CURSOR_MODE = "hang";
+    process.env.WOOKY_FAKE_CURSOR_PID_FILE = pidFile;
 
     const adapter = createCursorAdapter({
       cursorBin: process.execPath,
@@ -214,16 +214,16 @@ describe("createCursorAdapter e2e", () => {
     expect(done?.error).toMatch(/SIGKILL/);
 
     await rm(work, { recursive: true, force: true });
-    if (prevMode === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
-    else process.env.AGE_FAKE_CURSOR_MODE = prevMode;
-    if (prevPid === undefined) delete process.env.AGE_FAKE_CURSOR_PID_FILE;
-    else process.env.AGE_FAKE_CURSOR_PID_FILE = prevPid;
+    if (prevMode === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
+    else process.env.WOOKY_FAKE_CURSOR_MODE = prevMode;
+    if (prevPid === undefined) delete process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+    else process.env.WOOKY_FAKE_CURSOR_PID_FILE = prevPid;
   });
 
   it("passes --force only in full runtime mode", async () => {
-    const argvFile = join(await mkdtemp(join(tmpdir(), "age-cursor-argv-")), "argv.json");
-    const prev = process.env.AGE_FAKE_CURSOR_LOG_ARGV;
-    process.env.AGE_FAKE_CURSOR_LOG_ARGV = argvFile;
+    const argvFile = join(await mkdtemp(join(tmpdir(), "wooky-cursor-argv-")), "argv.json");
+    const prev = process.env.WOOKY_FAKE_CURSOR_LOG_ARGV;
+    process.env.WOOKY_FAKE_CURSOR_LOG_ARGV = argvFile;
     const adapter = createCursorAdapter({
       cursorBin: process.execPath,
       cursorArgsPrefix: [fakeBin],
@@ -237,16 +237,16 @@ describe("createCursorAdapter e2e", () => {
     const argvApprove: string[] = JSON.parse(await readFile(argvFile, "utf8"));
     expect(argvApprove).not.toContain("--force");
 
-    if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_LOG_ARGV;
-    else process.env.AGE_FAKE_CURSOR_LOG_ARGV = prev;
+    if (prev === undefined) delete process.env.WOOKY_FAKE_CURSOR_LOG_ARGV;
+    else process.env.WOOKY_FAKE_CURSOR_LOG_ARGV = prev;
     await rm(dirname(argvFile), { recursive: true, force: true });
   });
 
   it("passes --resume when resumeSessionId is set", async () => {
-    const work = await mkdtemp(join(tmpdir(), "age-cursor-resume-"));
+    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-resume-"));
     const argvFile = join(work, "argv.json");
-    const prev = process.env.AGE_FAKE_CURSOR_LOG_ARGV;
-    process.env.AGE_FAKE_CURSOR_LOG_ARGV = argvFile;
+    const prev = process.env.WOOKY_FAKE_CURSOR_LOG_ARGV;
+    process.env.WOOKY_FAKE_CURSOR_LOG_ARGV = argvFile;
 
     const adapter = createCursorAdapter({
       cursorBin: process.execPath,
@@ -259,8 +259,8 @@ describe("createCursorAdapter e2e", () => {
     expect(argv).toContain("--resume");
     expect(argv).toContain("sess-prev");
 
-    if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_LOG_ARGV;
-    else process.env.AGE_FAKE_CURSOR_LOG_ARGV = prev;
+    if (prev === undefined) delete process.env.WOOKY_FAKE_CURSOR_LOG_ARGV;
+    else process.env.WOOKY_FAKE_CURSOR_LOG_ARGV = prev;
     await rm(work, { recursive: true, force: true });
   });
 

@@ -1,4 +1,4 @@
-import type { TimelineItem, UserQuestion } from "@age/contracts";
+import type { TimelineItem, UserQuestion } from "@wooky/contracts";
 import { memo, useState } from "react";
 import {
   buildQuestionAnswers,

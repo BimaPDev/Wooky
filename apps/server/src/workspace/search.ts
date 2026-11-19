@@ -1,4 +1,4 @@
-import type { ReadModel, WorkspaceEntry } from "@age/contracts";
+import type { ReadModel, WorkspaceEntry } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 
 const DEFAULT_LIMIT = 50;

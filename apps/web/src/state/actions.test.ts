@@ -1,5 +1,5 @@
-import type { AgeEvent, RpcMethod, RpcParams, RpcResult, Thread } from "@age/contracts";
-import { emptyReadModel } from "@age/domain";
+import type { AgeEvent, RpcMethod, RpcParams, RpcResult, Thread } from "@wooky/contracts";
+import { emptyReadModel } from "@wooky/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setBackend } from "./backend.ts";
 import {
@@ -109,8 +109,8 @@ function installBridge(pickFolder: (() => Promise<string | null>) | null) {
     delete (globalThis as { window?: unknown }).window;
     return;
   }
-  (globalThis as unknown as { window: { age: AgeShell } }).window = {
-    age: {
+  (globalThis as unknown as { window: { wooky: WookyShell } }).window = {
+    wooky: {
       platform: "darwin",
       versions: { electron: "0", chrome: "0", node: "24" },
       pickFolder,

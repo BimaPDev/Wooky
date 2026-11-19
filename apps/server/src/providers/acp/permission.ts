@@ -1,4 +1,4 @@
-import type { ApprovalRequest, InteractionMode, RuntimeMode, ToolKind } from "@age/contracts";
+import type { ApprovalRequest, InteractionMode, RuntimeMode, ToolKind } from "@wooky/contracts";
 import { z } from "zod";
 import { fitId, previewValue, truncateBytes, truncateTitle } from "./text.ts";
 

@@ -1,4 +1,4 @@
-import type { UserQuestion } from "@age/contracts";
+import type { UserQuestion } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { buildQuestionAnswers, labelsForQuestion, questionSummary } from "./question-answers.ts";
 

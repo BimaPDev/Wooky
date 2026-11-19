@@ -74,7 +74,7 @@ describe("theme variants", () => {
     });
   });
 
-  it("does not parse a t3code theme as an AGE theme", () => {
+  it("does not parse a t3code theme as an Wooky theme", () => {
     const t3code = {
       version: 1,
       id: "paper",

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, stat as statFile, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { Origin } from "@age/contracts";
+import type { Origin } from "@wooky/contracts";
 import type {
   HistoryFs,
   HistoryRecord,

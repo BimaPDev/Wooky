@@ -1,4 +1,4 @@
-import type { ReviewNote } from "@age/contracts";
+import type { ReviewNote } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import type { DiffLine } from "../../lib/diff.ts";
 import {

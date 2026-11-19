@@ -267,7 +267,7 @@ export async function hydrateLoginShellPath(
   const env = options.env ?? process.env;
   const log = options.log ?? ((line: string) => console.error(line));
 
-  if (platform === "win32" || env.AGE_SKIP_SHELL_ENV === "1") {
+  if (platform === "win32" || env.WOOKY_SKIP_SHELL_ENV === "1") {
     return { source: "skipped", added: [] };
   }
 

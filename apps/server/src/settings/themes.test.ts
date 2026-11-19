@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { AppearanceTheme, type AppearanceTheme as Theme } from "@age/contracts";
+import { AppearanceTheme, type AppearanceTheme as Theme } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import { tempDir } from "../testing.ts";
 import { toDataUrl } from "./wallpapers/scenes.ts";

@@ -2,7 +2,7 @@
 
 export const PANE_MIN_PX = 320;
 export const PANE_MAX = 4;
-export const PANE_STORAGE_KEY = "age.panes";
+export const PANE_STORAGE_KEY = "wooky.panes";
 export const PANE_NUDGE_PX = 16;
 export const PANE_NUDGE_LARGE_PX = 64;
 
@@ -228,7 +228,7 @@ export function writePanes(layout: PaneLayout | null): string | null {
 /** Per-window memory: localStorage can be missing, blocked or full. */
 export function loadPanes(): PaneLayout | null {
   try {
-    return readPanes(localStorage.getItem(PANE_STORAGE_KEY));
+    return readPanes(localStorage.getItem(PANE_STORAGE_KEY) ?? localStorage.getItem("age.panes"));
   } catch {
     return null;
   }

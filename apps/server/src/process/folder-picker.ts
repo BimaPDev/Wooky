@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { stat as statPath } from "node:fs/promises";
 import { posix, win32 } from "node:path";
-import { PICK_FOLDER_TIMEOUT_MS } from "@age/contracts";
+import { PICK_FOLDER_TIMEOUT_MS } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 
 const MAX_OUTPUT_BYTES = 64 * 1024;

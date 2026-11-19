@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgeEvent, ReadModel } from "@age/contracts";
+import { AgeEvent, ReadModel } from "@wooky/contracts";
 import { legacyLog, legacyReadModel } from "./legacy-log.fixture.ts";
 import { applyEvents, emptyReadModel } from "./project.ts";
 import {

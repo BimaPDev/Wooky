@@ -6,9 +6,9 @@ import type {
   ReadModel,
   Thread,
   ThreadGroup,
-} from "@age/contracts";
-import { FLEET_LIMITS } from "@age/contracts";
-import { fleetRows } from "@age/domain";
+} from "@wooky/contracts";
+import { FLEET_LIMITS } from "@wooky/contracts";
+import { fleetRows } from "@wooky/domain";
 import { fuzzyFilter } from "../../lib/fuzzy.ts";
 
 export const FANOUT_MIN_TARGETS = 2;

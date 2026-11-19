@@ -1,4 +1,4 @@
-import type { UsageHistoryBucket, UsageHistorySource } from "@age/contracts";
+import type { UsageHistoryBucket, UsageHistorySource } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { buildUsageDashboardStats } from "./usage-stats.ts";
 

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DeviceSettings, type ProviderEvent } from "@age/contracts";
+import { DeviceSettings, type ProviderEvent } from "@wooky/contracts";
 import { ACP_FAKE_AGENT_SCRIPT } from "../acp/adapter.ts";
 import type { TurnInput } from "../types.ts";
 import { createOpenCodeAdapter, resetOpenCodeModelsCache } from "./adapter.ts";
@@ -37,24 +37,24 @@ describe("OpenCode adapter", () => {
 
   afterEach(async () => {
     resetOpenCodeModelsCache();
-    delete process.env.AGE_FAKE_ACP_LOG;
-    delete process.env.AGE_FAKE_ACP_SCENARIO;
-    delete process.env.AGE_FAKE_ACP_ENV_FILE;
+    delete process.env.WOOKY_FAKE_ACP_LOG;
+    delete process.env.WOOKY_FAKE_ACP_SCENARIO;
+    delete process.env.WOOKY_FAKE_ACP_ENV_FILE;
     if (home) await rm(home, { recursive: true, force: true });
     home = "";
   });
 
   it("selects the model with session/set_config_option and appends extra args", async () => {
-    home = await mkdtemp(join(tmpdir(), "age-opencode-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-opencode-"));
     const log = join(home, "log");
-    process.env.AGE_FAKE_ACP_LOG = log;
+    process.env.WOOKY_FAKE_ACP_LOG = log;
     const adapter = createOpenCodeAdapter({
       bin: process.execPath,
       argsPrefix: [ACP_FAKE_AGENT_SCRIPT],
       settings: () =>
         DeviceSettings.parse({
           providers: {
-            opencode: { extraArgs: ["--pure"], env: { AGE_TEST_ENV_MARKER: "secret" } },
+            opencode: { extraArgs: ["--pure"], env: { WOOKY_TEST_ENV_MARKER: "secret" } },
           },
         }),
     });
@@ -72,9 +72,9 @@ describe("OpenCode adapter", () => {
   });
 
   it("sets OPENCODE_PERMISSION from the runtime mode over a settings value", async () => {
-    home = await mkdtemp(join(tmpdir(), "age-opencode-perm-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-opencode-perm-"));
     const envFile = join(home, "env.json");
-    process.env.AGE_FAKE_ACP_ENV_FILE = envFile;
+    process.env.WOOKY_FAKE_ACP_ENV_FILE = envFile;
     const adapter = createOpenCodeAdapter({
       bin: process.execPath,
       argsPrefix: [ACP_FAKE_AGENT_SCRIPT],
@@ -98,7 +98,7 @@ describe("OpenCode adapter", () => {
 
   it("reports a missing binary without spawning a shell", async () => {
     const status = await createOpenCodeAdapter({
-      bin: "age-missing-opencode",
+      bin: "wooky-missing-opencode",
       settings: () =>
         DeviceSettings.parse({ providers: { opencode: { customModels: ["local/one"] } } }),
     }).probe();

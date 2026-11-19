@@ -9,7 +9,7 @@ import type {
   Thread,
   TimelineItem,
   Turn,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 type ItemOf<K extends TimelineItem["kind"]> = Extract<TimelineItem, { kind: K }>;
 

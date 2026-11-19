@@ -1,7 +1,7 @@
 import { open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { DiffStat, MergePreview, MergeStrategy, Worktree } from "@age/contracts";
+import type { DiffStat, MergePreview, MergeStrategy, Worktree } from "@wooky/contracts";
 import type { MergeWorktreeResult } from "./types.ts";
 
 type Run = (
@@ -18,16 +18,18 @@ interface MergeOpsDeps {
   commitWorktree?: (worktree: Worktree, message: string) => Promise<void>;
 }
 
-const AGE_IDENTITY = {
+const WOOKY_IDENTITY = {
   GIT_AUTHOR_NAME: "Wooky",
-  GIT_AUTHOR_EMAIL: "age@localhost",
+  GIT_AUTHOR_EMAIL: "wooky@localhost",
   GIT_COMMITTER_NAME: "Wooky",
-  GIT_COMMITTER_EMAIL: "age@localhost",
+  GIT_COMMITTER_EMAIL: "wooky@localhost",
 } as const;
 
-const AGE_BRANCH = /^age\/[\w./-]+$/;
-const MARKER_FILE = "age-merge-in-progress";
-const LOCK_FILE = "age-merge.lock";
+/** New worktrees use wooky/<id>. age/<id> remains valid so stored threads can still merge. */
+const WOOKY_BRANCH = /^(?:wooky|age)\/[\w./-]+$/;
+const MARKER_FILE = "wooky-merge-in-progress";
+const LEGACY_MARKER_FILE = "age-merge-in-progress";
+const LOCK_FILE = "wooky-merge.lock";
 const UNPARSABLE_LOCK_STALE_MS = 60_000;
 const MID_MERGE = "Project is mid-merge; run git merge --abort";
 const MID_SQUASH = "Project has a half-applied squash merge; run git reset --merge";
@@ -37,7 +39,7 @@ const heldLocks = new Set<string>();
 
 function isAgeBranch(branch: string): boolean {
   return (
-    AGE_BRANCH.test(branch) &&
+    WOOKY_BRANCH.test(branch) &&
     !branch.includes("..") &&
     !branch.includes("//") &&
     !branch.endsWith("/") &&
@@ -226,9 +228,24 @@ export function createMergeOps(deps: MergeOpsDeps) {
     return "unreadable";
   }
 
+  function markerPaths(dir: string): string[] {
+    return [join(dir, MARKER_FILE), join(dir, LEGACY_MARKER_FILE)];
+  }
+
+  /** The marker this process wrote, or one left by a build that still used the age filename. */
+  async function findMarker(
+    dir: string,
+  ): Promise<{ path: string; marker: Marker | "unreadable" } | null> {
+    for (const path of markerPaths(dir)) {
+      const marker = await readMarker(path);
+      if (marker !== null) return { path, marker };
+    }
+    return null;
+  }
+
   /**
-   * Put the root back in the state it had before an AGE merge began. Only ever acts on state
-   * AGE created (the marker proves it); a mid-merge root without the marker is the user's.
+   * Put the root back in the state it had before an Wooky merge began. Only ever acts on state
+   * Wooky created (the marker proves it); a mid-merge root without the marker is the user's.
    * `reset --merge` keeps working-tree edits that differ from the index, so a user's own
    * unrelated edit survives; when it cannot proceed we say so rather than force it.
    */
@@ -236,8 +253,10 @@ export function createMergeOps(deps: MergeOpsDeps) {
     top: string,
     dir: string,
   ): Promise<{ ok: true } | { ok: false; message: string }> {
-    const markerPath = join(dir, MARKER_FILE);
-    const marker = await readMarker(markerPath);
+    const found = await findMarker(dir);
+    const marker = found?.marker ?? null;
+    const markerName =
+      found?.path.endsWith(LEGACY_MARKER_FILE) === true ? LEGACY_MARKER_FILE : MARKER_FILE;
     const mergeHead = await hasMergeHead(top);
     if (marker === null) {
       return mergeHead ? { ok: false, message: MID_MERGE } : { ok: true };
@@ -245,7 +264,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
     if (marker === "unreadable") {
       return {
         ok: false,
-        message: mergeHead ? MID_MERGE : `${MID_MERGE} (unreadable ${MARKER_FILE})`,
+        message: mergeHead ? MID_MERGE : `${MID_MERGE} (unreadable ${markerName})`,
       };
     }
     if (mergeHead) {
@@ -261,7 +280,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
     if ((await hasMergeHead(top)) || (await conflictPaths(top)).length > 0) {
       return { ok: false, message: MID_MERGE };
     }
-    await rm(markerPath, { force: true });
+    await Promise.all(markerPaths(dir).map((path) => rm(path, { force: true })));
     return { ok: true };
   }
 
@@ -274,7 +293,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
     return { ok: false, message: detail ? `${MID_SQUASH}. ${detail}` : MID_SQUASH };
   }
 
-  /** After a failed git step: abort or unstage what AGE started, then drop the marker only if the root is clean. */
+  /** After a failed git step: abort or unstage what Wooky started, then drop the marker only if the root is clean. */
   async function rollback(
     top: string,
     dir: string,
@@ -295,7 +314,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
       const undone = await undoSquash(top);
       if (!undone.ok) return undone;
     }
-    await rm(join(dir, MARKER_FILE), { force: true });
+    await Promise.all(markerPaths(dir).map((path) => rm(path, { force: true })));
     return { ok: true };
   }
 
@@ -432,7 +451,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
       }
       try {
         if (deps.commitWorktree && title) {
-          await deps.commitWorktree(worktree, `AGE: ${title}`);
+          await deps.commitWorktree(worktree, `Wooky: ${title}`);
         }
         return await mergeLocked(top, worktree.branch, strategy, title, message);
       } finally {
@@ -534,7 +553,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
       }
       const commit = await run(["commit", "-m", commitMessage], {
         cwd: top,
-        env: baseEnv(AGE_IDENTITY),
+        env: baseEnv(WOOKY_IDENTITY),
         allowFail: true,
       });
       if (commit.code !== 0) {

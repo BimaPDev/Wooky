@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { childrenOf } from "@age/domain";
+import { childrenOf } from "@wooky/domain";
 import { createEffectRunner } from "../effects/runner.ts";
 import { createGitService } from "../git/service.ts";
 import { cleanupTestRepos, makeRepo } from "../git/test-repo.ts";
@@ -86,7 +86,7 @@ describe("fleet journey", () => {
     const mergeTarget = childrenOf(store.model, coordId)[0]?.id ?? "";
     const worktree = await realGit.createWorktree(root, mergeTarget);
     await writeFile(join(worktree.path, "fleet-land.txt"), "landed\n");
-    await realGit.commitWorktreeChanges(root, worktree, `AGE: ${mergeTarget}`);
+    await realGit.commitWorktreeChanges(root, worktree, `Wooky: ${mergeTarget}`);
     const merged = await realGit.mergeWorktree(root, worktree, "squash", mergeTarget, "Fleet land");
     expect(merged.ok).toBe(true);
     if (!merged.ok) throw new Error("expected merge");

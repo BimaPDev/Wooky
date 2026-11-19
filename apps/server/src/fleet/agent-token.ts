@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { ReadModel } from "@age/contracts";
+import type { ReadModel } from "@wooky/contracts";
 
 const TOKEN_BYTES = 32;
 

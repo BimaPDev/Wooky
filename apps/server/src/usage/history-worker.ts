@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { isMainThread, parentPort, workerData } from "node:worker_threads";
-import type { Origin, UsageHistoryBucket, UsageWindowDays } from "@age/contracts";
+import type { Origin, UsageHistoryBucket, UsageWindowDays } from "@wooky/contracts";
 import { aggregate, dedupeRecords } from "./aggregate.ts";
 import {
   type CacheData,
@@ -67,7 +67,7 @@ export interface AggregateResponse {
 }
 
 export interface WorkerInit {
-  ageUsageHistory: true;
+  wookyUsageHistory: true;
   homeDir: string;
   cachePath: string;
   /** File URL of a module exporting `HISTORY_READERS`. Tests only. Default: the registry. */
@@ -343,4 +343,4 @@ async function startWorker(init: WorkerInit) {
 }
 
 const init = workerData as Partial<WorkerInit> | null;
-if (!isMainThread && init?.ageUsageHistory === true) await startWorker(init as WorkerInit);
+if (!isMainThread && init?.wookyUsageHistory === true) await startWorker(init as WorkerInit);

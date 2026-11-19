@@ -3,7 +3,7 @@ import {
   ProviderSettings,
   type DeviceSettings as DeviceSettingsValue,
   type ProviderSettings as ProviderSettingsValue,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 export function loadSettings(read?: () => DeviceSettingsValue): DeviceSettingsValue {
   if (!read) return DeviceSettings.parse({});

@@ -1,4 +1,4 @@
-import type { Project } from "@age/contracts";
+import type { Project } from "@wooky/contracts";
 import { useMemo } from "react";
 import {
   defaultDraftProject,

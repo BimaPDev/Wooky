@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { Origin } from "@age/contracts";
+import type { Origin } from "@wooky/contracts";
 import type { HistoryReader, HistoryRecord } from "./history-reader.ts";
 
 /** Test double for a real reader: parses `<home>/fake-<origin>/*.jsonl` through `ctx.fs`. */

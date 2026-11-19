@@ -13,7 +13,7 @@ import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import type { FileDiff, Worktree } from "@age/contracts";
+import type { FileDiff, Worktree } from "@wooky/contracts";
 import { commitWorktreeChanges as commitWorktreeImpl } from "./commit-worktree.ts";
 import { createMergeOps } from "./merge-ops.ts";
 import type { GitService } from "./types.ts";
@@ -50,11 +50,11 @@ const INHERITED_GIT_VARS = [
   "GIT_PAGER",
 ] as const;
 
-const AGE_IDENTITY = {
+const WOOKY_IDENTITY = {
   GIT_AUTHOR_NAME: "Wooky",
-  GIT_AUTHOR_EMAIL: "age@localhost",
+  GIT_AUTHOR_EMAIL: "wooky@localhost",
   GIT_COMMITTER_NAME: "Wooky",
-  GIT_COMMITTER_EMAIL: "age@localhost",
+  GIT_COMMITTER_EMAIL: "wooky@localhost",
 } as const;
 
 const PATCH_LIMIT = 200 * 1024;
@@ -62,7 +62,8 @@ const TRUNCATION_NOTICE = "\n… diff truncated\n";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_STDOUT_CAP = 64 * 1024 * 1024;
 
-const AGE_REF = /^refs\/age\/[A-Za-z0-9._/-]+$/;
+/** New checkpoints use refs/wooky/. refs/age/ remains valid so stored events can still restore. */
+const WOOKY_REF = /^refs\/(?:wooky|age)\/[A-Za-z0-9._/-]+$/;
 
 interface RunOptions {
   cwd: string;
@@ -194,7 +195,7 @@ export function createGitService(options?: {
 
   async function assertAgeRef(cwd: string, ref: string): Promise<void> {
     const shaped =
-      AGE_REF.test(ref) &&
+      WOOKY_REF.test(ref) &&
       !ref.includes("..") &&
       !ref.includes("//") &&
       !ref.endsWith("/") &&
@@ -203,7 +204,7 @@ export function createGitService(options?: {
       throw new GitError(
         ["check-ref-format", ref],
         null,
-        `ref must be a safe refs/age/ ref: ${ref}`,
+        `ref must be a safe refs/wooky/ or refs/age/ ref: ${ref}`,
       );
     }
     const res = await run(["check-ref-format", ref], { cwd, allowFail: true });
@@ -211,16 +212,16 @@ export function createGitService(options?: {
       throw new GitError(
         ["check-ref-format", ref],
         res.code,
-        `ref must be a safe refs/age/ ref: ${ref}`,
+        `ref must be a safe refs/wooky/ or refs/age/ ref: ${ref}`,
       );
     }
   }
 
   async function withTempIndex<T>(fn: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> {
-    const dir = await mkdtemp(join(tmpdir(), "age-git-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-git-"));
     const indexFile = join(dir, "index");
     try {
-      return await fn(baseEnv({ ...AGE_IDENTITY, GIT_INDEX_FILE: indexFile }));
+      return await fn(baseEnv({ ...WOOKY_IDENTITY, GIT_INDEX_FILE: indexFile }));
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -253,7 +254,7 @@ export function createGitService(options?: {
       withTempIndex(async (env) => {
         const hasHead = await headExists(top, env);
         const tree = await writeWorkingTree(top, env);
-        const commitArgs = ["commit-tree", tree, "-m", "age checkpoint"];
+        const commitArgs = ["commit-tree", tree, "-m", "wooky checkpoint"];
         if (hasHead) {
           const parent = await run(["rev-parse", "HEAD"], { cwd: top, env });
           commitArgs.push("-p", parent.stdout.trim());
@@ -395,8 +396,8 @@ export function createGitService(options?: {
         throw new GitError(["worktree", "add"], null, "Isolation needs at least one commit");
       }
       const root = resolve(projectRoot);
-      const path = join(dirname(root), ".age-worktrees", basename(root), threadId);
-      const branch = `age/${threadId}`;
+      const path = join(dirname(root), ".wooky-worktrees", basename(root), threadId);
+      const branch = `wooky/${threadId}`;
       await mkdir(dirname(path), { recursive: true });
       const hasBranch = await run(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
         cwd: top,

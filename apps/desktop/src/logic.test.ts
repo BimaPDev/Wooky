@@ -40,36 +40,38 @@ function fakeChild() {
 describe("listening-line parser", () => {
   it("finds the URL when the line arrives split across chunks", () => {
     const parser = new ListeningLineParser();
-    expect(parser.feed("AGE_LIS")).toBeUndefined();
+    expect(parser.feed("WOOKY_LIS")).toBeUndefined();
     expect(parser.feed("TENING http://127.0.0.1:43")).toBeUndefined();
     expect(parser.feed("17\n")).toBe("http://127.0.0.1:4317");
   });
 
   it("ignores other lines, including a partial line that looks like the marker", () => {
     const parser = new ListeningLineParser();
-    expect(parser.feed("pnpm header\nserver starting AGE_LISTENING\n")).toBeUndefined();
-    expect(parser.feed("AGE_LISTENING http://127.0.0.1:9000\n")).toBe("http://127.0.0.1:9000");
+    expect(parser.feed("pnpm header\nserver starting WOOKY_LISTENING\n")).toBeUndefined();
+    expect(parser.feed("WOOKY_LISTENING http://127.0.0.1:9000\n")).toBe("http://127.0.0.1:9000");
   });
 
   it("rejects lines whose URL is not http(s)", () => {
-    expect(parseListeningLine("AGE_LISTENING file:///etc/passwd")).toBeUndefined();
-    expect(parseListeningLine("AGE_LISTENING not a url")).toBeUndefined();
-    expect(parseListeningLine("AGE_LISTENING")).toBeUndefined();
-    expect(parseListeningLine("  AGE_LISTENING https://127.0.0.1:1  ")).toBe("https://127.0.0.1:1");
+    expect(parseListeningLine("WOOKY_LISTENING file:///etc/passwd")).toBeUndefined();
+    expect(parseListeningLine("WOOKY_LISTENING not a url")).toBeUndefined();
+    expect(parseListeningLine("WOOKY_LISTENING")).toBeUndefined();
+    expect(parseListeningLine("  WOOKY_LISTENING https://127.0.0.1:1  ")).toBe(
+      "https://127.0.0.1:1",
+    );
   });
 
   it("resolves with the URL from a single stdout chunk", async () => {
     const child = fakeChild();
     const ready = awaitListening(child.events, 20_000);
-    child.writeStdout("AGE_LISTENING http://127.0.0.1:5555\n");
+    child.writeStdout("WOOKY_LISTENING http://127.0.0.1:5555\n");
     await expect(ready).resolves.toBe("http://127.0.0.1:5555");
   });
 
   it("ignores stdout that arrives after the server is ready", async () => {
     const child = fakeChild();
     const ready = awaitListening(child.events, 20_000);
-    child.writeStdout("AGE_LISTENING http://127.0.0.1:5555\n");
-    child.writeStdout("AGE_LISTENING http://127.0.0.1:6666\n");
+    child.writeStdout("WOOKY_LISTENING http://127.0.0.1:5555\n");
+    child.writeStdout("WOOKY_LISTENING http://127.0.0.1:6666\n");
     await expect(ready).resolves.toBe("http://127.0.0.1:5555");
   });
 
@@ -91,7 +93,7 @@ describe("listening-line parser", () => {
     it("does not fire the deadline once the server is ready", async () => {
       const child = fakeChild();
       const ready = awaitListening(child.events, 20_000);
-      child.writeStdout("AGE_LISTENING http://127.0.0.1:5555\n");
+      child.writeStdout("WOOKY_LISTENING http://127.0.0.1:5555\n");
       vi.advanceTimersByTime(60_000);
       await expect(ready).resolves.toBe("http://127.0.0.1:5555");
     });
@@ -130,11 +132,11 @@ describe("listening-line parser", () => {
 
 describe("server launch argv and env", () => {
   const base = {
-    execPath: "/Applications/AGE.app/Contents/MacOS/AGE",
+    execPath: "/Applications/Wooky.app/Contents/MacOS/Wooky",
     loaderUrl: "file:///repo/node_modules/tsx/dist/loader.mjs",
     serverEntry: "/repo/apps/server/src/bin.ts",
     webDist: "/repo/apps/web/dist",
-    home: "/Users/someone/.age",
+    home: "/Users/someone/.wooky",
     repoRoot: "/repo",
   };
 
@@ -155,21 +157,21 @@ describe("server launch argv and env", () => {
     expect(launch.cwd).toBe("/repo");
   });
 
-  it("sets ELECTRON_RUN_AS_NODE and AGE_HOME, keeps the caller's env, drops undefined values", () => {
+  it("sets ELECTRON_RUN_AS_NODE and WOOKY_HOME, keeps the caller's env, drops undefined values", () => {
     const parent = { PATH: "/usr/bin", HOME: "/Users/someone", GONE: undefined };
     const launch = buildServerLaunch({ ...base, env: parent });
     expect(launch.env).toEqual({
       PATH: "/usr/bin",
       HOME: "/Users/someone",
       ELECTRON_RUN_AS_NODE: "1",
-      AGE_HOME: base.home,
+      WOOKY_HOME: base.home,
     });
     expect(parent).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
   });
 
-  it("overrides an inherited AGE_HOME with the home the shell chose", () => {
-    const launch = buildServerLaunch({ ...base, env: { AGE_HOME: "/elsewhere" } });
-    expect(launch.env.AGE_HOME).toBe(base.home);
+  it("overrides an inherited WOOKY_HOME with the home the shell chose", () => {
+    const launch = buildServerLaunch({ ...base, env: { WOOKY_HOME: "/elsewhere" } });
+    expect(launch.env.WOOKY_HOME).toBe(base.home);
   });
 });
 

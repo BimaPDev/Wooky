@@ -9,8 +9,8 @@ coverage/
 .env.*
 !.env.example
 # local runtime state (never commit)
-.age/
-.age-dev/
+.wooky/
+.wooky-dev/
 # screenshots / QA evidence stay local
 .evidence/
 # head-chef scratch

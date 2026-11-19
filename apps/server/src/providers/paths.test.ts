@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { isInsideWorkspace, workspaceRelative } from "./paths.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "age-paths-"));
+const dir = mkdtempSync(join(tmpdir(), "wooky-paths-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("workspaceRelative", () => {

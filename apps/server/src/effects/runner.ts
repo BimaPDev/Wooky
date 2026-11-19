@@ -9,8 +9,8 @@ import {
   type ReadModel,
   type Usage,
   type Worktree,
-} from "@age/contracts";
-import { activeTurn, handoffTranscript, latestPlan } from "@age/domain";
+} from "@wooky/contracts";
+import { activeTurn, handoffTranscript, latestPlan } from "@wooky/domain";
 import {
   buildWorkerReportEvents,
   coordinatorFollowUpPrompt,
@@ -674,7 +674,11 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     const mergeMerging = store.model.threads[effect.threadId]?.merge;
     const targetBranch = mergeMerging?.targetBranch;
     try {
-      await git.commitWorktreeChanges(effect.projectRoot, effect.worktree, `AGE: ${effect.title}`);
+      await git.commitWorktreeChanges(
+        effect.projectRoot,
+        effect.worktree,
+        `Wooky: ${effect.title}`,
+      );
       const result = await git.mergeWorktree(
         effect.projectRoot,
         effect.worktree,
@@ -744,7 +748,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     const summary = turnSummary(store.model, threadId, turnId, status, error);
     if (thread.worktree && project) {
       try {
-        await git.commitWorktreeChanges(project.root, thread.worktree, `AGE: ${thread.title}`);
+        await git.commitWorktreeChanges(project.root, thread.worktree, `Wooky: ${thread.title}`);
       } catch (cause) {
         console.error(`Could not commit worker changes for ${threadId}`, cause);
       }

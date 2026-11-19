@@ -1,4 +1,4 @@
-// age-allow-file color: dev fixture themes are user data stored as hex, like the server sends them.
+// wooky-allow-file color: dev fixture themes are user data stored as hex, like the server sends them.
 import {
   AppearanceTheme,
   DeviceSettings,
@@ -18,8 +18,8 @@ import {
   type UsageHistoryBucket,
   type UsageHistoryResult,
   type UsageWindowDays,
-} from "@age/contracts";
-import { fleetRows } from "@age/domain";
+} from "@wooky/contracts";
+import { fleetRows } from "@wooky/domain";
 import { receiveEvent, useStore } from "../state/store.ts";
 import {
   looksLikeSvg,
@@ -133,7 +133,7 @@ export const fixtureModel: ReadModel = {
       projectId: "p1",
       title: "Paginate the orders list",
       updatedAt: ago(28),
-      worktree: { path: "/Users/demo/.age/worktrees/t1", branch: "age/paginate-orders" },
+      worktree: { path: "/Users/demo/.wooky/worktrees/t1", branch: "wooky/paginate-orders" },
     }),
     t2: thread({
       id: "t2",
@@ -144,7 +144,7 @@ export const fixtureModel: ReadModel = {
       runtimeMode: "auto-edits",
       status: "running",
       updatedAt: ago(0.2),
-      worktree: { path: "/Users/demo/.age/worktrees/t2", branch: "age/fix-flaky-cache" },
+      worktree: { path: "/Users/demo/.wooky/worktrees/t2", branch: "wooky/fix-flaky-cache" },
     }),
     t3: thread({
       id: "t3",
@@ -231,7 +231,7 @@ export const fixtureModel: ReadModel = {
       isolate: true,
       status: "waiting",
       updatedAt: ago(1),
-      worktree: { path: "/Users/demo/.age/worktrees/t-w1", branch: "age/draft-api" },
+      worktree: { path: "/Users/demo/.wooky/worktrees/t-w1", branch: "wooky/draft-api" },
     }),
     "t-w2": thread({
       id: "t-w2",
@@ -245,7 +245,7 @@ export const fixtureModel: ReadModel = {
       isolate: true,
       status: "running",
       updatedAt: ago(0.4),
-      worktree: { path: "/Users/demo/.age/worktrees/t-w2", branch: "age/write-tests" },
+      worktree: { path: "/Users/demo/.wooky/worktrees/t-w2", branch: "wooky/write-tests" },
     }),
     "t-w3": thread({
       id: "t-w3",
@@ -264,7 +264,7 @@ export const fixtureModel: ReadModel = {
         diffStat: { files: 1, additions: 2, deletions: 1 },
         at: ago(12),
       },
-      worktree: { path: "/Users/demo/.age/worktrees/t-w3", branch: "age/update-readme" },
+      worktree: { path: "/Users/demo/.wooky/worktrees/t-w3", branch: "wooky/update-readme" },
     }),
     "t-f1": thread({
       id: "t-f1",
@@ -280,7 +280,7 @@ export const fixtureModel: ReadModel = {
         diffStat: { files: 3, additions: 15, deletions: 3 },
         at: ago(6),
       },
-      worktree: { path: "/Users/demo/.age/worktrees/t-f1", branch: "age/fanout-claude" },
+      worktree: { path: "/Users/demo/.wooky/worktrees/t-f1", branch: "wooky/fanout-claude" },
     }),
     "t-f2": thread({
       id: "t-f2",
@@ -298,7 +298,7 @@ export const fixtureModel: ReadModel = {
         diffStat: { files: 2, additions: 8, deletions: 2 },
         at: ago(7),
       },
-      worktree: { path: "/Users/demo/.age/worktrees/t-f2", branch: "age/fanout-codex" },
+      worktree: { path: "/Users/demo/.wooky/worktrees/t-f2", branch: "wooky/fanout-codex" },
     }),
     "t-f3": thread({
       id: "t-f3",
@@ -317,7 +317,7 @@ export const fixtureModel: ReadModel = {
         diffStat: { files: 1, additions: 5, deletions: 2 },
         at: ago(9),
       },
-      worktree: { path: "/Users/demo/.age/worktrees/t-f3", branch: "age/fanout-demo" },
+      worktree: { path: "/Users/demo/.wooky/worktrees/t-f3", branch: "wooky/fanout-demo" },
     }),
   },
   turns: {
@@ -327,8 +327,8 @@ export const fixtureModel: ReadModel = {
         threadId: "t1",
         prompt: "Paginate the orders list endpoint with a cursor and document it.",
         changedFiles: ["src/api/list.ts", "src/api/list.test.ts", "README.md"],
-        checkpointBefore: "refs/age/checkpoints/t1/u1/before",
-        checkpointAfter: "refs/age/checkpoints/t1/u1/after",
+        checkpointBefore: "refs/wooky/checkpoints/t1/u1/before",
+        checkpointAfter: "refs/wooky/checkpoints/t1/u1/after",
         startedAt: ago(30),
         endedAt: ago(28.8),
         items: [
@@ -606,7 +606,7 @@ export const fixtureModel: ReadModel = {
         id: "u7",
         threadId: "t7",
         prompt: "Touch shared files after t6",
-        checkpointBefore: "refs/age/checkpoints/t7/u7/before",
+        checkpointBefore: "refs/wooky/checkpoints/t7/u7/before",
         startedAt: ago(4),
         endedAt: ago(3.5),
         items: [{ kind: "message", id: "u7m", role: "assistant", text: "Updated shared config." }],
@@ -1420,7 +1420,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
           project: {
             id: "p-scratch",
             name: "No project",
-            root: "/Users/demo/.age/scratch",
+            root: "/Users/demo/.wooky/scratch",
             createdAt: new Date().toISOString(),
             scratch: true,
           },
@@ -1430,7 +1430,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
     }
     case "dispatch": {
       const command = params as Command;
-      console.info("AGE fixture dispatch", params);
+      console.info("Wooky fixture dispatch", params);
       applyFixtureCommand(command);
       return { accepted: true, duplicate: false, seq: fixtureModel.seq };
     }
@@ -1444,7 +1444,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
     }
     case "themes.list":
       return {
-        themesDir: "/tmp/age-fixture/themes",
+        themesDir: "/tmp/wooky-fixture/themes",
         activeThemeId: fixtureSettings.activeThemeId,
         themes: fixtureThemes.map((theme) => ({
           id: theme.id,
@@ -1481,7 +1481,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
     case "themes.import": {
       const { text, filename, activate } = params as RpcParams<"themes.import">;
       let theme: AppearanceThemeValue;
-      let format: "age" | "t3code" | "svg";
+      let format: "wooky" | "t3code" | "svg";
       if (looksLikeSvg(text, filename)) {
         theme = AppearanceTheme.parse(wallpaperThemeFromSvg(text, filename));
         format = "svg";
@@ -1497,7 +1497,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
         );
         if (parsed.success) {
           theme = parsed.data;
-          format = "age";
+          format = "wooky";
         } else if (looksLikeT3code(raw)) {
           theme = AppearanceTheme.parse(themeFromT3code(raw));
           format = "t3code";
@@ -1597,7 +1597,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
       const { name, dataBase64 } = params as RpcParams<"attachments.put">;
       const id = crypto.randomUUID();
       const size = Math.floor((dataBase64.length * 3) / 4);
-      return { id, name, path: `/Users/demo/.age/attachments/${id}/${name}`, size };
+      return { id, name, path: `/Users/demo/.wooky/attachments/${id}/${name}`, size };
     }
     case "attachments.remove":
       return { removed: true };

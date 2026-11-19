@@ -4,8 +4,8 @@ import {
   type PendingEvent,
   type ReadModel,
   type Thread,
-} from "@age/contracts";
-import { formatWorkerReport } from "@age/domain";
+} from "@wooky/contracts";
+import { formatWorkerReport } from "@wooky/domain";
 import type { GitService } from "../git/types.ts";
 import type { EventStore } from "../store/event-store.ts";
 

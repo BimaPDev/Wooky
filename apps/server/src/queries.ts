@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { FileDiff, RpcParams, RpcResult } from "@age/contracts";
+import type { FileDiff, RpcParams, RpcResult } from "@wooky/contracts";
 import { ServiceError } from "./errors.ts";
 import type { GitService } from "./git/types.ts";
 import type { EventStore } from "./store/event-store.ts";

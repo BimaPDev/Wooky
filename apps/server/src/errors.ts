@@ -1,4 +1,4 @@
-import type { RpcError } from "@age/contracts";
+import type { RpcError } from "@wooky/contracts";
 
 /** A failure a client caused or can act on. Transport maps it to an RpcError as is. */
 export class ServiceError extends Error {

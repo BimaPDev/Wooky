@@ -1,4 +1,4 @@
-import type { FileDiff, ReviewNote } from "@age/contracts";
+import type { FileDiff, ReviewNote } from "@wooky/contracts";
 import { Fragment, memo, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { parseUnifiedDiff } from "../lib/diff.ts";
 import { IconChevron } from "./Icons.tsx";

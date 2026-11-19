@@ -3,7 +3,7 @@ import type {
   UsageHistoryBucket,
   UsageHistorySource,
   UsageWindowDays,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { sumCostByType } from "./usage-cost-by-type.ts";
 import {
   bucketPeriodKey,

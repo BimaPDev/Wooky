@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { LimitWindow, ProviderLimits } from "@age/contracts";
+import type { LimitWindow, ProviderLimits } from "@wooky/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { JsonRpcClient } from "./jsonrpc.ts";
 import { InitializeResponseSchema } from "./protocol.ts";
@@ -90,7 +90,7 @@ export async function fetchCodexLimits(
 ): Promise<ProviderLimits> {
   const now = options.now ?? (() => new Date());
   const checkedAt = now().toISOString();
-  const envBin = process.env.AGE_CODEX_BIN?.trim();
+  const envBin = process.env.WOOKY_CODEX_BIN?.trim();
   const configuredBin = options.codexBin ?? (envBin && envBin.length > 0 ? envBin : "codex");
   const resolved = resolveCommand(configuredBin);
   const bin = resolved?.command ?? configuredBin;

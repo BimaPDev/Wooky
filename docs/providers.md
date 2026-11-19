@@ -1,6 +1,6 @@
 # Providers
 
-AGE drives agent CLIs. It does not ship a model or an account. A provider adapter
+Wooky drives agent CLIs. It does not ship a model or an account. A provider adapter
 translates one CLI's protocol into `ProviderEvent`s. The client only ever sees
 `ProviderKind`, a model id, and `ProviderStatus`.
 
@@ -71,14 +71,14 @@ the provider's.
 | Value    | Meaning                                                        |
 | -------- | -------------------------------------------------------------- |
 | `live`   | The CLI reported this id                                       |
-| `static` | Built into AGE                                                 |
+| `static` | Built into Wooky                                               |
 | `custom` | The user added it (`customModels`, or an ACP agent's `models`) |
 
 ## OpenCode
 
 The thread's `provider` is `opencode`. Its `model` is an id printed by `opencode models`,
 unchanged. Those ids look like `provider/model`. One of them is `opencode/big-pickle`.
-AGE does not keep a second copy of that catalog: the adapter asks the CLI (`live`) and
+Wooky does not keep a second copy of that catalog: the adapter asks the CLI (`live`) and
 shows `providers.opencode.customModels` beside it (`custom`).
 
 This is not the ACP model-id form below. OpenCode has its own adapter. It runs
@@ -98,7 +98,7 @@ agent's default and says so. `opencode acp` has no `--model` flag.
 
 OpenCode 1.19.6's build agent allows every tool unless a later rule says
 otherwise. The installed binary reads `OPENCODE_PERMISSION` after project
-`opencode.json` and applies it with `findLast`, so the env value wins. AGE sets
+`opencode.json` and applies it with `findLast`, so the env value wins. Wooky sets
 that variable on the child (it is not logged, and it replaces the same key in
 `providers.opencode.env`):
 
@@ -179,7 +179,7 @@ One process per turn. Frames are JSON-RPC 2.0, one JSON object per line. A line
 over 1 MiB is dropped and the next line is read. Every inbound object is checked
 with zod. A line that is not a JSON-RPC 2.0 message is dropped. Unknown
 notification methods, and unknown `session/update` discriminators, are passed to
-the debug channel (`AGE_DEBUG=1` prints them). They do not fail the turn.
+the debug channel (`WOOKY_DEBUG=1` prints them). They do not fail the turn.
 
 The client advertises no filesystem and no terminal capabilities, so the agent
 uses its own tools. `fs/read_text_file` and `fs/write_text_file` are not
@@ -213,7 +213,7 @@ same for edits, and still asks for commands. Plan mode always asks. Cancelling t
 turn answers the pending request with `cancelled`, sends `session/cancel`, and
 kills the process group if the prompt has not returned within 3 seconds.
 
-A generic ACP command has no shared permission config, so AGE cannot make it
+A generic ACP command has no shared permission config, so Wooky cannot make it
 ask. If a turn in `approve` or `auto-edits` finishes without a single
 `session/request_permission`, the timeline gets one notice: "This agent does
 not ask before acting; runtime mode cannot be enforced". OpenCode does not get
@@ -232,7 +232,7 @@ whether they have been used. Models are the agent's `models` list as
 `<agentId>/<modelId>` with source `custom`, or just `<agentId>` when that list
 is omitted. `providers.acp.extraArgs` are appended after the agent's `args`.
 `providers.acp.env` overrides the agent's `env` on the same key. Neither is logged.
-The fleet variables (`AGE_THREAD_ID`, `AGE_SERVER_URL`, the `age` shim on `PATH`)
+The fleet variables (`WOOKY_THREAD_ID`, `WOOKY_SERVER_URL`, the `wooky` shim on `PATH`)
 are applied on top, and the coordinator instructions are prefixed to the first
 prompt of a new session.
 

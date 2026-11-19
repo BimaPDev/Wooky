@@ -79,7 +79,7 @@ describe("JsonRpcClient", () => {
   let workDir = "";
 
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "age-codex-rpc-"));
+    workDir = mkdtempSync(join(tmpdir(), "wooky-codex-rpc-"));
   });
 
   afterEach(() => {
@@ -104,7 +104,7 @@ describe("JsonRpcClient", () => {
 
       const init = await client.request(
         "initialize",
-        { clientInfo: { name: "age", title: "AGE", version: "0.0.0" }, capabilities: null },
+        { clientInfo: { name: "wooky", title: "Wooky", version: "0.0.0" }, capabilities: null },
         InitializeResponseSchema,
       );
       expect(init.userAgent).toContain("codex-fake");
@@ -112,7 +112,7 @@ describe("JsonRpcClient", () => {
       await expect(
         client.request(
           "initialize",
-          { clientInfo: { name: "age", title: "AGE", version: "0.0.0" }, capabilities: null },
+          { clientInfo: { name: "wooky", title: "Wooky", version: "0.0.0" }, capabilities: null },
           InitializeResponseSchema,
         ),
       ).rejects.toThrow("Already initialized");
@@ -384,7 +384,7 @@ describe("JsonRpcClient", () => {
         'process.on("exit", () => {',
         "  const deadline = Date.now() + 5000;",
         "  while (groupAlive() && Date.now() < deadline) {",
-        // age-allow sleep: synchronous exit handler; no event exists for process-group exit
+        // wooky-allow sleep: synchronous exit handler; no event exists for process-group exit
         "    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);",
         "  }",
         "  writeSync(1, JSON.stringify({ pid, groupGone: !groupAlive() }));",
@@ -441,7 +441,7 @@ describe("JsonRpcClient", () => {
       });
 
       const params = {
-        clientInfo: { name: "age", title: "AGE", version: "0.0.0" },
+        clientInfo: { name: "wooky", title: "Wooky", version: "0.0.0" },
         capabilities: null,
       };
       await client.request("initialize", params, InitializeResponseSchema);

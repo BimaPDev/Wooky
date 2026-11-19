@@ -10,7 +10,7 @@ describe("resolveCommand", () => {
   });
 
   it("resolves an absolute executable path", () => {
-    const root = join(tmpdir(), `age-resolve-${Date.now()}`);
+    const root = join(tmpdir(), `wooky-resolve-${Date.now()}`);
     mkdirSync(root, { recursive: true });
     const exe = join(root, process.platform === "win32" ? "tool.exe" : "tool");
     writeFileSync(exe, "");
@@ -22,7 +22,7 @@ describe("resolveCommand", () => {
 
   it("unwraps a Windows .cmd that points at an .exe", () => {
     if (process.platform !== "win32") return;
-    const root = join(tmpdir(), `age-resolve-cmd-${Date.now()}`);
+    const root = join(tmpdir(), `wooky-resolve-cmd-${Date.now()}`);
     mkdirSync(join(root, "bin"), { recursive: true });
     const exe = join(root, "bin", "tool.exe");
     writeFileSync(exe, "");
@@ -33,7 +33,7 @@ describe("resolveCommand", () => {
 
   it("unwraps cursor-agent style versions/node.exe layout", () => {
     if (process.platform !== "win32") return;
-    const root = join(tmpdir(), `age-resolve-agent-${Date.now()}`);
+    const root = join(tmpdir(), `wooky-resolve-agent-${Date.now()}`);
     const ver = join(root, "versions", "2026.01.01-abc");
     mkdirSync(ver, { recursive: true });
     const node = join(ver, "node.exe");
@@ -47,7 +47,7 @@ describe("resolveCommand", () => {
 
   it("unwraps npm-style node + .js shims", () => {
     if (process.platform !== "win32") return;
-    const root = join(tmpdir(), `age-resolve-npm-${Date.now()}`);
+    const root = join(tmpdir(), `wooky-resolve-npm-${Date.now()}`);
     const binDir = join(root, "node_modules", "pkg", "bin");
     mkdirSync(binDir, { recursive: true });
     const script = join(binDir, "tool.js");

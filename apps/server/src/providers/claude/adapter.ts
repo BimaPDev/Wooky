@@ -6,7 +6,7 @@ import type {
   ProviderEvent,
   ProviderSettings,
   ProviderStatus,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import {
   query as sdkQuery,
   type CanUseTool,

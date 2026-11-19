@@ -1,4 +1,4 @@
-import type { DeviceSettings } from "@age/contracts";
+import type { DeviceSettings } from "@wooky/contracts";
 import { useEffect, useState } from "react";
 import { refreshProviders } from "../../state/actions.ts";
 import { patchDeviceSettings } from "../../state/appearance.ts";

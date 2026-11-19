@@ -2,7 +2,7 @@
 
 A theme is one JSON file. Images are inline data URLs, so the file stays portable.
 `themes.import` also accepts a t3code theme JSON file or a raw SVG, and turns either
-into this format. A t3code object does not parse as an AGE theme.
+into this format. A t3code object does not parse as an Wooky theme.
 
 ## Theme file
 
@@ -54,7 +54,7 @@ into this format. A t3code object does not parse as an AGE theme.
 | `background` | no       | Wallpaper. See below.                                                                                                                                  |
 | `variants`   | no       | Optional `dark` and `light` palettes. See below. Unknown keys are rejected.                                                                            |
 | `css`        | no       | Extra CSS applied after variables. Max 50_000 characters. Defaults to `""`. No `@import`. `url()` only with `data:` or `#`.                            |
-| `builtin`    | no       | True for themes shipped with AGE. Clients cannot overwrite or delete those.                                                                            |
+| `builtin`    | no       | True for themes shipped with Wooky. Clients cannot overwrite or delete those.                                                                          |
 
 `colors` roles, each an optional hex: `bg0`, `bg1`, `bg2`, `bg3`, `bgHover`, `bgActive`,
 `line`, `lineStrong`, `text`, `text2`, `text3`, `text4`, `accent`, `accentInk`, `focus`,
@@ -118,15 +118,15 @@ image, and `animated` when any of those backgrounds sets the hint.
 characters. `filename`, when present, is at most 255 characters. `activate` asks the
 server to make the imported theme the active one.
 
-The result is `{ theme, format }`. `format` is `age`, `t3code` or `svg`.
+The result is `{ theme, format }`. `format` is `wooky`, `t3code` or `svg`.
 
 The server classifies `text`:
 
-- AGE theme JSON, which parses as the theme file above. Format `age`.
+- Wooky theme JSON, which parses as the theme file above. Format `wooky`.
 - A t3code theme JSON. Top-level fields are `version`, `name`, `appearance`,
   `colors` (including `canvas`, `surface` and further keys), optional `variants` and
   optional `css`. Format `t3code`. This object is not an `AppearanceTheme`. It has to
-  go through import, which maps it into the AGE file.
+  go through import, which maps it into the Wooky file.
 - A raw SVG file. Format `svg`. Import builds a wallpaper theme from it. The SVG is
   stored as a base64 `data:image/svg+xml` image, under the same rules as any other
   wallpaper.
@@ -135,46 +135,46 @@ The server classifies `text`:
 
 ### Colour-role mapping
 
-| t3code                    | AGE                                               |
-| ------------------------- | ------------------------------------------------- |
-| `version`                 | not a colour                                      |
-| `name`                    | `name`                                            |
-| `appearance`              | `appearance`                                      |
-| `colors.canvas`           | `canvas`, `bg0`                                   |
-| `colors.sidebar`          | `bg1`                                             |
-| `colors.surface`          | `bg2`                                             |
-| `colors.surfaceRaised`    | `bg3`                                             |
-| `colors.sidebarRowHover`  | `bgHover`                                         |
-| `colors.sidebarRowActive` | `bgActive`                                        |
-| `colors.border`           | `line`                                            |
-| `colors.input`            | `lineStrong`                                      |
-| `colors.text`             | `text`                                            |
-| `colors.textMuted`        | `text2`                                           |
-| `colors.placeholder`      | `text3`                                           |
-| `colors.iconMuted`        | `text4`                                           |
-| `colors.accent`           | `accent`                                          |
-| `colors.accentForeground` | `accentInk`                                       |
-| `colors.focus`            | `focus`                                           |
-| `colors.warning`          | `amber`                                           |
-| `colors.warningSurface`   | `amberBg`                                         |
-| `colors.error`            | `red`                                             |
-| `colors.errorSurface`     | `redBg`                                           |
-| `variants.light`          | `variants.light` (same role map on `colors`)      |
-| `variants.dark`           | `variants.dark` (same role map on `colors`)       |
-| `css`                     | `css` when it passes AGE rules; otherwise dropped |
+| t3code                    | Wooky                                               |
+| ------------------------- | --------------------------------------------------- |
+| `version`                 | not a colour                                        |
+| `name`                    | `name`                                              |
+| `appearance`              | `appearance`                                        |
+| `colors.canvas`           | `canvas`, `bg0`                                     |
+| `colors.sidebar`          | `bg1`                                               |
+| `colors.surface`          | `bg2`                                               |
+| `colors.surfaceRaised`    | `bg3`                                               |
+| `colors.sidebarRowHover`  | `bgHover`                                           |
+| `colors.sidebarRowActive` | `bgActive`                                          |
+| `colors.border`           | `line`                                              |
+| `colors.input`            | `lineStrong`                                        |
+| `colors.text`             | `text`                                              |
+| `colors.textMuted`        | `text2`                                             |
+| `colors.placeholder`      | `text3`                                             |
+| `colors.iconMuted`        | `text4`                                             |
+| `colors.accent`           | `accent`                                            |
+| `colors.accentForeground` | `accentInk`                                         |
+| `colors.focus`            | `focus`                                             |
+| `colors.warning`          | `amber`                                             |
+| `colors.warningSurface`   | `amberBg`                                           |
+| `colors.error`            | `red`                                               |
+| `colors.errorSurface`     | `redBg`                                             |
+| `variants.light`          | `variants.light` (same role map on `colors`)        |
+| `variants.dark`           | `variants.dark` (same role map on `colors`)         |
+| `css`                     | `css` when it passes Wooky rules; otherwise dropped |
 
 ## Command line
 
 ```
-age theme set <file>
-age theme list
-age theme use <id>
-age theme off
+wooky theme set <file>
+wooky theme list
+wooky theme use <id>
+wooky theme off
 ```
 
-`set` imports a file (AGE JSON, t3code JSON or SVG) and activates it. `list` prints
+`set` imports a file (Wooky JSON, t3code JSON or SVG) and activates it. `list` prints
 installed theme ids, one per line. `use` activates one by id. `off` returns to `default`.
-These commands write under `AGE_HOME` and do not require a running server; a live server
+These commands write under `WOOKY_HOME` and do not require a running server; a live server
 pushes the change to connected clients.
 
 A theme or settings change made outside the client, including this CLI, is pushed to

@@ -1,4 +1,4 @@
-import type { Thread } from "@age/contracts";
+import type { Thread } from "@wooky/contracts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   loadDiff,

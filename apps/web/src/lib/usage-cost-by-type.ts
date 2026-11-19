@@ -1,4 +1,4 @@
-import type { UsageCostByType } from "@age/contracts";
+import type { UsageCostByType } from "@wooky/contracts";
 
 export type CostShareSegment = {
   key: keyof UsageCostByType;

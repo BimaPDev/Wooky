@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { setAgentRuntime, currentAgentRuntime } from "./providers/agent-env.ts";
 
-export const SERVER_DOWN = "AGE server is not running";
+export const SERVER_DOWN = "Wooky server is not running";
 
 const ServerPresence = z.object({
   url: z.string().min(1),
@@ -12,13 +12,13 @@ const ServerPresence = z.object({
   startedAt: z.string().min(1),
 });
 
-function ageHome(env: NodeJS.ProcessEnv): string {
-  const fromEnv = env.AGE_HOME?.trim();
-  return resolve(fromEnv && fromEnv.length > 0 ? fromEnv : join(homedir(), ".age"));
+function wookyHome(env: NodeJS.ProcessEnv): string {
+  const fromEnv = env.WOOKY_HOME?.trim();
+  return resolve(fromEnv && fromEnv.length > 0 ? fromEnv : join(homedir(), ".wooky"));
 }
 
 function shimMarker(): string {
-  return `age-shim pid=${process.pid}`;
+  return `wooky-shim pid=${process.pid}`;
 }
 
 export function pidAlive(pid: number): boolean {
@@ -31,11 +31,11 @@ export function pidAlive(pid: number): boolean {
   }
 }
 
-/** `$AGE_SERVER_URL`, else a live `AGE_HOME/server.json`, else {@link SERVER_DOWN}. */
+/** `$WOOKY_SERVER_URL`, else a live `WOOKY_HOME/server.json`, else {@link SERVER_DOWN}. */
 export function discoverServerUrl(env: NodeJS.ProcessEnv): string {
-  const fromEnv = env.AGE_SERVER_URL?.trim();
+  const fromEnv = env.WOOKY_SERVER_URL?.trim();
   if (fromEnv) return fromEnv;
-  const file = join(ageHome(env), "server.json");
+  const file = join(wookyHome(env), "server.json");
   let text: string;
   try {
     text = readFileSync(file, "utf8");
@@ -78,7 +78,7 @@ function absolutize(value: string): string {
 /** The node (or tsx) invocation that is running this process, plus the entry script. */
 function launchArgv(): string[] {
   const script = process.argv[1];
-  if (!script) throw new Error("Cannot locate the age entry script.");
+  if (!script) throw new Error("Cannot locate the wooky entry script.");
   const args = [process.execPath];
   const execArgv = process.execArgv;
   for (let i = 0; i < execArgv.length; i++) {
@@ -104,13 +104,31 @@ function renderShim(args: readonly string[]): string {
   return `#!/bin/sh\n# ${marker}\nexec ${command} "$@"\n`;
 }
 
-function installAgeShim(home: string): string {
+function installWookyShim(home: string): string {
   const binDir = join(home, "bin");
   mkdirSync(binDir, { recursive: true });
-  const target = join(binDir, process.platform === "win32" ? "age.cmd" : "age");
+  retireLegacyShim(binDir);
+  const target = join(binDir, process.platform === "win32" ? "wooky.cmd" : "wooky");
   writeFileSync(target, renderShim(launchArgv()), { encoding: "utf8", mode: 0o755 });
   if (process.platform !== "win32") chmodSync(target, 0o755);
   return target;
+}
+
+/** Drop a previous `age` shim once its process is gone. A live pid is another server's. */
+function retireLegacyShim(binDir: string): void {
+  for (const name of ["age", "age.cmd"]) {
+    const file = join(binDir, name);
+    try {
+      const text = readFileSync(file, "utf8");
+      const match = /age-shim pid=(\d+)/.exec(text);
+      if (!match) continue;
+      const pid = Number(match[1]);
+      if (pid !== process.pid && pidAlive(pid)) continue;
+      rmSync(file, { force: true });
+    } catch {
+      // Already gone.
+    }
+  }
 }
 
 function removeServerFile(home: string): void {
@@ -127,10 +145,12 @@ function removeServerFile(home: string): void {
 function removeShim(home: string): void {
   const binDir = join(home, "bin");
   const marker = shimMarker();
-  for (const name of ["age", "age.cmd"]) {
+  const legacyMarker = `age-shim pid=${process.pid}`;
+  for (const name of ["wooky", "wooky.cmd", "age", "age.cmd"]) {
     const file = join(binDir, name);
     try {
-      if (!readFileSync(file, "utf8").includes(marker)) continue;
+      const text = readFileSync(file, "utf8");
+      if (!text.includes(marker) && !text.includes(legacyMarker)) continue;
       rmSync(file, { force: true });
     } catch {
       // Already gone.
@@ -144,7 +164,7 @@ function removeShim(home: string): void {
 }
 
 /**
- * Write `AGE_HOME/server.json` and the `age` shim, and remember the URL for
+ * Write `WOOKY_HOME/server.json` and the `wooky` shim, and remember the URL for
  * provider children. The returned function removes both when this process
  * still owns them.
  */
@@ -157,20 +177,20 @@ export function publishServerPresence(
   const file = join(home, "server.json");
   const record = { url, pid: process.pid, startedAt: now() };
   writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, "utf8");
-  let ageBin: string;
+  let wookyBin: string;
   try {
-    ageBin = installAgeShim(home);
+    wookyBin = installWookyShim(home);
   } catch (error) {
     rmSync(file, { force: true });
     throw error;
   }
-  setAgentRuntime({ serverUrl: url, ageBin });
+  setAgentRuntime({ serverUrl: url, wookyBin });
   let released = false;
   return () => {
     if (released) return;
     released = true;
     removeServerFile(home);
     removeShim(home);
-    if (currentAgentRuntime()?.ageBin === ageBin) setAgentRuntime(null);
+    if (currentAgentRuntime()?.wookyBin === wookyBin) setAgentRuntime(null);
   };
 }

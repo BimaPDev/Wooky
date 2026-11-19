@@ -9,13 +9,13 @@ import {
   type AgeEventType,
   type FileDiff,
   type Worktree,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import type { GitService } from "./git/types.ts";
 import type { DecideContext } from "./orchestrator/decide.ts";
 import type { EventStore } from "./store/event-store.ts";
 
 export function tempDir(label: string): Promise<string> {
-  return mkdtemp(join(tmpdir(), `age-${label}-`));
+  return mkdtemp(join(tmpdir(), `wooky-${label}-`));
 }
 
 /** Deterministic ids and clock for tests. */
@@ -67,7 +67,7 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
       calls.push(`createWorktree ${threadId}`);
       const path = join(projectRoot, ".worktrees", threadId);
       mkdirSync(path, { recursive: true });
-      return { path, branch: `age/${threadId}` };
+      return { path, branch: `wooky/${threadId}` };
     },
     async removeWorktree(_root, worktree) {
       calls.push(`removeWorktree ${worktree.path}`);
@@ -82,7 +82,7 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
     listFiles: async () => [],
     async diff(_cwd, from, to): Promise<FileDiff[]> {
       calls.push(`diff ${from} ${to}`);
-      return (options.changed ?? ["AGE_DEMO.md"]).map((path) => ({
+      return (options.changed ?? ["WOOKY_DEMO.md"]).map((path) => ({
         path,
         status: "modified",
         additions: 1,
@@ -95,7 +95,7 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
       targetBranch: "main",
       ahead: 1,
       behind: 0,
-      files: [{ path: "AGE_DEMO.md", additions: 1, deletions: 0 }],
+      files: [{ path: "WOOKY_DEMO.md", additions: 1, deletions: 0 }],
       conflicts: [],
     }),
     mergeWorktree: async () => ({ ok: true, commit: "deadbeef", targetBranch: "main" }),

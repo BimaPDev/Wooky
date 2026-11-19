@@ -1,10 +1,10 @@
 import {
-  AGE_WS_PATH,
+  WOOKY_WS_PATH,
   RpcMethods,
   type RpcMethod,
   type RpcParams,
   type RpcResult,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { WebSocket } from "ws";
 
 class RpcClientError extends Error {
@@ -21,7 +21,7 @@ class RpcClientError extends Error {
 function webSocketUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = AGE_WS_PATH;
+  url.pathname = WOOKY_WS_PATH;
   url.search = "";
   url.hash = "";
   return url.toString();
@@ -54,7 +54,7 @@ export function rpcCall<M extends RpcMethod>(
       settle(new RpcClientError(error.message));
     });
     ws.on("close", () => {
-      settle(new RpcClientError("The connection to AGE closed."));
+      settle(new RpcClientError("The connection to Wooky closed."));
     });
     ws.on("open", () => {
       ws.send(JSON.stringify({ id: 1, method, params }));

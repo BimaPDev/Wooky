@@ -1,4 +1,4 @@
-import type { ProviderEvent, TimelineItem, ToolKind, TurnFailure } from "@age/contracts";
+import type { ProviderEvent, TimelineItem, ToolKind, TurnFailure } from "@wooky/contracts";
 import { asDoneFailure } from "../failure.ts";
 import { classifyCodexFailure } from "./classify.ts";
 import {
@@ -242,7 +242,7 @@ export interface UsageTotals {
 }
 
 export interface CodexTranslatorOptions {
-  /** Cumulative thread usage carried over from prior turns, subtracted so AGE sees per-turn deltas. */
+  /** Cumulative thread usage carried over from prior turns, subtracted so Wooky sees per-turn deltas. */
   usageBaseline?: UsageTotals | null;
   /**
    * The turn continues an existing thread. With no baseline the thread's history

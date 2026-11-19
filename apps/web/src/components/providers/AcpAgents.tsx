@@ -1,4 +1,4 @@
-import type { AcpAgentConfig } from "@age/contracts";
+import type { AcpAgentConfig } from "@wooky/contracts";
 import { useId, useState } from "react";
 import { confirm } from "../../state/actions.ts";
 import { EnvEditor, ListEditor, Switch } from "./Editors.tsx";

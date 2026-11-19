@@ -1,6 +1,6 @@
-// age-allow-file color: theme summary fixtures use hex canvas/accent like the server sends.
+// wooky-allow-file color: theme summary fixtures use hex canvas/accent like the server sends.
 import { describe, expect, it } from "vitest";
-import type { AppearanceTheme } from "@age/contracts";
+import type { AppearanceTheme } from "@wooky/contracts";
 import {
   applyPalettePatch,
   applyWallpaperPatch,
@@ -41,14 +41,14 @@ describe("themeFileTooLarge", () => {
 
 describe("import format labels", () => {
   it("names each detected format in sentence case", () => {
-    expect(importFormatLabel("age")).toBe("AGE theme");
+    expect(importFormatLabel("wooky")).toBe("Wooky theme");
     expect(importFormatLabel("t3code")).toBe("t3code theme");
     expect(importFormatLabel("svg")).toBe("SVG wallpaper");
   });
 
   it("builds the inline import status line", () => {
     expect(importedStatusText("Orbit", "t3code")).toBe("Imported Orbit (t3code theme)");
-    expect(importedStatusText("Paper", "age")).toBe("Imported Paper (AGE theme)");
+    expect(importedStatusText("Paper", "wooky")).toBe("Imported Paper (Wooky theme)");
     expect(importedStatusText("Ember", "svg")).toBe("Imported Ember (SVG wallpaper)");
   });
 });

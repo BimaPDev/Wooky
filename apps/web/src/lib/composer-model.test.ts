@@ -1,4 +1,4 @@
-import type { ProviderStatus } from "@age/contracts";
+import type { ProviderStatus } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import {
   chipModelName,

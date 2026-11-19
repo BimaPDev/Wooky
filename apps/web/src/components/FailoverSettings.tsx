@@ -1,4 +1,4 @@
-import type { FailoverSettings as FailoverConfig, ProviderCooldown } from "@age/contracts";
+import type { FailoverSettings as FailoverConfig, ProviderCooldown } from "@wooky/contracts";
 import { useEffect, useState, type ReactNode } from "react";
 import { loadDeviceSettings, patchDeviceSettings } from "../state/appearance.ts";
 import { useStore } from "../state/store.ts";

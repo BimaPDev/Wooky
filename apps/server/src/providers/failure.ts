@@ -1,4 +1,4 @@
-import type { TurnFailure, TurnFailureKind } from "@age/contracts";
+import type { TurnFailure, TurnFailureKind } from "@wooky/contracts";
 
 export type { TurnFailure, TurnFailureKind };
 

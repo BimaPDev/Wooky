@@ -1,4 +1,4 @@
-import type { RpcMethod, RpcParams, RpcResult } from "@age/contracts";
+import type { RpcMethod, RpcParams, RpcResult } from "@wooky/contracts";
 
 /** Everything the UI may ask of the server. Real socket or fixture, same shape. */
 export interface Backend {
@@ -12,6 +12,6 @@ export function setBackend(next: Backend) {
 }
 
 export function backend(): Backend {
-  if (!current) throw new Error("AGE backend not initialised");
+  if (!current) throw new Error("Wooky backend not initialised");
   return current;
 }

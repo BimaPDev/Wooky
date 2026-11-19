@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelTarget, ReadModel, Thread, TurnFailure } from "@age/contracts";
+import type { ModelTarget, ReadModel, Thread, TurnFailure } from "@wooky/contracts";
 import { emptyReadModel } from "./project.ts";
 import { applyEvent } from "./project.ts";
 import {

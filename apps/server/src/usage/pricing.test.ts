@@ -217,7 +217,7 @@ describe("pricing service", () => {
   let clock: number;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), "age-pricing-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-pricing-"));
     clock = NOW;
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
@@ -238,7 +238,7 @@ describe("pricing service", () => {
   const service = (fetchFn: typeof fetch) =>
     createPricingService({ home, fetch: fetchFn, now: () => clock });
 
-  it("fetches the table, reports ok and caches it in AGE_HOME", async () => {
+  it("fetches the table, reports ok and caches it in WOOKY_HOME", async () => {
     const snapshot = await service(respond(table(1e-6))).load();
     expect(snapshot.status).toBe("ok");
     expect(snapshot.asOf).toBe(new Date(NOW).toISOString());

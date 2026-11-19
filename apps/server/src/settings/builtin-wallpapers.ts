@@ -1,4 +1,4 @@
-import type { AppearanceTheme as Theme } from "@age/contracts";
+import type { AppearanceTheme as Theme } from "@wooky/contracts";
 import { readableTextOn } from "./contrast.ts";
 import { WALLPAPER_SCENES, assertSafeSvg, toDataUrl } from "./wallpapers/scenes.ts";
 

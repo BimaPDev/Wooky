@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, stat as statFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { UsageHistoryPricing } from "@age/contracts";
+import type { UsageHistoryPricing } from "@wooky/contracts";
 import { z } from "zod";
 import { parseJsonSafely } from "./safe-input.ts";
 
@@ -359,7 +359,7 @@ function keyRank(key: string): number {
   return /^(?:anthropic|openai|gemini|xai)\//.test(key) ? 1 : 2;
 }
 
-/** Reduces LiteLLM's published JSON to the four per-token rates AGE uses. */
+/** Reduces LiteLLM's published JSON to the four per-token rates Wooky uses. */
 export function reduceLitellm(json: unknown): RateTable {
   const table: RateTable = {};
   const ranks = new Map<string, number>();
@@ -433,7 +433,7 @@ export interface PricingService {
 }
 
 export interface PricingOptions {
-  /** AGE_HOME. The table is cached there as `usage-model-rates.json`. */
+  /** WOOKY_HOME. The table is cached there as `usage-model-rates.json`. */
   home: string;
   fetch?: typeof fetch;
   now?: () => number;

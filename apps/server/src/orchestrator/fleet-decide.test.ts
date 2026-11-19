@@ -5,8 +5,8 @@ import {
   type PendingEvent,
   type ReadModel,
   type Thread,
-} from "@age/contracts";
-import { applyEvents, emptyReadModel, fleetRows } from "@age/domain";
+} from "@wooky/contracts";
+import { applyEvents, emptyReadModel, fleetRows } from "@wooky/domain";
 import { testContext } from "../testing.ts";
 import { decide } from "./decide.ts";
 
@@ -193,7 +193,7 @@ describe("fleet decide", () => {
           id: "b",
           groupId: "g1",
           role: "worker",
-          worktree: { path: "/work/demo/.wt/b", branch: "age/b" },
+          worktree: { path: "/work/demo/.wt/b", branch: "wooky/b" },
         }),
       },
     ]);
@@ -215,7 +215,7 @@ describe("fleet decide", () => {
         type: "thread.worktreeBound",
         commandId: null,
         threadId: "coord",
-        worktree: { path: "/work/demo/.wt", branch: "age/coord" },
+        worktree: { path: "/work/demo/.wt", branch: "wooky/coord" },
       },
     ]);
     expect(
@@ -241,7 +241,7 @@ describe("fleet decide", () => {
         prompt: "x",
         provider: "demo",
         model: "demo",
-        checkpointBefore: "refs/age/checkpoints/coord/u1/before",
+        checkpointBefore: "refs/wooky/checkpoints/coord/u1/before",
       },
     ]);
     expect(

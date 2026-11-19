@@ -24,12 +24,12 @@ if (pidFile) {
   writeFileSync(pidFile, String(process.pid), "utf8");
 }
 
-if (process.env.AGE_FAKE_CODEX_LOG_ENV) {
+if (process.env.WOOKY_FAKE_CODEX_LOG_ENV) {
   writeFileSync(
-    process.env.AGE_FAKE_CODEX_LOG_ENV,
+    process.env.WOOKY_FAKE_CODEX_LOG_ENV,
     JSON.stringify({
-      AGE_THREAD_ID: process.env.AGE_THREAD_ID ?? null,
-      AGE_SERVER_URL: process.env.AGE_SERVER_URL ?? null,
+      WOOKY_THREAD_ID: process.env.WOOKY_THREAD_ID ?? null,
+      WOOKY_SERVER_URL: process.env.WOOKY_SERVER_URL ?? null,
       PATH: process.env.PATH ?? "",
     }),
     "utf8",

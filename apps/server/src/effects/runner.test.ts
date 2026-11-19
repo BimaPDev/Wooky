@@ -12,7 +12,7 @@ import {
   type RuntimeMode,
   type Thread,
   type TurnFailure,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { createNoopGitService } from "../git/noop.ts";
 import type { GitService } from "../git/types.ts";
 import type { DecideContext } from "../orchestrator/decide.ts";
@@ -21,7 +21,7 @@ import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { createProviderRegistry } from "../providers/registry.ts";
 import type { ProviderAdapter, TurnInput } from "../providers/types.ts";
 import { openEventStore, type EventStore } from "../store/event-store.ts";
-import { childrenOf } from "@age/domain";
+import { childrenOf } from "@wooky/domain";
 import { createFakeGit, tempDir, testContext, waitForEvent } from "../testing.ts";
 import { createEffectRunner, type EffectRunner } from "./runner.ts";
 
@@ -235,18 +235,18 @@ describe("effect runner with the demo adapter", () => {
     ]);
     expect(finished).toMatchObject({
       status: "completed",
-      checkpointAfter: `refs/age/checkpoints/${threadId}/${turnId}/after`,
-      changedFiles: ["AGE_DEMO.md"],
+      checkpointAfter: `refs/wooky/checkpoints/${threadId}/${turnId}/after`,
+      changedFiles: ["WOOKY_DEMO.md"],
       usage: { inputTokens: "Add a line".length, outputTokens: 12 },
       error: null,
       nativeRef: `demo:${turnId}`,
     });
     expect(h.calls).toEqual([
-      `capture refs/age/checkpoints/${threadId}/${turnId}/before`,
-      `capture refs/age/checkpoints/${threadId}/${turnId}/after`,
-      `diff refs/age/checkpoints/${threadId}/${turnId}/before refs/age/checkpoints/${threadId}/${turnId}/after`,
+      `capture refs/wooky/checkpoints/${threadId}/${turnId}/before`,
+      `capture refs/wooky/checkpoints/${threadId}/${turnId}/after`,
+      `diff refs/wooky/checkpoints/${threadId}/${turnId}/before refs/wooky/checkpoints/${threadId}/${turnId}/after`,
     ]);
-    expect(await readFile(join(h.root, "AGE_DEMO.md"), "utf8")).toBe("- Add a line\n");
+    expect(await readFile(join(h.root, "WOOKY_DEMO.md"), "utf8")).toBe("- Add a line\n");
     expect(h.store.model.threads[threadId]).toMatchObject({
       status: "idle",
       providerSessionId: `demo-${threadId}`,
@@ -254,7 +254,9 @@ describe("effect runner with the demo adapter", () => {
     const answer = h.store.model.turns[threadId]?.[0]?.items.find(
       (item) => item.kind === "message",
     );
-    expect(answer).toMatchObject({ text: "Done. I added a line to AGE_DEMO.md and ran echo ok." });
+    expect(answer).toMatchObject({
+      text: "Done. I added a line to WOOKY_DEMO.md and ran echo ok.",
+    });
   });
 
   it("asks for approvals and continues when allowed", async () => {
@@ -289,7 +291,7 @@ describe("effect runner with the demo adapter", () => {
       "edit:done",
       "command:done",
     ]);
-    expect(await readFile(join(h.root, "AGE_DEMO.md"), "utf8")).toBe("- Edit please\n");
+    expect(await readFile(join(h.root, "WOOKY_DEMO.md"), "utf8")).toBe("- Edit please\n");
   });
 
   it("marks denied tools as failed and does not write the file", async () => {
@@ -319,7 +321,7 @@ describe("effect runner with the demo adapter", () => {
         .filter((item) => item.kind === "tool")
         .map((item) => item.kind === "tool" && item.status),
     ).toEqual(["done", "failed", "failed"]);
-    await expect(readFile(join(h.root, "AGE_DEMO.md"), "utf8")).rejects.toThrow(/ENOENT/);
+    await expect(readFile(join(h.root, "WOOKY_DEMO.md"), "utf8")).rejects.toThrow(/ENOENT/);
   });
 
   it("asks only for commands in auto-edits mode", async () => {
@@ -526,7 +528,7 @@ describe("effect runner effects and recovery", () => {
     await finishedFor(h.store, turnId);
     h.dispatch({ type: "turn.revert", threadId, turnId });
     await waitForEvent(h.store, "turn.reverted");
-    expect(h.calls).toContain(`restore refs/age/checkpoints/${threadId}/${turnId}/before`);
+    expect(h.calls).toContain(`restore refs/wooky/checkpoints/${threadId}/${turnId}/before`);
     expect(h.store.model.turns[threadId]).toEqual([]);
   });
 
@@ -605,7 +607,7 @@ describe("effect runner effects and recovery", () => {
       prompt: "x",
       provider: "demo" as const,
       model: "demo",
-      checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+      checkpointBefore: "refs/wooky/checkpoints/t1/u1/before",
     };
     first.commit({ commandId: "c1", events: [turn], effects: [] });
     first.appendInternal([
@@ -615,7 +617,7 @@ describe("effect runner effects and recovery", () => {
         threadId: "t1",
         turnId: "u1",
         status: "completed",
-        checkpointAfter: "refs/age/checkpoints/t1/u1/after",
+        checkpointAfter: "refs/wooky/checkpoints/t1/u1/after",
         changedFiles: [],
         usage: null,
         error: null,
@@ -631,7 +633,7 @@ describe("effect runner effects and recovery", () => {
           threadId: "t1",
           turnId: "u1",
           cwd: root,
-          ref: "refs/age/checkpoints/t1/u1/before",
+          ref: "refs/wooky/checkpoints/t1/u1/before",
         },
       ],
     });
@@ -640,7 +642,7 @@ describe("effect runner effects and recovery", () => {
     const fake = createFakeGit();
     const second = restart(home, fake.git);
     await second.runner.idle();
-    expect(fake.calls).toEqual(["restore refs/age/checkpoints/t1/u1/before"]);
+    expect(fake.calls).toEqual(["restore refs/wooky/checkpoints/t1/u1/before"]);
     expect(second.store.model.turns.t1).toEqual([]);
     await second.runner.shutdown();
     second.store.close();
@@ -670,7 +672,7 @@ describe("effect runner effects and recovery", () => {
           prompt: "x",
           provider: "demo",
           model: "demo",
-          checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+          checkpointBefore: "refs/wooky/checkpoints/t1/u1/before",
         },
       ],
       effects: [],
@@ -684,7 +686,7 @@ describe("effect runner effects and recovery", () => {
           threadId: "t1",
           turnId: "u1",
           cwd: root,
-          ref: "refs/age/checkpoints/t1/u1/before",
+          ref: "refs/wooky/checkpoints/t1/u1/before",
         },
       ],
     });
@@ -704,7 +706,7 @@ describe("effect runner effects and recovery", () => {
   it("re-runs a worktree removal that a crash left pending", async () => {
     const home = await tempDir("recovery");
     const root = await tempDir("project");
-    const worktree = { path: join(root, ".worktrees", "t1"), branch: "age/t1" };
+    const worktree = { path: join(root, ".worktrees", "t1"), branch: "wooky/t1" };
     const first = seededStore(home, root, { worktree });
     first.commit({
       commandId: "c1",
@@ -1141,7 +1143,7 @@ describe("effect runner rewind, questions, queue and plans", () => {
       prompt: "first",
       provider: "demo" as const,
       model: "demo",
-      checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+      checkpointBefore: "refs/wooky/checkpoints/t1/u1/before",
     };
     seeded.commit({ commandId: "c1", events: [started], effects: [] });
     seeded.appendInternal([
@@ -1321,7 +1323,7 @@ describe("effect runner rewind, questions, queue and plans", () => {
           prompt: "first",
           provider: "demo",
           model: "demo",
-          checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+          checkpointBefore: "refs/wooky/checkpoints/t1/u1/before",
         },
       ],
       effects: [],

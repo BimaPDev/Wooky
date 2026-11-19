@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { MAX_THEME_IMPORT_TEXT } from "./theme-import.ts";
 import { createThemeStore } from "./themes.ts";
 
-export const THEME_USAGE = `Usage: age theme <command>
+export const THEME_USAGE = `Usage: wooky theme <command>
 
   list              List installed theme ids
   set <file>        Import a theme file and activate it
@@ -12,7 +12,7 @@ export const THEME_USAGE = `Usage: age theme <command>
   off               Switch back to the default theme`;
 
 function resolveAgeHome(env: Record<string, string | undefined>): string {
-  return resolve(env.AGE_HOME ?? join(homedir(), ".age"));
+  return resolve(env.WOOKY_HOME ?? join(homedir(), ".wooky"));
 }
 
 export function runThemeCli(args: string[], env: Record<string, string | undefined>): void {

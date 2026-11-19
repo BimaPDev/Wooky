@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname;
-const SKIP = new Set(["node_modules", "dist", "out", "release", ".git", ".age", ".age-dev"]);
+const SKIP = new Set(["node_modules", "dist", "out", "release", ".git", ".wooky", ".wooky-dev"]);
 
 function walk(dir, files = []) {
   let entries;
@@ -51,8 +51,8 @@ const rules = [
   {
     id: "domain-pure",
     applies: (rel) => rel.startsWith(`packages${sep}domain${sep}`),
-    imports: (spec) => spec === "@age/contracts" || spec.startsWith(".") || spec === "vitest",
-    message: "domain is pure: only @age/contracts and local files (no node:*, no I/O)",
+    imports: (spec) => spec === "@wooky/contracts" || spec.startsWith(".") || spec === "vitest",
+    message: "domain is pure: only @wooky/contracts and local files (no node:*, no I/O)",
   },
   {
     id: "web-no-server",
@@ -60,14 +60,14 @@ const rules = [
     imports: (spec) =>
       !spec.startsWith("node:") &&
       !spec.includes("apps/server") &&
-      spec !== "@age/server" &&
+      spec !== "@wooky/server" &&
       !["fs", "child_process", "path", "os"].includes(spec),
     message: "web is a remote control: no node built-ins or server imports",
   },
   {
     id: "server-no-web",
     applies: (rel) => rel.startsWith(`apps${sep}server${sep}`),
-    imports: (spec) => !spec.includes("apps/web") && spec !== "@age/web" && spec !== "react",
+    imports: (spec) => !spec.includes("apps/web") && spec !== "@wooky/web" && spec !== "react",
     message: "server must not import UI code",
   },
 ];
@@ -77,9 +77,9 @@ for (const file of files) {
   const text = readFileSync(file, "utf8");
   const lines = text.split("\n");
   const isTest = /\.test\.tsx?$/.test(file);
-  // File-level escape hatch, for the colour rule only: `// age-allow-file color: <reason>` on line 1,
+  // File-level escape hatch, for the colour rule only: `// wooky-allow-file color: <reason>` on line 1,
   // honoured only for theme data (state/), dev fixtures (dev/) and tests.
-  const fileColorHatch = /^\/\/\s*age-allow-file color:\s*\S/.test(lines[0] ?? "");
+  const fileColorHatch = /^\/\/\s*wooky-allow-file color:\s*\S/.test(lines[0] ?? "");
   const fileColorHatchScope =
     /^apps\/web\/src\/(state|dev)\//.test(rel.split(sep).join("/")) || isTest;
   const allowFileColor = fileColorHatch && fileColorHatchScope;
@@ -88,7 +88,7 @@ for (const file of files) {
       file,
       1,
       "file-hatch-scope",
-      "age-allow-file color is only allowed in state/, dev/ and tests",
+      "wooky-allow-file color is only allowed in state/, dev/ and tests",
     );
   }
 
@@ -103,7 +103,7 @@ for (const file of files) {
 
   lines.forEach((content, i) => {
     const line = i + 1;
-    const allow = (id) => (lines[i - 1] ?? "").includes(`age-allow ${id}`);
+    const allow = (id) => (lines[i - 1] ?? "").includes(`wooky-allow ${id}`);
 
     // Complexity lives at the adapter boundary: only adapters, git, terminal and the
     // desktop shell (which owns the server child) spawn processes.
@@ -118,7 +118,7 @@ for (const file of files) {
         file,
         line,
         "spawn-boundary",
-        "child_process only in server providers/, git/, terminal/, process/ (else age-allow)",
+        "child_process only in server providers/, git/, terminal/, process/ (else wooky-allow)",
       );
     }
 

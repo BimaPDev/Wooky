@@ -10,7 +10,7 @@ import {
   type RpcResult,
   type TerminalPush,
   type ThemesPush,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "offline";
 
@@ -150,7 +150,7 @@ export function createRpcClient(options: RpcClientOptions) {
       await call("subscribe", { fromSeq: options.getSeq() });
     } catch (error) {
       if (error instanceof RpcCallError && error.code === "disconnected") return;
-      console.error("AGE sync failed", error);
+      console.error("Wooky sync failed", error);
     }
   }
 
@@ -159,12 +159,12 @@ export function createRpcClient(options: RpcClientOptions) {
     try {
       raw = typeof data === "string" ? JSON.parse(data) : data;
     } catch {
-      console.error("AGE: unreadable server message");
+      console.error("Wooky: unreadable server message");
       return;
     }
     const parsed = ServerMessage.safeParse(raw);
     if (!parsed.success) {
-      console.error("AGE: unexpected server message", parsed.error.message);
+      console.error("Wooky: unexpected server message", parsed.error.message);
       return;
     }
     const message = parsed.data;

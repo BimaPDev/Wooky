@@ -308,7 +308,7 @@ export const Turn = z.object({
   items: z.array(TimelineItem),
   startedAt: IsoTime,
   endedAt: IsoTime.nullable(),
-  /** Hidden git refs captured around the turn (refs/age/checkpoints/...). */
+  /** Hidden git refs captured around the turn (refs/wooky/checkpoints/...). */
   checkpointBefore: z.string().nullable(),
   checkpointAfter: z.string().nullable(),
   changedFiles: z.array(z.string()),
@@ -374,7 +374,7 @@ export const ProviderStatus = z.object({
     }),
   ),
   /**
-   * live: the CLI reported it. static: built into AGE. custom: the user added it.
+   * live: the CLI reported it. static: built into Wooky. custom: the user added it.
    * Applies to models that omit their own source.
    */
   modelsSource: ModelsSource.optional(),

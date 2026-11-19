@@ -1,4 +1,4 @@
-import type { TimelineItem } from "@age/contracts";
+import type { TimelineItem } from "@wooky/contracts";
 import { memo, useEffect, useState } from "react";
 import { respondApproval } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";

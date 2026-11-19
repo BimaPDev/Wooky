@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { ProviderEvent, TurnFailure } from "@age/contracts";
+import type { ProviderEvent, TurnFailure } from "@wooky/contracts";
 import { z } from "zod";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { prefixSessionPrompt } from "../agent-env.ts";
@@ -137,7 +137,7 @@ export async function* runAcpTurn(
     const init = await client.request("initialize", initializeParams(), InitializeResult);
     if (init.protocolVersion !== ACP_PROTOCOL_VERSION) {
       yield failed(
-        `This agent speaks ACP protocol ${init.protocolVersion}. AGE speaks protocol ${ACP_PROTOCOL_VERSION}.`,
+        `This agent speaks ACP protocol ${init.protocolVersion}. Wooky speaks protocol ${ACP_PROTOCOL_VERSION}.`,
       );
       return;
     }

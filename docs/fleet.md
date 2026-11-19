@@ -5,7 +5,7 @@ one prompt on several agents at once. The user compares their diffs, picks a win
 merges that worktree back into the project branch. Review notes on a diff go back to the
 agent as one prompt.
 
-The shapes live in `@age/contracts`. `@age/domain` folds the events and derives the board.
+The shapes live in `@wooky/contracts`. `@wooky/domain` folds the events and derives the board.
 `decide` currently rejects every fleet command with `not implemented`. The server station
 enforces the rules below; the reducer only records events that were accepted.
 
@@ -35,7 +35,7 @@ without `groups` or `reviewNotes` reads as two empty maps.
 - A worker report summary is at most 8000 characters.
 - `agents.wait` accepts a timeout up to 600000 ms (ten minutes).
 
-`FLEET_LIMITS` in `@age/contracts` is the same set of numbers.
+`FLEET_LIMITS` in `@wooky/contracts` is the same set of numbers.
 
 ## Commands
 
@@ -188,19 +188,19 @@ elapses. `finished` is the ids that reached one of those two statuses. `pending`
 rest. `agents.result` reads `thread.report` for `summary` and `diffStat`, and
 `worktree.path` for `worktreePath`. `summary` is `""` when the worker has not reported.
 
-## `age agents`
+## `wooky agents`
 
 A coordinator calls this from its shell during a turn. It speaks the RPC above to the
-local server. `spawn` and `list` use `$AGE_THREAD_ID` as `parentThreadId` and exit with
-`AGE_THREAD_ID is not set` when that variable is missing. The server is `$AGE_SERVER_URL`,
-or `AGE_HOME/server.json` when that file names a pid that is still alive. Otherwise the
-command exits with `AGE server is not running`.
+local server. `spawn` and `list` use `$WOOKY_THREAD_ID` as `parentThreadId` and exit with
+`WOOKY_THREAD_ID is not set` when that variable is missing. The server is `$WOOKY_SERVER_URL`,
+or `WOOKY_HOME/server.json` when that file names a pid that is still alive. Otherwise the
+command exits with `Wooky server is not running`.
 
 ```text
-age agents spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--prompt-file <path>] -- <prompt...>
-age agents list [--json]
-age agents wait [--timeout <seconds>] <threadId>...
-age agents result <threadId> [--json]
+wooky agents spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--prompt-file <path>] -- <prompt...>
+wooky agents list [--json]
+wooky agents wait [--timeout <seconds>] <threadId>...
+wooky agents result <threadId> [--json]
 ```
 
 `--timeout` is seconds, default 600, and is sent as `timeoutMs`. A prompt of `-`, or
@@ -210,8 +210,8 @@ row per child: id, status, provider, model, title. `--json` prints the `FleetRow
 are pending and 2 when any remain. `result` prints the status, the summary, the diff stat
 when present, and the worktree path. `--json` prints the `AgentResult` object.
 
-The server writes `AGE_HOME/server.json` (`url`, `pid`, `startedAt`) and `AGE_HOME/bin/age`
+The server writes `WOOKY_HOME/server.json` (`url`, `pid`, `startedAt`) and `WOOKY_HOME/bin/wooky`
 when it starts, and removes both when it stops. The shim runs this repo's `bin.ts` with
 the same Node the server is running under. Turns on a solo or coordinator thread receive
-`AGE_THREAD_ID`, `AGE_SERVER_URL`, that `bin` directory on `PATH`, and a short note on how
+`WOOKY_THREAD_ID`, `WOOKY_SERVER_URL`, that `bin` directory on `PATH`, and a short note on how
 to delegate. A worker receives a one-line note that it cannot spawn.

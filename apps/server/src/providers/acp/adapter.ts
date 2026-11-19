@@ -6,7 +6,7 @@ import {
   type DeviceSettings,
   type ProviderEvent,
   type ProviderStatus,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { AcpClient, AcpMethodNotFound, acpDebug } from "./client.ts";

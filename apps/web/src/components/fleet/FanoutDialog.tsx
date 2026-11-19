@@ -1,4 +1,4 @@
-import type { ProviderKind, RuntimeMode } from "@age/contracts";
+import type { ProviderKind, RuntimeMode } from "@wooky/contracts";
 import { useMemo, useRef, useState } from "react";
 import { closeFanoutDialog, startFanout } from "../../state/actions.ts";
 import { NO_DISABLED_PROVIDERS, useStore } from "../../state/store.ts";

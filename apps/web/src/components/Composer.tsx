@@ -1,4 +1,4 @@
-import { ATTACHMENT_MAX_BYTES, type InteractionMode } from "@age/contracts";
+import { ATTACHMENT_MAX_BYTES, type InteractionMode } from "@wooky/contracts";
 import { useId, useRef, useState, type ReactNode } from "react";
 import {
   composerMenuDismissalForDraft,

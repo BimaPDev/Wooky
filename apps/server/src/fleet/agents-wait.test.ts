@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Thread } from "@age/contracts";
+import type { Thread } from "@wooky/contracts";
 import { openEventStore } from "../store/event-store.ts";
 import { tempDir } from "../testing.ts";
 import { waitForAgentThreads } from "./agents-wait.ts";
@@ -75,7 +75,7 @@ describe("agents.wait", () => {
         prompt: "go",
         provider: "demo",
         model: "demo",
-        checkpointBefore: "refs/age/checkpoints/w1/u1/before",
+        checkpointBefore: "refs/wooky/checkpoints/w1/u1/before",
       },
       {
         type: "turn.finished",

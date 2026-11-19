@@ -7,7 +7,7 @@ import {
   type UsageHistoryParams,
   type UsageHistoryResult,
   type UsageHistorySource,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { z } from "zod";
 import { CACHE_FILE_NAME } from "./history-cache.ts";
 import type {
@@ -30,7 +30,7 @@ export interface WorkerHost {
 }
 
 export interface WorkerHostOptions {
-  /** AGE_HOME. The scan cache lives there. */
+  /** WOOKY_HOME. The scan cache lives there. */
   home: string;
   /** User home the readers look under. */
   userHome: string;
@@ -71,7 +71,7 @@ export function createWorkerHost(options: WorkerHostOptions): WorkerHost {
 
   function start(): WorkerLike {
     const init: WorkerInit = {
-      ageUsageHistory: true,
+      wookyUsageHistory: true,
       homeDir: options.userHome,
       cachePath: join(options.home, CACHE_FILE_NAME),
       readersModule: options.readersModule ?? null,
@@ -153,7 +153,7 @@ export interface HistoryTimer {
 }
 
 export interface HistoryServiceOptions {
-  /** AGE_HOME: where the scan cache and the rate table live. Tests pass a temp directory. */
+  /** WOOKY_HOME: where the scan cache and the rate table live. Tests pass a temp directory. */
   home: string;
   /** User home the readers look under. Default: the OS home. */
   userHome?: string;

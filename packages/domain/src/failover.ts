@@ -1,4 +1,4 @@
-import type { ModelTarget, ReadModel, Thread, TurnFailure } from "@age/contracts";
+import type { ModelTarget, ReadModel, Thread, TurnFailure } from "@wooky/contracts";
 
 /** Default best-first ranking when the device chain is empty. Model ids match provider adapters. */
 /** Best first. Unavailable or unlisted targets are skipped by the caller's `available`. */

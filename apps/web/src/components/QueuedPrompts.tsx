@@ -1,4 +1,4 @@
-import { queuedPrompts } from "@age/domain";
+import { queuedPrompts } from "@wooky/domain";
 import { memo } from "react";
 import { canPromoteQueuedPrompt } from "../lib/queue-enablement.ts";
 import { promoteQueuedPrompt, removeQueuedPrompt } from "../state/actions.ts";

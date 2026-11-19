@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { DeviceSettings, ProviderEvent, ProviderStatus } from "@age/contracts";
+import type { DeviceSettings, ProviderEvent, ProviderStatus } from "@wooky/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { childEnv } from "../acp/env.ts";
 import { loadSettings, settingsFor } from "../acp/settings.ts";

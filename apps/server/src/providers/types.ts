@@ -9,7 +9,7 @@ import type {
   RuntimeMode,
   ThreadRole,
   UserInputRequest,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 /**
  * The adapter boundary. All provider-specific complexity lives behind this

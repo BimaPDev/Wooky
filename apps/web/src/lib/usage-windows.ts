@@ -1,4 +1,4 @@
-import type { UsageWindowDays } from "@age/contracts";
+import type { UsageWindowDays } from "@wooky/contracts";
 
 export type UsageResolution = "hour" | "day";
 

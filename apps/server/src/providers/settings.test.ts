@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ProviderSettings, ProviderStatus } from "@age/contracts";
+import type { ProviderSettings, ProviderStatus } from "@wooky/contracts";
 import {
   checkBinaryPath,
   claudeExtraArgs,
@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function tempFile(mode: number): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "age-bin-"));
+  const dir = await mkdtemp(join(tmpdir(), "wooky-bin-"));
   dirs.push(dir);
   const file = join(dir, "tool");
   await writeFile(file, "#!/bin/sh\n");
@@ -33,7 +33,7 @@ function settings(partial: Partial<ProviderSettings>): ProviderSettings {
 describe("checkBinaryPath", () => {
   it("rejects a relative path, a missing file and a directory", async () => {
     expect(checkBinaryPath("codex", "Codex")).toMatchObject({ ok: false, problem: /absolute/ });
-    expect(checkBinaryPath(join(tmpdir(), "age-no-such-binary"), "Codex")).toMatchObject({
+    expect(checkBinaryPath(join(tmpdir(), "wooky-no-such-binary"), "Codex")).toMatchObject({
       ok: false,
       problem: /No file/,
     });
@@ -80,11 +80,11 @@ describe("resolveLaunch", () => {
 describe("withUserEnv", () => {
   it("returns process.env itself when empty, else a merged copy", () => {
     expect(withUserEnv({})).toBe(process.env);
-    const merged = withUserEnv({ AGE_TEST_ENV_VALUE: "yes" });
+    const merged = withUserEnv({ WOOKY_TEST_ENV_VALUE: "yes" });
     expect(merged).not.toBe(process.env);
-    expect(merged.AGE_TEST_ENV_VALUE).toBe("yes");
+    expect(merged.WOOKY_TEST_ENV_VALUE).toBe("yes");
     expect(merged.PATH).toBe(process.env.PATH);
-    expect(process.env.AGE_TEST_ENV_VALUE).toBeUndefined();
+    expect(process.env.WOOKY_TEST_ENV_VALUE).toBeUndefined();
   });
 });
 

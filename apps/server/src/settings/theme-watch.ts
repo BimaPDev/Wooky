@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import type { ThemesPush } from "@age/contracts";
+import type { ThemesPush } from "@wooky/contracts";
 import type { ThemeStore } from "./themes.ts";
 
 const IGNORED_NAME_RE = /(?:^|[/\\])\.|~$|\.tmp$|\.swp$|\.bak$/;

@@ -1,4 +1,4 @@
-import type { ToolKind } from "@age/contracts";
+import type { ToolKind } from "@wooky/contracts";
 import type { ReactNode, SVGProps } from "react";
 
 function Svg({ children, ...props }: SVGProps<SVGSVGElement> & { children: ReactNode }) {

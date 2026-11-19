@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ProviderEvent, UserInputRequest } from "@age/contracts";
+import type { ApprovalRequest, ProviderEvent, UserInputRequest } from "@wooky/contracts";
 import type { AccountInfo, ModelInfo, Options, query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -540,7 +540,7 @@ describe("abort and failure", () => {
 describe("probe", () => {
   it("reports a missing binary in one sentence", async () => {
     const status = await createClaudeAdapter({
-      claudeBin: "/nonexistent/age-test/claude",
+      claudeBin: "/nonexistent/wooky-test/claude",
     }).probe();
     expect(status).toMatchObject({
       kind: "claude",
@@ -553,7 +553,7 @@ describe("probe", () => {
   });
 
   it("still reports installed when --version exits non-zero", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "age-claude-probe-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-claude-probe-"));
     const bin = join(dir, "claude");
     await writeFile(bin, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
     const status = await createClaudeAdapter({ claudeBin: bin }).probe();
@@ -965,7 +965,7 @@ describe("plan mode", () => {
   });
 
   it("reads the plan from a tracked plan file when ExitPlanMode has no plan arg", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "age-plan-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-plan-"));
     const planPath = join(dir, ".claude", "plans", "task.md");
     const filePlan = "## From file\n\nStep one";
     await mkdir(join(dir, ".claude", "plans"), { recursive: true });
@@ -993,8 +993,8 @@ describe("plan mode", () => {
   });
 
   it("reads a plan file from the default ~/.claude/plans location", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "age-plan-home-"));
-    const fakeHome = await mkdtemp(join(tmpdir(), "age-fake-home-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-plan-home-"));
+    const fakeHome = await mkdtemp(join(tmpdir(), "wooky-fake-home-"));
     setPlanUserHomeForTests(fakeHome);
     const planPath = join(fakeHome, ".claude", "plans", "task.md");
     const filePlan = "## Home plan";
@@ -1019,7 +1019,7 @@ describe("plan mode", () => {
   });
 
   it("reads a plan from a custom plansDirectory setting", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "age-plan-settings-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-plan-settings-"));
     const customDir = join(dir, "my-plans");
     await mkdir(join(dir, ".claude"), { recursive: true });
     await mkdir(customDir, { recursive: true });
@@ -1049,7 +1049,7 @@ describe("plan mode", () => {
   });
 
   it("denies with a specific message when the plan file is outside allowed roots", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "age-plan-deny-outside-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-plan-deny-outside-"));
     const outside = join(dir, "rogue.md");
     await writeFile(outside, "## rogue");
 
@@ -1071,7 +1071,7 @@ describe("plan mode", () => {
   });
 
   it("denies with a specific message when the plan file is too large", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "age-plan-deny-large-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-plan-deny-large-"));
     const planPath = join(dir, ".claude", "plans", "big.md");
     await mkdir(join(dir, ".claude", "plans"), { recursive: true });
     await writeFile(planPath, "x".repeat((1 << 20) + 1));
@@ -1160,7 +1160,7 @@ describe("plan mode", () => {
 describe("capabilities", () => {
   it("reports rewind, questions, plan mode and queue, installed or not", async () => {
     const missing = await createClaudeAdapter({
-      claudeBin: "/nonexistent/age-test/claude",
+      claudeBin: "/nonexistent/wooky-test/claude",
     }).probe();
     const { fake } = fakeQueryForAuthProbe({ account: { tokenSource: "oauth" } });
     const present = await createClaudeAdapter({

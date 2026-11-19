@@ -7,7 +7,7 @@ import type {
   ProviderKind,
   ProviderStatus,
   RuntimeMode,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { isAvailable } from "../components/labels.ts";
 import { defaultModelFor } from "../components/providers/helpers.ts";
 import { defaultEffortFor, modelHasFlag } from "./composer-model.ts";
@@ -164,7 +164,8 @@ export function createdThreadId(event: AgeEvent, commandId: string): string | nu
   return event.type === "thread.created" && event.commandId === commandId ? event.thread.id : null;
 }
 
-const PREFS_KEY = "age.newThread";
+const PREFS_KEY = "wooky.newThread";
+const LEGACY_PREFS_KEY = "age.newThread";
 
 const RUNTIME_MODES: readonly RuntimeMode[] = ["approve", "auto-edits", "full"];
 
@@ -188,7 +189,7 @@ export function parsePrefs(raw: string | null): DraftPrefs {
 
 export function loadDraftPrefs(): DraftPrefs {
   try {
-    return parsePrefs(localStorage.getItem(PREFS_KEY));
+    return parsePrefs(localStorage.getItem(PREFS_KEY) ?? localStorage.getItem(LEGACY_PREFS_KEY));
   } catch {
     return DEFAULT_DRAFT_PREFS;
   }

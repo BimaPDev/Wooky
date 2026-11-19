@@ -6,7 +6,7 @@ import type {
   ThreadGroup,
   TimelineItem,
   Turn,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 /**
  * The one projection. Pure, synchronous, no I/O. Server and every client apply

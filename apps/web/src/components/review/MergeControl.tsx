@@ -1,4 +1,4 @@
-import type { MergeState } from "@age/contracts";
+import type { MergeState } from "@wooky/contracts";
 import { useEffect, useId, useState } from "react";
 import { loadMergePreview } from "../../state/actions.ts";
 import { useStore } from "../../state/store.ts";

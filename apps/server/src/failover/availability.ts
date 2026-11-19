@@ -4,7 +4,7 @@ import {
   type ModelTarget,
   type ProviderStatus,
   type Thread,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 export function buildAvailable(
   statuses: readonly ProviderStatus[],

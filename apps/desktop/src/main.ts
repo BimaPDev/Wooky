@@ -10,7 +10,7 @@ import {
   shell,
   type MenuItemConstructorOptions,
 } from "electron";
-// age-allow child-process: the shell owns exactly one child, the AGE server.
+// wooky-allow child-process: the shell owns exactly one child, the Wooky server.
 import { spawn, type ChildProcess } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +34,7 @@ import {
 const SERVER_START_TIMEOUT_MS = 20_000;
 const SERVER_STOP_TIMEOUT_MS = 5_000;
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const isDev = !app.isPackaged || process.env.AGE_DESKTOP_URL !== undefined;
+const isDev = !app.isPackaged || process.env.WOOKY_DESKTOP_URL !== undefined;
 
 type Page =
   | { kind: "starting" }
@@ -137,7 +137,7 @@ function createWindow(): void {
 }
 
 function spawnServer(): ChildProcess {
-  const home = process.env.AGE_HOME || join(homedir(), ".age");
+  const home = process.env.WOOKY_HOME || join(homedir(), ".wooky");
   const launch = buildServerLaunch({
     execPath: process.execPath,
     loaderUrl: import.meta.resolve("tsx"),
@@ -176,7 +176,7 @@ function childEvents(child: ChildProcess): ChildEvents {
 }
 
 async function startup(): Promise<void> {
-  const devUrl = process.env.AGE_DESKTOP_URL;
+  const devUrl = process.env.WOOKY_DESKTOP_URL;
   if (devUrl) {
     setPage({ kind: "server", url: devUrl });
     return;
@@ -201,7 +201,7 @@ async function startup(): Promise<void> {
     const url = await awaitListening(childEvents(child), SERVER_START_TIMEOUT_MS);
     setPage({ kind: "server", url });
   } catch (error) {
-    console.error("AGE server failed to start", error);
+    console.error("Wooky server failed to start", error);
     // Never leave a half-started server holding the port.
     if (server === child) server = undefined;
     void stopServer(child);
@@ -263,7 +263,7 @@ function focusWindow(): void {
   win.focus();
 }
 
-const PICK_FOLDER_CHANNEL = "age:pick-folder";
+const PICK_FOLDER_CHANNEL = "wooky:pick-folder";
 let folderPickerRegistered = false;
 const runFolderPick = createSingleFlight();
 

@@ -5,7 +5,7 @@ import {
   type SDKRateLimitInfo,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { LimitWindow, ProviderLimits } from "@age/contracts";
+import type { LimitWindow, ProviderLimits } from "@wooky/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 
 type ClaudeWindowKey = "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet";

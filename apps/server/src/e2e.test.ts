@@ -1,6 +1,6 @@
 // Head-chef integration test: the whole user journey across stations, with a real
 // server, real WebSocket, real git and the demo agent. Nothing here is faked.
-// age-allow child-process: the fixture builds a real git repo to test against.
+// wooky-allow child-process: the fixture builds a real git repo to test against.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import {
-  AGE_WS_PATH,
+  WOOKY_WS_PATH,
   FailoverSettings,
   RpcPush,
   RpcResponse,
@@ -19,7 +19,7 @@ import {
   type ProviderEvent,
   type ReadModel,
   type TurnFailure,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { createDemoAdapter } from "./providers/demo/adapter.ts";
 import type { ProviderAdapter, TurnInput } from "./providers/types.ts";
 import { startServer, type RunningServer } from "./server.ts";
@@ -46,7 +46,7 @@ function git(cwd: string, ...args: string[]): string {
 
 async function makeRepo(): Promise<string> {
   const root = await tempDir("e2e-repo");
-  cleanup.push(() => rm(join(root, "..", ".age-worktrees"), { recursive: true, force: true }));
+  cleanup.push(() => rm(join(root, "..", ".wooky-worktrees"), { recursive: true, force: true }));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   git(root, "init", "-q", "-b", "main");
   writeFileSync(join(root, "README.md"), "hello\n");
@@ -89,7 +89,7 @@ function failoverAdapter(
 }
 
 async function connect(server: RunningServer) {
-  const socket = new WebSocket(`${server.url.replace("http", "ws")}${AGE_WS_PATH}`);
+  const socket = new WebSocket(`${server.url.replace("http", "ws")}${WOOKY_WS_PATH}`);
   cleanup.push(() => socket.close());
   const pending = new Map<number, (response: RpcResponse) => void>();
   const pushes: AgeEvent[] = [];
@@ -176,7 +176,7 @@ describe("end-to-end: isolated demo turn with approvals, diff, revert, restart",
     const threadId = (await client.next("thread.created")).thread.id;
     const { worktree } = await client.next("thread.worktreeBound", (e) => e.threadId === threadId);
     expect(existsSync(worktree.path)).toBe(true);
-    expect(worktree.branch).toBe(`age/${threadId}`);
+    expect(worktree.branch).toBe(`wooky/${threadId}`);
 
     // Answer every approval card with "allow" until the turn finishes.
     const answered = new Set<string>();
@@ -205,19 +205,19 @@ describe("end-to-end: isolated demo turn with approvals, diff, revert, restart",
     const done = await client.next("turn.finished", (e) => e.threadId === threadId);
     expect(done.status).toBe("completed");
     expect(answered.size).toBeGreaterThan(0);
-    expect(done.changedFiles).toContain("AGE_DEMO.md");
-    expect(done.checkpointAfter).toMatch(/^refs\/age\/checkpoints\//);
+    expect(done.changedFiles).toContain("WOOKY_DEMO.md");
+    expect(done.checkpointAfter).toMatch(/^refs\/wooky\/checkpoints\//);
 
     // Isolation: the edit lives in the worktree only; the user's checkout is untouched.
-    expect(existsSync(join(worktree.path, "AGE_DEMO.md"))).toBe(true);
-    expect(existsSync(join(root, "AGE_DEMO.md"))).toBe(false);
+    expect(existsSync(join(worktree.path, "WOOKY_DEMO.md"))).toBe(true);
+    expect(existsSync(join(root, "WOOKY_DEMO.md"))).toBe(false);
     expect(git(root, "status", "--porcelain")).toBe("");
     expect(git(root, "rev-parse", "HEAD")).toBe(headBefore);
     expect(git(root, "branch", "--show-current")).toBe("main");
 
     // Diff for the thread shows the demo file.
     const diff = await client.call<FileDiff[]>("git.diff", { threadId });
-    expect(diff.find((f) => f.path === "AGE_DEMO.md")?.status).toBe("added");
+    expect(diff.find((f) => f.path === "WOOKY_DEMO.md")?.status).toBe("added");
 
     // A second client sees the same state from a snapshot.
     const other = await connect(server);
@@ -228,7 +228,7 @@ describe("end-to-end: isolated demo turn with approvals, diff, revert, restart",
     const turnId = done.turnId;
     await client.dispatch({ type: "turn.revert", threadId, turnId });
     await client.next("turn.reverted", (e) => e.turnId === turnId);
-    expect(existsSync(join(worktree.path, "AGE_DEMO.md"))).toBe(false);
+    expect(existsSync(join(worktree.path, "WOOKY_DEMO.md"))).toBe(false);
     expect(readFileSync(join(worktree.path, "README.md"), "utf8")).toBe("hello\n");
 
     // Restart with the same home: state is rebuilt from the event log.
@@ -246,7 +246,7 @@ describe("end-to-end: isolated demo turn with approvals, diff, revert, restart",
     await again.dispatch({ type: "thread.remove", threadId });
     await again.next("thread.removed", (e) => e.threadId === threadId);
     await waitUntilGone(worktree.path, again);
-    expect(git(root, "branch", "--list", `age/${threadId}`)).toContain(`age/${threadId}`);
+    expect(git(root, "branch", "--list", `wooky/${threadId}`)).toContain(`wooky/${threadId}`);
   });
 });
 
@@ -310,7 +310,7 @@ describe("end-to-end: plan, queue, question, conversation-only revert", () => {
     });
     const implementDone = await implemented;
     expect(implementDone.status).toBe("completed");
-    expect(existsSync(join(root, "AGE_DEMO.md"))).toBe(true);
+    expect(existsSync(join(root, "WOOKY_DEMO.md"))).toBe(true);
 
     const followUp = await client.next(
       "turn.started",
@@ -332,7 +332,7 @@ describe("end-to-end: plan, queue, question, conversation-only revert", () => {
       "turn.reverted",
       (event) => event.turnId === followUp.turnId && event.restoredFiles === false,
     );
-    expect(existsSync(join(root, "AGE_DEMO.md"))).toBe(true);
+    expect(existsSync(join(root, "WOOKY_DEMO.md"))).toBe(true);
     const kept = implementDone.nativeRef;
     const bound = await client.next(
       "thread.sessionBound",

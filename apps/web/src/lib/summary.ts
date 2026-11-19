@@ -1,4 +1,4 @@
-import type { Turn } from "@age/contracts";
+import type { Turn } from "@wooky/contracts";
 
 export function formatDuration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));

@@ -8,7 +8,7 @@ function urlPattern(profile: CssSafetyProfile): RegExp {
   return profile === "svg" ? URL_AFTER_SVG : URL_AFTER_THEME;
 }
 
-/** Throws when CSS violates AGE/svg safety rules. */
+/** Throws when CSS violates Wooky/svg safety rules. */
 export function assertSafeCss(
   css: string,
   context: string,

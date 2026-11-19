@@ -1,4 +1,4 @@
-import type { Origin, UsageHistoryBucket, UsageWindowDays } from "@age/contracts";
+import type { Origin, UsageHistoryBucket, UsageWindowDays } from "@wooky/contracts";
 import type { HistoryRecord } from "./history-reader.ts";
 import type { Pricer } from "./pricing.ts";
 

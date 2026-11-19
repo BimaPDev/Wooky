@@ -4,7 +4,7 @@ import {
   type ProviderKind,
   type ProviderSettings,
   type ProviderStatus,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { loadDeviceSettings, patchDeviceSettings } from "../state/appearance.ts";
 import {
@@ -700,7 +700,7 @@ function AboutPage() {
     <SettingsSection title="Wooky">
       <p>
         Local-first workspace for coding agents. Appearance themes are JSON files under{" "}
-        <code className="mono">AGE_HOME/themes</code> so you or an agent can edit them.
+        <code className="mono">WOOKY_HOME/themes</code> so you or an agent can edit them.
       </p>
     </SettingsSection>
   );

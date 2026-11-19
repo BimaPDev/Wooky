@@ -1,8 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { AgeEvent, type PendingEvent, type ReadModel, type RpcResult } from "@age/contracts";
-import { applyEvents, emptyReadModel } from "@age/domain";
+import { AgeEvent, type PendingEvent, type ReadModel, type RpcResult } from "@wooky/contracts";
+import { applyEvents, emptyReadModel } from "@wooky/domain";
 import type { Effect, StoredEffect } from "../orchestrator/effects.ts";
 
 export type DispatchResult = RpcResult<"dispatch">;

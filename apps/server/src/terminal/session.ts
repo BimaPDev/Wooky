@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { TerminalPush } from "@age/contracts";
+import type { TerminalPush } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import { defaultCwd, resolveShellCommand, type ShellCommand } from "./shell.ts";
 
@@ -33,7 +33,7 @@ export function createTerminalManager(): TerminalManager {
   ): { sessionId: string; shell: string; lineEnding: ShellCommand["lineEnding"] } {
     const shell = resolveShellCommand();
     const cwd = defaultCwd(input.cwd);
-    // age-allow child-process: terminal sessions are user-facing shells the server owns.
+    // wooky-allow child-process: terminal sessions are user-facing shells the server owns.
     const child = spawn(shell.file, shell.args, {
       cwd,
       env: {
@@ -119,7 +119,7 @@ function killTree(child: ChildProcessWithoutNullStreams) {
   if (pid === undefined) return;
   try {
     if (process.platform === "win32") {
-      // age-allow child-process: taskkill targets only the PID we spawned (and its tree).
+      // wooky-allow child-process: taskkill targets only the PID we spawned (and its tree).
       spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
     } else {
       child.kill("SIGTERM");

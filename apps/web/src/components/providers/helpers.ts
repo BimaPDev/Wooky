@@ -5,7 +5,7 @@ import type {
   ProviderKind,
   ProviderSettings,
   ProviderStatus,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 /** Limits from `ProviderSettings` and `AcpAgentConfig`. The server rejects anything above them. */
 export const LIMITS = {

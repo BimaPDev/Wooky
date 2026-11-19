@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DeviceSettings, type ApprovalRequest, type ProviderEvent } from "@age/contracts";
+import { DeviceSettings, type ApprovalRequest, type ProviderEvent } from "@wooky/contracts";
 import { setAgentRuntime } from "../agent-env.ts";
 import { builtinAdapters } from "../index.ts";
 import { createProviderRegistry } from "../registry.ts";
@@ -14,12 +14,12 @@ import { SILENT_AGENT_NOTICE } from "./turn.ts";
 import { FAKE_ACP_VERSION } from "./fixtures/fake-acp-agent.mjs";
 
 const ENV_KEYS = [
-  "AGE_FAKE_ACP_SCENARIO",
-  "AGE_FAKE_ACP_LOG",
-  "AGE_FAKE_ACP_ENV_FILE",
-  "AGE_FAKE_ACP_TOOL_KIND",
-  "AGE_FAKE_ACP_AUTH",
-  "AGE_TEST_ENV_MARKER",
+  "WOOKY_FAKE_ACP_SCENARIO",
+  "WOOKY_FAKE_ACP_LOG",
+  "WOOKY_FAKE_ACP_ENV_FILE",
+  "WOOKY_FAKE_ACP_TOOL_KIND",
+  "WOOKY_FAKE_ACP_AUTH",
+  "WOOKY_TEST_ENV_MARKER",
 ] as const;
 
 async function collect(gen: AsyncIterable<ProviderEvent>): Promise<ProviderEvent[]> {
@@ -105,7 +105,7 @@ describe("ACP adapter", () => {
   });
 
   async function tempDir() {
-    home = await mkdtemp(join(tmpdir(), "age-acp-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-acp-"));
     return home;
   }
 
@@ -141,7 +141,7 @@ describe("ACP adapter", () => {
     );
     expect(full.some((event) => event.type === "item" && event.item.kind === "notice")).toBe(false);
 
-    process.env.AGE_FAKE_ACP_SCENARIO = "permission";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "permission";
     const asked = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(baseInput({ runtimeMode: "approve" })),
     );
@@ -151,10 +151,10 @@ describe("ACP adapter", () => {
   });
 
   it("approves and denies a tool permission", async () => {
-    process.env.AGE_FAKE_ACP_SCENARIO = "permission";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "permission";
     const dir = await tempDir();
     const log = join(dir, "log");
-    process.env.AGE_FAKE_ACP_LOG = log;
+    process.env.WOOKY_FAKE_ACP_LOG = log;
     const approvals: ApprovalRequest[] = [];
     const allowed = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(
@@ -191,7 +191,7 @@ describe("ACP adapter", () => {
   });
 
   it("skips the card in full mode and for edits in auto-edits", async () => {
-    process.env.AGE_FAKE_ACP_SCENARIO = "permission";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "permission";
     const asked: string[] = [];
     const full = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(
@@ -207,7 +207,7 @@ describe("ACP adapter", () => {
     expect(doneOf(full)?.status).toBe("completed");
     expect(asked).toEqual([]);
 
-    process.env.AGE_FAKE_ACP_TOOL_KIND = "edit";
+    process.env.WOOKY_FAKE_ACP_TOOL_KIND = "edit";
     const edits = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(
         baseInput({
@@ -222,7 +222,7 @@ describe("ACP adapter", () => {
     expect(doneOf(edits)?.status).toBe("completed");
     expect(asked).toEqual([]);
 
-    delete process.env.AGE_FAKE_ACP_TOOL_KIND;
+    delete process.env.WOOKY_FAKE_ACP_TOOL_KIND;
     const command = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(
         baseInput({
@@ -254,10 +254,10 @@ describe("ACP adapter", () => {
   });
 
   it("cancels the session and kills a hung agent", async () => {
-    process.env.AGE_FAKE_ACP_SCENARIO = "cancel";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "cancel";
     const dir = await tempDir();
     const log = join(dir, "cancel-log");
-    process.env.AGE_FAKE_ACP_LOG = log;
+    process.env.WOOKY_FAKE_ACP_LOG = log;
     const controller = new AbortController();
     const events: ProviderEvent[] = [];
     for await (const event of createAcpAdapter({ settings: settings() }).runTurn(
@@ -270,7 +270,7 @@ describe("ACP adapter", () => {
     const entries = await readLog(log);
     expect(entries.some((entry) => entry.method === "session/cancel")).toBe(true);
 
-    process.env.AGE_FAKE_ACP_SCENARIO = "hang";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "hang";
     const hungController = new AbortController();
     const hung: ProviderEvent[] = [];
     for await (const event of createAcpAdapter({ settings: settings(), killGraceMs: 40 }).runTurn(
@@ -283,14 +283,14 @@ describe("ACP adapter", () => {
   });
 
   it("classifies a rate-limit error and a crash", async () => {
-    process.env.AGE_FAKE_ACP_SCENARIO = "rate-limit";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "rate-limit";
     const limited = await collect(createAcpAdapter({ settings: settings() }).runTurn(baseInput()));
     expect(doneOf(limited)).toMatchObject({
       status: "failed",
       failure: { kind: "rate_limit" },
     });
 
-    process.env.AGE_FAKE_ACP_SCENARIO = "crash";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "crash";
     const crashed = await collect(createAcpAdapter({ settings: settings() }).runTurn(baseInput()));
     const crash = doneOf(crashed);
     expect(crash).toMatchObject({ status: "failed" });
@@ -300,7 +300,7 @@ describe("ACP adapter", () => {
 
   it("continues after a malformed line and an oversized line", async () => {
     const notes: string[] = [];
-    process.env.AGE_FAKE_ACP_SCENARIO = "malformed";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "malformed";
     const events = await collect(
       createAcpAdapter({ settings: settings(), onDebug: (message) => notes.push(message) }).runTurn(
         baseInput(),
@@ -312,7 +312,7 @@ describe("ACP adapter", () => {
     expect(notes.some((note) => note.includes("future_widget"))).toBe(true);
 
     notes.length = 0;
-    process.env.AGE_FAKE_ACP_SCENARIO = "oversize";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "oversize";
     const oversized = await collect(
       createAcpAdapter({
         settings: settings(),
@@ -327,7 +327,7 @@ describe("ACP adapter", () => {
   it("resumes with session/load and otherwise sends the handoff transcript", async () => {
     const dir = await tempDir();
     const log = join(dir, "load");
-    process.env.AGE_FAKE_ACP_LOG = log;
+    process.env.WOOKY_FAKE_ACP_LOG = log;
     const resumed = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(
         baseInput({ resumeSessionId: "sess_old", handoffContext: "prior talk" }),
@@ -339,9 +339,9 @@ describe("ACP adapter", () => {
     expect(loaded.some((entry) => entry.method === "session/new")).toBe(false);
     const prompt = loaded.find((entry) => entry.method === "session/prompt");
     expect(JSON.stringify(prompt?.params)).not.toContain("prior talk");
-    expect(JSON.stringify(prompt?.params)).not.toContain("age agents guide");
+    expect(JSON.stringify(prompt?.params)).not.toContain("wooky agents guide");
 
-    process.env.AGE_FAKE_ACP_SCENARIO = "no-load";
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "no-load";
     const handed = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(
         baseInput({ resumeSessionId: "sess_old", handoffContext: "prior talk" }),
@@ -352,31 +352,31 @@ describe("ACP adapter", () => {
     const again = await readLog(log);
     const nextPrompt = again.filter((entry) => entry.method === "session/prompt").at(-1);
     expect(JSON.stringify(nextPrompt?.params)).toContain("prior talk");
-    expect(JSON.stringify(nextPrompt?.params)).toContain("age agents guide");
+    expect(JSON.stringify(nextPrompt?.params)).toContain("wooky agents guide");
   });
 
   it("merges env without logging it and injects the fleet variables", async () => {
     const dir = await tempDir();
     const envFile = join(dir, "env.json");
     const log = join(dir, "argv");
-    process.env.AGE_FAKE_ACP_ENV_FILE = envFile;
-    process.env.AGE_FAKE_ACP_LOG = log;
-    setAgentRuntime({ serverUrl: "http://127.0.0.1:9", ageBin: join(dir, "age") });
+    process.env.WOOKY_FAKE_ACP_ENV_FILE = envFile;
+    process.env.WOOKY_FAKE_ACP_LOG = log;
+    setAgentRuntime({ serverUrl: "http://127.0.0.1:9", wookyBin: join(dir, "wooky") });
     const events = await collect(
       createAcpAdapter({
         settings: settings({
-          agentEnv: { AGE_TEST_ENV_MARKER: "from-agent", AGE_THREAD_ID: "nope" },
-          env: { AGE_TEST_ENV_MARKER: "from-provider" },
+          agentEnv: { WOOKY_TEST_ENV_MARKER: "from-agent", WOOKY_THREAD_ID: "nope" },
+          env: { WOOKY_TEST_ENV_MARKER: "from-provider" },
           extraArgs: ["--extra"],
         }),
       }).runTurn(baseInput()),
     );
     expect(doneOf(events)?.status).toBe("completed");
     const captured = JSON.parse(await readFile(envFile, "utf8")) as {
-      AGE_THREAD_ID: string;
+      WOOKY_THREAD_ID: string;
       MARKER: string;
     };
-    expect(captured.AGE_THREAD_ID).toBe("thread-1");
+    expect(captured.WOOKY_THREAD_ID).toBe("thread-1");
     expect(captured.MARKER).toBe("from-provider");
     const entries = await readLog(log);
     expect(entries.find((entry) => entry.method === "argv")?.params).toEqual(["--extra"]);
@@ -384,7 +384,7 @@ describe("ACP adapter", () => {
   });
 
   it("probes each enabled agent and lists both providers", async () => {
-    process.env.AGE_FAKE_ACP_AUTH = "1";
+    process.env.WOOKY_FAKE_ACP_AUTH = "1";
     const authed = await createAcpAdapter({
       settings: settings({ models: ["gemini-2.5-pro"] }),
     }).probe();
@@ -398,7 +398,7 @@ describe("ACP adapter", () => {
       { id: "gem/gemini-2.5-pro", label: "Gem/gemini-2.5-pro", modelsSource: "custom" },
     ]);
 
-    delete process.env.AGE_FAKE_ACP_AUTH;
+    delete process.env.WOOKY_FAKE_ACP_AUTH;
     const open = await createAcpAdapter({ settings: settings() }).probe();
     expect(open.authenticated).toBe(true);
     expect(open.models).toEqual([{ id: "gem", label: "Gem", modelsSource: "custom" }]);
@@ -410,7 +410,7 @@ describe("ACP adapter", () => {
             {
               id: "gem",
               name: "Gem",
-              command: "age-missing-acp-bin",
+              command: "wooky-missing-acp-bin",
               enabled: true,
             },
           ],

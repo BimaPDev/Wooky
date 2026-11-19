@@ -1,7 +1,7 @@
 # Failover (auto switcher)
 
 When a turn fails because the active provider hit a rate limit, quota, or overload,
-AGE can switch the thread to another model and retry the same prompt. The user sees a
+Wooky can switch the thread to another model and retry the same prompt. The user sees a
 timeline notice; the conversation continues via the existing handoff path (provider
 change with transcript context).
 
@@ -45,7 +45,7 @@ return the thread to `failover.original`.
 ## User chain
 
 `failover.chain` is an ordered list of up to 12 `ModelTarget` values. An empty chain
-means use `DEFAULT_MODEL_RANKING` in `@age/domain`.
+means use `DEFAULT_MODEL_RANKING` in `@wooky/domain`.
 
 ## Adapter classification (later stations)
 

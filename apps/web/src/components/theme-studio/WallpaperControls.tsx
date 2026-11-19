@@ -1,4 +1,4 @@
-import type { AppearanceTheme, ThemeBackground } from "@age/contracts";
+import type { AppearanceTheme, ThemeBackground } from "@wooky/contracts";
 import { useEffect, useRef, useState } from "react";
 import {
   getTheme,

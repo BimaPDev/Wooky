@@ -7,8 +7,8 @@ import type {
   RpcParams,
   RpcResult,
   ThreadSpawnParams,
-} from "@age/contracts";
-import { childrenOf, fleetRows } from "@age/domain";
+} from "@wooky/contracts";
+import { childrenOf, fleetRows } from "@wooky/domain";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
 import { ServiceError } from "../errors.ts";
 import type { GitService } from "../git/types.ts";
@@ -57,8 +57,8 @@ export function createFleetService(deps: {
       const project = store.model.projects[thread.projectId];
       if (!project) throw new ServiceError("not_found", `No project with id ${thread.projectId}.`);
       try {
-        await git.commitWorktreeChanges(project.root, thread.worktree, `AGE: ${thread.title}`);
-        return await git.mergePreview(project.root, thread.worktree, `AGE: ${thread.title}`);
+        await git.commitWorktreeChanges(project.root, thread.worktree, `Wooky: ${thread.title}`);
+        return await git.mergePreview(project.root, thread.worktree, `Wooky: ${thread.title}`);
       } catch (error) {
         throw new ServiceError(
           "unavailable",

@@ -1,5 +1,5 @@
-import type { FileDiff, FleetStatus, MergePreview, Thread } from "@age/contracts";
-import { groupThreads } from "@age/domain";
+import type { FileDiff, FleetStatus, MergePreview, Thread } from "@wooky/contracts";
+import { groupThreads } from "@wooky/domain";
 import { useEffect, useRef, useState } from "react";
 import {
   closeCompare,

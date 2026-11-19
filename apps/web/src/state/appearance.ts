@@ -1,11 +1,16 @@
-import type { AppearanceTheme, DeviceSettings, ThemeColorRoles, ThemesPush } from "@age/contracts";
+import type {
+  AppearanceTheme,
+  DeviceSettings,
+  ThemeColorRoles,
+  ThemesPush,
+} from "@wooky/contracts";
 import { backend } from "./backend.ts";
 import { LruCache } from "./lru.ts";
 import { useStore } from "./store.ts";
 import { setTheme, syncRootThemeClass } from "./theme.ts";
 import { BASE_PALETTES as BASE, WHITE } from "./theme-data.ts";
 
-const STYLE_ID = "age-appearance-theme";
+const STYLE_ID = "wooky-appearance-theme";
 const SVG_DATA_URL_PREFIX = "data:image/svg+xml;base64,";
 const FREEZE_SVG_CSS = "*{animation:none!important;transition:none!important}";
 const SMIL_TAGS = ["animate", "animateTransform", "animateMotion", "set"] as const;
@@ -509,6 +514,7 @@ export function applyColorMode(mode: DeviceSettings["colorMode"]) {
     useStore.setState({ theme: null });
     syncRootThemeClass(null);
     try {
+      localStorage.removeItem("wooky.theme");
       localStorage.removeItem("age.theme");
     } catch {
       /* ignore */

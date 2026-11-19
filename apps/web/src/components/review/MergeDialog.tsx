@@ -1,4 +1,4 @@
-import { FLEET_LIMITS, type MergePreview, type MergeStrategy } from "@age/contracts";
+import { FLEET_LIMITS, type MergePreview, type MergeStrategy } from "@wooky/contracts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Counts } from "../DiffView.tsx";
 import { Modal } from "../Modal.tsx";

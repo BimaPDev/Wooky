@@ -7,7 +7,7 @@ import {
   type Command,
   type ProviderCapabilities,
   type ProviderKind,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { createEffectRunner } from "./effects/runner.ts";
 import { createAgentTokenService } from "./fleet/agent-token.ts";
 import { createFleetService } from "./fleet/service.ts";

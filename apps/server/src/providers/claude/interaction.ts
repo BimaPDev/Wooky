@@ -1,4 +1,4 @@
-import type { QuestionAnswers, UserInputRequest, UserQuestion } from "@age/contracts";
+import type { QuestionAnswers, UserInputRequest, UserQuestion } from "@wooky/contracts";
 import { constants as fsConstants, lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { lstat, open } from "node:fs/promises";

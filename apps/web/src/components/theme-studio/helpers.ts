@@ -5,7 +5,7 @@ import type {
   ThemeColorRoles,
   ThemeImportFormat,
   ThemeVariant,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { BASE_PALETTES } from "../../state/theme-data.ts";
 
 export const MAX_THEME_FILE_BYTES = 6 * 1024 * 1024;
@@ -15,7 +15,7 @@ export function themeFileTooLarge(byteLength: number): boolean {
 }
 
 export function importFormatLabel(format: ThemeImportFormat): string {
-  if (format === "age") return "AGE theme";
+  if (format === "wooky") return "Wooky theme";
   if (format === "t3code") return "t3code theme";
   return "SVG wallpaper";
 }
