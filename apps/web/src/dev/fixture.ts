@@ -1,7 +1,8 @@
 // age-allow-file color: dev fixture themes are user data stored as hex, like the server sends them.
 import {
+  AppearanceTheme,
   DeviceSettings,
-  type AppearanceTheme,
+  type AppearanceTheme as AppearanceThemeValue,
   type DeviceSettings as DeviceSettingsValue,
   type FileDiff,
   type Origin,
@@ -528,7 +529,21 @@ const diffs: Record<string, FileDiff[]> = {
   ],
 };
 
-const fixtureThemes: AppearanceTheme[] = [
+function svgDataUrl(svg: string): string {
+  const bytes = new TextEncoder().encode(svg);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `data:image/svg+xml;base64,${btoa(binary)}`;
+}
+
+const emberSvg = svgDataUrl(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#1c1814"><animate attributeName="fill" values="#1c1814;#4a3018;#1c1814" dur="8s" repeatCount="indefinite"/></rect></svg>`,
+);
+const tideSvg = svgDataUrl(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#0c1418"><animate attributeName="fill" values="#0c1418;#1a3344;#0c1418" dur="10s" repeatCount="indefinite"/></rect></svg>`,
+);
+
+const fixtureThemes: AppearanceThemeValue[] = [
   {
     version: 1,
     id: "default",
@@ -551,9 +566,56 @@ const fixtureThemes: AppearanceTheme[] = [
     css: "",
     builtin: true,
   },
+  {
+    version: 1,
+    id: "wall-ember",
+    name: "Ember",
+    appearance: "dark",
+    canvas: "#1c1814",
+    accent: "#e2a54a",
+    colors: {},
+    css: "",
+    builtin: true,
+    background: {
+      image: emberSvg,
+      fit: "cover",
+      dim: 40,
+      blur: 0,
+      panelBlur: 16,
+      surfaceOpacity: 72,
+      animated: true,
+    },
+    variants: {
+      light: {
+        canvas: "#f4f3ef",
+        accent: "#8a6a3b",
+        colors: {},
+      },
+    },
+  },
+  {
+    version: 1,
+    id: "wall-tide",
+    name: "Tide",
+    appearance: "dark",
+    canvas: "#0c1418",
+    accent: "#8fb3e6",
+    colors: {},
+    css: "",
+    builtin: true,
+    background: {
+      image: tideSvg,
+      fit: "cover",
+      dim: 35,
+      blur: 2,
+      panelBlur: 12,
+      surfaceOpacity: 78,
+      animated: true,
+    },
+  },
 ];
 
-function themeSummaryExtras(theme: AppearanceTheme): {
+function themeSummaryExtras(theme: AppearanceThemeValue): {
   hasWallpaper: boolean;
   animated: boolean;
   modes: Array<"dark" | "light">;
@@ -777,8 +839,32 @@ function respond(method: RpcMethod, params: unknown): unknown {
       if (fixtureSettings.activeThemeId === id) fixtureSettings.activeThemeId = "default";
       return { deleted: true };
     }
-    case "themes.import":
-      throw new Error("Theme import is not available in the fixture.");
+    case "themes.import": {
+      const { text, activate } = params as RpcParams<"themes.import">;
+      let raw: unknown;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        throw new Error("That file is not valid JSON.");
+      }
+      if (!raw || typeof raw !== "object") throw new Error("That file is not an AGE theme.");
+      const parsed = AppearanceTheme.safeParse({ ...raw, builtin: false });
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        throw new Error(
+          issue ? `${issue.path.join(".") || "theme"}: ${issue.message}` : "Invalid theme.",
+        );
+      }
+      let theme = parsed.data;
+      if (fixtureThemes.some((entry) => entry.id === theme.id && entry.builtin)) {
+        theme = { ...theme, id: `${theme.id}-imported` };
+      }
+      const index = fixtureThemes.findIndex((entry) => entry.id === theme.id);
+      if (index >= 0) fixtureThemes[index] = theme;
+      else fixtureThemes.push(theme);
+      if (activate) fixtureSettings = { ...fixtureSettings, activeThemeId: theme.id };
+      return { theme, format: "age" as const };
+    }
     case "themes.activate": {
       const id = (params as RpcParams<"themes.activate">).id;
       fixtureSettings = { ...fixtureSettings, activeThemeId: id };

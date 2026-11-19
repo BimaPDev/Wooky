@@ -1,6 +1,7 @@
 import {
   AppearanceTheme,
   type ThemeBackground,
+  type ThemeColorRoles,
   type ThemeFonts,
   type ThemeShape,
 } from "@age/contracts";
@@ -14,6 +15,14 @@ import {
 } from "../state/appearance.ts";
 import { BLACK } from "../state/theme-data.ts";
 import { IconClose, IconCopy, IconTrash } from "./Icons.tsx";
+import {
+  exportFilename,
+  paletteView,
+  previewTheme,
+  seedVariant,
+  uniqueThemeId,
+  wallpaperFileToDataUrl,
+} from "./theme-studio/helpers.ts";
 
 type Theme = AppearanceTheme;
 type Tab = "colors" | "type" | "layout" | "background" | "css";
@@ -136,29 +145,60 @@ export function ThemeEditor({
 }) {
   const [theme, setTheme] = useState<Theme>(initial);
   const [tab, setTab] = useState<Tab>("colors");
+  const [editMode, setEditMode] = useState<"dark" | "light">(initial.appearance);
   const [error, setError] = useState<string | null>(null);
   const fork = Boolean(initial.builtin);
+  const otherMode = theme.appearance === "dark" ? "light" : "dark";
+  const hasOther = Boolean(theme.variants?.[otherMode]);
+  const view = paletteView(theme, editMode);
 
   // sync: live-preview the draft in the document stylesheet; restore the saved theme on close
   useEffect(() => {
-    previewThemeLocally(theme);
-  }, [theme]);
+    previewThemeLocally(previewTheme(theme, editMode));
+  }, [theme, editMode]);
   // sync: undo the live preview when the editor unmounts
   useEffect(() => () => restoreSavedTheme(), []);
 
-  const palette = useMemo(() => resolvePalette(theme), [theme]);
+  const palette = useMemo(() => resolvePalette(previewTheme(theme, editMode)), [theme, editMode]);
   const patch = (next: Partial<Theme>) => setTheme((current) => ({ ...current, ...next }));
   const patchFonts = (next: Partial<ThemeFonts>) =>
     patch({ fonts: clean({ ...theme.fonts, ...next }) });
   const patchShape = (next: Partial<ThemeShape>) =>
     patch({ shape: clean({ ...theme.shape, ...next }) });
+  const patchPalette = (next: {
+    canvas?: string;
+    accent?: string;
+    colors?: ThemeColorRoles;
+    background?: ThemeBackground;
+  }) => {
+    if (editMode === theme.appearance) {
+      patch(next);
+      return;
+    }
+    const current = paletteView(theme, editMode);
+    patch({
+      variants: {
+        ...theme.variants,
+        [editMode]: {
+          canvas: next.canvas ?? current.canvas,
+          accent: next.accent ?? current.accent,
+          colors: next.colors ?? current.colors,
+          background: next.background !== undefined ? next.background : current.background,
+        },
+      },
+    });
+  };
   const patchBackground = (next: Partial<ThemeBackground>) =>
-    patch({ background: clean({ ...theme.background, ...next }) });
+    patchPalette({ background: clean({ ...view.background, ...next }) });
+  const addVariant = (mode: "dark" | "light") => {
+    patch({ variants: { ...theme.variants, [mode]: seedVariant(mode) } });
+    setEditMode(mode);
+  };
 
   const save = async () => {
     setError(null);
     const draft = fork
-      ? { ...theme, id: uniqueId(theme.name), builtin: false }
+      ? { ...theme, id: uniqueThemeId(theme.name), builtin: false }
       : { ...theme, builtin: false };
     const parsed = AppearanceTheme.safeParse(draft);
     if (!parsed.success) {
@@ -170,12 +210,11 @@ export function ThemeEditor({
   };
 
   const exportJson = () => {
-    const { builtin: _builtin, ...rest } = theme;
-    const blob = new Blob([`${JSON.stringify(rest, null, 2)}\n`], { type: "application/json" });
+    const blob = new Blob([`${JSON.stringify(theme, null, 2)}\n`], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${theme.id}.json`;
+    link.download = exportFilename(theme.id);
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -196,12 +235,33 @@ export function ThemeEditor({
             { value: "dark", label: "Dark" },
             { value: "light", label: "Light" },
           ]}
-          onChange={(appearance) => patch({ appearance })}
+          onChange={(appearance) => {
+            patch({ appearance });
+            setEditMode(appearance);
+          }}
         />
+        {hasOther ? (
+          <div className="theme-studio-editing">
+            <span className="theme-studio-editing-label">Editing</span>
+            <Segmented
+              label="Editing mode"
+              value={editMode}
+              options={[
+                { value: "dark", label: "Dark" },
+                { value: "light", label: "Light" },
+              ]}
+              onChange={setEditMode}
+            />
+          </div>
+        ) : (
+          <button type="button" className="ghost-button" onClick={() => addVariant(otherMode)}>
+            Add {otherMode} variant
+          </button>
+        )}
         <span className="theme-studio-spacer" />
         <button type="button" className="ghost-button" onClick={exportJson}>
           <IconCopy />
-          Export
+          Export JSON
         </button>
         {onDelete ? (
           <button type="button" className="ghost-button danger" disabled={busy} onClick={onDelete}>
@@ -249,14 +309,14 @@ export function ThemeEditor({
               <ColorField
                 label="Canvas"
                 hint="Every surface derives from this."
-                value={theme.canvas}
-                onChange={(canvas) => patch({ canvas })}
+                value={view.canvas}
+                onChange={(canvas) => patchPalette({ canvas })}
               />
               <ColorField
                 label="Accent"
                 hint="Selection, focus and primary actions."
-                value={theme.accent}
-                onChange={(accent) => patch({ accent })}
+                value={view.accent}
+                onChange={(accent) => patchPalette({ accent })}
               />
             </div>
             {ROLE_GROUPS.map((group) => (
@@ -264,19 +324,21 @@ export function ThemeEditor({
                 <h4>{group.title}</h4>
                 <div className="theme-role-grid">
                   {group.roles.map(([role, label]) => {
-                    const override = theme.colors[role];
+                    const override = view.colors[role];
                     return (
                       <ColorField
                         key={role}
                         label={label}
                         hint={override ? ROLE_TO_VAR[role] : "Auto"}
                         value={override ?? palette[role]}
-                        onChange={(value) => patch({ colors: { ...theme.colors, [role]: value } })}
+                        onChange={(value) =>
+                          patchPalette({ colors: { ...view.colors, [role]: value } })
+                        }
                         onReset={
                           override
                             ? () => {
-                                const { [role]: _removed, ...rest } = theme.colors;
-                                patch({ colors: rest });
+                                const { [role]: _removed, ...rest } = view.colors;
+                                patchPalette({ colors: rest });
                               }
                             : undefined
                         }
@@ -365,7 +427,11 @@ export function ThemeEditor({
         ) : null}
 
         {tab === "background" ? (
-          <BackgroundTab theme={theme} onChange={patchBackground} onError={setError} />
+          <BackgroundTab
+            background={view.background ?? {}}
+            onChange={patchBackground}
+            onError={setError}
+          />
         ) : null}
 
         {tab === "css" ? (
@@ -409,20 +475,20 @@ export function ThemeEditor({
 }
 
 function BackgroundTab({
-  theme,
+  background,
   onChange,
   onError,
 }: {
-  theme: Theme;
+  background: ThemeBackground;
   onChange: (next: Partial<ThemeBackground>) => void;
   onError: (message: string | null) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const bg = theme.background ?? {};
+  const bg = background;
   const pick = async (file: File) => {
     onError(null);
     try {
-      onChange({ image: await imageToDataUrl(file) });
+      onChange(await wallpaperFileToDataUrl(file));
     } catch (err) {
       onError(err instanceof Error ? err.message : "Could not read that image.");
     }
@@ -441,10 +507,14 @@ function BackgroundTab({
       >
         <div className="theme-bg-actions">
           <button type="button" className="button" onClick={() => input.current?.click()}>
-            {bg.image ? "Replace image" : "Choose image"}
+            {bg.image ? "Replace image" : "Use my own wallpaper"}
           </button>
           {bg.image ? (
-            <button type="button" className="button" onClick={() => onChange({ image: undefined })}>
+            <button
+              type="button"
+              className="button"
+              onClick={() => onChange({ image: undefined, animated: undefined })}
+            >
               <IconClose />
               Remove
             </button>
@@ -455,7 +525,7 @@ function BackgroundTab({
         <input
           ref={input}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+          accept="image/svg+xml,.svg,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
           hidden
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -496,6 +566,17 @@ function BackgroundTab({
           step={1}
           format={(n) => `${n}px`}
           onChange={(blur) => onChange({ blur: blur || undefined })}
+        />
+      </Row>
+      <Row label="Panel blur" hint="Frosted glass on app panels over the wallpaper.">
+        <Slider
+          label="Panel blur"
+          value={bg.panelBlur ?? 0}
+          min={0}
+          max={40}
+          step={1}
+          format={(n) => `${n}px`}
+          onChange={(panelBlur) => onChange({ panelBlur: panelBlur || undefined })}
         />
       </Row>
       <Row label="Panel opacity" hint="How solid the sidebar and panels are over the image.">
@@ -698,15 +779,6 @@ function clean<T extends object>(value: T): T | undefined {
   return entries.length ? (Object.fromEntries(entries) as T) : undefined;
 }
 
-function uniqueId(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, "-")
-    .replaceAll(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return `${slug || "theme"}-${Date.now().toString(36)}`;
-}
-
 function toColorInput(value: string): string {
   if (/^#[0-9a-f]{6}$/i.test(value)) return value;
   if (/^#[0-9a-f]{8}$/i.test(value)) return value.slice(0, 7);
@@ -715,21 +787,4 @@ function toColorInput(value: string): string {
     return `#${a}${a}${b}${b}${c}${c}`;
   }
   return BLACK;
-}
-
-/** Downscale to at most 2560px and re-encode, so a theme stays a small portable file. */
-async function imageToDataUrl(file: File): Promise<string> {
-  if (!file.type.startsWith("image/")) throw new Error("That file is not an image.");
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 2560 / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  for (const quality of [0.88, 0.75, 0.6, 0.45]) {
-    const url = canvas.toDataURL("image/webp", quality);
-    if (url.length < 5_500_000) return url;
-  }
-  throw new Error("That image is too large even after compression.");
 }

@@ -1,12 +1,18 @@
 import {
-  AppearanceTheme,
   type AppearanceTheme as Theme,
   type AppearanceThemeSummary,
   type DeviceSettings as DeviceSettingsValue,
 } from "@age/contracts";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
-  activateTheme,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import {
   deleteTheme,
   getTheme,
   listThemes,
@@ -15,17 +21,14 @@ import {
   saveTheme,
 } from "../state/appearance.ts";
 import { useStore } from "../state/store.ts";
-import { BLACK, PREVIEW_RING, WHITE, WIREFRAME_DEFAULTS } from "../state/theme-data.ts";
-import {
-  IconCheck,
-  IconCopy,
-  IconMoon,
-  IconPaint,
-  IconPlus,
-  IconSun,
-  IconTrash,
-} from "./Icons.tsx";
+import { BLACK, WHITE, WIREFRAME_DEFAULTS } from "../state/theme-data.ts";
+import { IconPaint, IconPlus } from "./Icons.tsx";
+import { Modal } from "./Modal.tsx";
 import { ThemeEditor } from "./ThemeEditor.tsx";
+import { ThemeGallery } from "./theme-studio/ThemeGallery.tsx";
+import { WallpaperControls } from "./theme-studio/WallpaperControls.tsx";
+import { importedStatusText, readFileAsText, themeFileTooLarge } from "./theme-studio/helpers.ts";
+import { activateListedTheme, importThemeText } from "./theme-studio/rpc.ts";
 
 type ColorMode = DeviceSettingsValue["colorMode"];
 type PreviewColors = {
@@ -45,21 +48,31 @@ const DEFAULTS = {
 };
 
 export function AppearanceSettings() {
-  const settings = useStore((state) => state.deviceSettings);
+  const active = useStore((state) => state.deviceSettings?.activeThemeId ?? "default");
+  const colorMode = useStore((state) => state.deviceSettings?.colorMode ?? "system");
+  const wallpaperMotion = useStore((state) => state.deviceSettings?.wallpaperMotion ?? "on");
+  const contrast = useStore(
+    (state) => state.deviceSettings?.appearanceContrast ?? DEFAULTS.appearanceContrast,
+  );
+  const glass = useStore((state) => state.deviceSettings?.glassOpacity ?? DEFAULTS.glassOpacity);
+  const chatWidth = useStore((state) => state.deviceSettings?.chatWidth ?? DEFAULTS.chatWidth);
   const [catalog, setCatalog] = useState<{
     themesDir: string;
     themes: AppearanceThemeSummary[];
   } | null>(null);
   const [editing, setEditing] = useState<Theme | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     const listed = await listThemes();
     setCatalog({ themesDir: listed.themesDir, themes: listed.themes });
     await loadDeviceSettings();
-  };
+  }, []);
 
   // sync: load theme catalog when Appearance opens
   useEffect(() => {
@@ -75,8 +88,6 @@ export function AppearanceSettings() {
     };
   }, []);
 
-  const active = settings?.activeThemeId ?? "default";
-  const colorMode = settings?.colorMode ?? "system";
   const activeTheme = catalog?.themes.find((theme) => theme.id === active) ?? null;
 
   const startCreate = async () => {
@@ -94,30 +105,33 @@ export function AppearanceSettings() {
     }
   };
 
-  const openTheme = async (id: string) => {
+  const openTheme = useCallback(async (id: string) => {
     setError(null);
     try {
       setEditing(await getTheme(id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open theme.");
     }
-  };
+  }, []);
 
-  const applyTheme = async (id: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const summary = catalog?.themes.find((theme) => theme.id === id);
-      await activateTheme(id, summary?.appearance ?? "dark");
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not apply theme.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const applyTheme = useCallback(
+    async (id: string) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const summary = catalog?.themes.find((theme) => theme.id === id);
+        await activateListedTheme(id, summary?.appearance ?? "dark");
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not apply theme.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [catalog, refresh],
+  );
 
-  const duplicateTheme = async (id: string) => {
+  const duplicateTheme = useCallback(async (id: string) => {
     setBusy(true);
     setError(null);
     try {
@@ -133,7 +147,7 @@ export function AppearanceSettings() {
     } finally {
       setBusy(false);
     }
-  };
+  }, []);
 
   const persist = async (theme: Theme) => {
     setBusy(true);
@@ -141,7 +155,7 @@ export function AppearanceSettings() {
     try {
       const saved = await saveTheme(theme);
       setEditing(null);
-      await activateTheme(saved.id, saved.appearance);
+      await activateListedTheme(saved.id, saved.appearance);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save theme.");
@@ -164,25 +178,63 @@ export function AppearanceSettings() {
     }
   };
 
-  const importFile = async (file: File) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const raw = JSON.parse(await file.text());
-      const theme = AppearanceTheme.parse({ ...raw, builtin: false });
-      const saved = await saveTheme(theme);
-      await activateTheme(saved.id, saved.appearance);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not import theme.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const importText = useCallback(
+    async (text: string, filename?: string) => {
+      if (themeFileTooLarge(new TextEncoder().encode(text).byteLength)) {
+        setStatus(null);
+        setError("That file is larger than 6 MB.");
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        const result = await importThemeText(text, filename);
+        setStatus(importedStatusText(result.theme.name, result.format));
+        await refresh();
+      } catch (err) {
+        setStatus(null);
+        setError(err instanceof Error ? err.message : "Could not import theme.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
 
-  const contrast = settings?.appearanceContrast ?? DEFAULTS.appearanceContrast;
-  const glass = settings?.glassOpacity ?? DEFAULTS.glassOpacity;
-  const chatWidth = settings?.chatWidth ?? DEFAULTS.chatWidth;
+  const importFile = useCallback(
+    async (file: File) => {
+      if (themeFileTooLarge(file.size)) {
+        setStatus(null);
+        setError("That file is larger than 6 MB.");
+        return;
+      }
+      try {
+        await importText(await readFileAsText(file), file.name);
+      } catch (err) {
+        setStatus(null);
+        setError(err instanceof Error ? err.message : "Could not import theme.");
+      }
+    },
+    [importText],
+  );
+
+  const onDelete = useCallback(
+    (id: string) => {
+      void (async () => {
+        setBusy(true);
+        setError(null);
+        try {
+          await deleteTheme(id);
+          await refresh();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Could not delete theme.");
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [refresh],
+  );
 
   return (
     <div className="appearance-page">
@@ -199,7 +251,7 @@ export function AppearanceSettings() {
             />
           ))}
         </div>
-        {activeTheme && !activeTheme.builtin ? (
+        {activeTheme && !activeTheme.builtin && activeTheme.modes.length < 2 ? (
           <p className="settings-help">
             {activeTheme.name} is a {activeTheme.appearance} theme. In{" "}
             {activeTheme.appearance === "dark" ? "light" : "dark"} mode the default palette shows
@@ -224,10 +276,13 @@ export function AppearanceSettings() {
               <IconPlus />
               Import theme
             </button>
+            <button type="button" className="ghost-button" onClick={() => setPasteOpen(true)}>
+              Paste JSON
+            </button>
             <input
               ref={importRef}
               type="file"
-              accept="application/json,.json"
+              accept="application/json,.json,image/svg+xml,.svg"
               hidden
               onChange={(event) => {
                 const file = event.target.files?.[0];
@@ -239,89 +294,36 @@ export function AppearanceSettings() {
         </div>
         <p className="settings-help">
           Themes live as JSON under{" "}
-          <code className="mono">{catalog?.themesDir ?? "AGE_HOME/themes"}</code>.
+          <code className="mono">{catalog?.themesDir ?? "AGE_HOME/themes"}</code>. Drag a .json or
+          .svg file onto the gallery to import it.
         </p>
-        <div className="theme-card-grid">
-          {(catalog?.themes ?? []).map((theme) => {
-            const isActive = active === theme.id;
-            return (
-              <article
-                key={theme.id}
-                className={isActive ? "theme-library-card active" : "theme-library-card"}
-                data-theme-library-card={theme.id}
-              >
-                <button
-                  type="button"
-                  className="theme-library-card-body"
-                  disabled={busy}
-                  onClick={() => void applyTheme(theme.id)}
-                >
-                  <div className="theme-preview-row">
-                    <ThemePreviewCircle
-                      colors={previewColorsFor(theme)}
-                      mode={theme.appearance}
-                      picked={isActive}
-                    />
-                  </div>
-                  <span className="theme-library-card-label">{theme.name}</span>
-                </button>
-                <div className="theme-library-card-actions">
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label={theme.builtin ? `View ${theme.name}` : `Edit ${theme.name}`}
-                    title={theme.builtin ? "View" : "Edit"}
-                    onClick={() => void openTheme(theme.id)}
-                  >
-                    <IconPaint />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label={`Duplicate ${theme.name}`}
-                    title="Duplicate"
-                    onClick={() => void duplicateTheme(theme.id)}
-                  >
-                    <IconCopy />
-                  </button>
-                  {!theme.builtin ? (
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label={`Delete ${theme.name}`}
-                      title="Delete"
-                      disabled={busy}
-                      onClick={() => {
-                        void (async () => {
-                          setBusy(true);
-                          setError(null);
-                          try {
-                            await deleteTheme(theme.id);
-                            await refresh();
-                          } catch (err) {
-                            setError(
-                              err instanceof Error ? err.message : "Could not delete theme.",
-                            );
-                          } finally {
-                            setBusy(false);
-                          }
-                        })();
-                      }}
-                    >
-                      <IconTrash />
-                    </button>
-                  ) : null}
-                  {isActive ? (
-                    <span className="theme-active-pill" title="Active">
-                      <IconCheck />
-                    </span>
-                  ) : null}
-                </div>
-              </article>
-            );
-          })}
-        </div>
+        {status ? (
+          <p className="theme-import-status" role="status">
+            {status}
+          </p>
+        ) : null}
+        <ThemeGallery
+          themes={catalog?.themes ?? []}
+          busy={busy}
+          dragging={dragging}
+          onDragging={setDragging}
+          onActivate={applyTheme}
+          onEdit={openTheme}
+          onDuplicate={duplicateTheme}
+          onDelete={onDelete}
+          onDropFile={importFile}
+        />
       </section>
+
+      {activeTheme?.hasWallpaper ? (
+        <WallpaperControls
+          themeId={active}
+          busy={busy}
+          onBusy={setBusy}
+          onError={setError}
+          onCatalogChanged={refresh}
+        />
+      ) : null}
 
       {editing ? (
         <ThemeEditor
@@ -338,9 +340,41 @@ export function AppearanceSettings() {
         />
       ) : null}
 
+      {pasteOpen ? (
+        <PasteThemeDialog
+          busy={busy}
+          onClose={() => setPasteOpen(false)}
+          onImport={(text) => {
+            setPasteOpen(false);
+            void importText(text, "pasted.json");
+          }}
+        />
+      ) : null}
+
       <section className="appearance-section">
         <h3>Interface</h3>
         <div className="settings-card appearance-interface">
+          <InterfaceRow
+            title="Animate wallpapers"
+            description="Wallpapers stay still when the window is hidden or reduced motion is on."
+            reset={null}
+            control={
+              <button
+                type="button"
+                role="switch"
+                aria-checked={wallpaperMotion === "on"}
+                aria-label="Animate wallpapers"
+                className={wallpaperMotion === "on" ? "toggle on" : "toggle"}
+                onClick={() =>
+                  void patchDeviceSettings({
+                    wallpaperMotion: wallpaperMotion === "on" ? "off" : "on",
+                  })
+                }
+              >
+                <span className="toggle-thumb" />
+              </button>
+            }
+          />
           <InterfaceRow
             title="Contrast"
             description="Adjust the contrast of colors and borders across the interface."
@@ -438,6 +472,49 @@ export function AppearanceSettings() {
   );
 }
 
+function PasteThemeDialog({
+  busy,
+  onClose,
+  onImport,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onImport: (text: string) => void;
+}) {
+  const [text, setText] = useState("");
+  return (
+    <Modal label="Paste JSON" onClose={onClose} className="modal small">
+      <div className="theme-paste-dialog">
+        <header className="theme-paste-head">
+          <h3>Paste JSON</h3>
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+        </header>
+        <textarea
+          className="theme-paste-input mono"
+          rows={12}
+          spellCheck={false}
+          value={text}
+          aria-label="Theme JSON"
+          placeholder='{ "id": "paper", "name": "Paper", ... }'
+          onChange={(event) => setText(event.target.value)}
+        />
+        <div className="theme-paste-actions">
+          <button
+            type="button"
+            className="button primary"
+            disabled={busy || !text.trim()}
+            onClick={() => onImport(text)}
+          >
+            Import
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function ModeTile({
   mode,
   active,
@@ -520,35 +597,6 @@ function ThemeWireframePane({ colors, clip }: { colors: PreviewColors; clip?: "l
   );
 }
 
-function ThemePreviewCircle({
-  colors,
-  mode,
-  picked,
-}: {
-  colors: PreviewColors;
-  mode: "light" | "dark";
-  picked: boolean;
-}) {
-  const style: CSSProperties = {
-    backgroundColor: colors.canvas,
-    backgroundImage: [
-      `radial-gradient(circle at 30% 30%, ${colors.accent} 0%, color-mix(in srgb, ${colors.accent} 40%, transparent) 42%, transparent 70%)`,
-      `radial-gradient(circle at 72% 68%, color-mix(in srgb, ${colors.messageAction} 70%, transparent) 0%, transparent 55%)`,
-    ].join(", "),
-    boxShadow: PREVIEW_RING[mode],
-  };
-  return (
-    <span className={picked ? "theme-preview-circle picked" : "theme-preview-circle"}>
-      <span className="theme-preview-blob" style={style} />
-      {picked ? (
-        <span className="theme-preview-badge" aria-hidden="true">
-          {mode === "light" ? <IconSun /> : <IconMoon />}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
 function InterfaceRow({
   title,
   description,
@@ -613,10 +661,6 @@ function SliderControl({
       />
     </div>
   );
-}
-
-function previewColorsFor(theme: AppearanceThemeSummary): PreviewColors {
-  return wireframeColors(theme.appearance, theme);
 }
 
 function wireframeColors(
