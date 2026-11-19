@@ -59,7 +59,8 @@ into this format. A t3code object does not parse as an AGE theme.
 `colors` roles, each an optional hex: `bg0`, `bg1`, `bg2`, `bg3`, `bgHover`, `bgActive`,
 `line`, `lineStrong`, `text`, `text2`, `text3`, `text4`, `accent`, `accentInk`, `focus`,
 `amber`, `amberBg`, `red`, `redBg`, `green`, `addBg`, `addInk`, `delBg`, `delInk`,
-`providerClaude`, `providerCursor`, `providerCodex`, `providerDemo`.
+`providerClaude`, `providerCursor`, `providerCodex`, `providerDemo`, `providerOpencode`,
+`providerAcp`.
 
 ## Variants
 

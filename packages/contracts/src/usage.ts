@@ -20,8 +20,8 @@ export const ProviderLimits = z.object({
 export type ProviderLimits = z.infer<typeof ProviderLimits>;
 
 /**
- * Where a history row was read from. Not ProviderKind: OpenCode is an origin,
- * and demo is not. Demo spend stays on Wooky turns.
+ * Where a history row was read from. Not the same set as ProviderKind: demo has
+ * no history files, and an ACP agent is not a history origin.
  */
 export const Origin = z.enum(["claude", "cursor", "codex", "opencode"]);
 export type Origin = z.infer<typeof Origin>;

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { FailoverSettings } from "./failover.ts";
 import { ProviderKind } from "./model.ts";
+import { AcpAgentConfig, ProviderSettings } from "./provider-settings.ts";
 
 /** Hex color like #rgb or #rrggbb / #rrggbbaa. */
 export const HexColor = z
@@ -41,6 +42,8 @@ export const ThemeColorRoles = z
     providerCursor: HexColor.optional(),
     providerCodex: HexColor.optional(),
     providerDemo: HexColor.optional(),
+    providerOpencode: HexColor.optional(),
+    providerAcp: HexColor.optional(),
   })
   .strict();
 export type ThemeColorRoles = z.infer<typeof ThemeColorRoles>;
@@ -179,6 +182,21 @@ export const DeviceSettings = z.object({
   confirmArchive: z.boolean().default(true),
   /** Providers the user turned off in Settings → Providers. */
   disabledProviders: z.array(ProviderKind).default([]),
+  /**
+   * Per-provider CLI options. Missing kind means defaults. `extraArgs` and `env`
+   * are passed to the CLI as-is (no shell), stored only in local settings.json,
+   * and `env` must not be logged.
+   */
+  providers: z.partialRecord(ProviderKind, ProviderSettings).default({}),
+  /** User-defined ACP agents. Same argv and env rules as `providers`. Ids are unique. */
+  acpAgents: z
+    .array(AcpAgentConfig)
+    .max(20)
+    .default([])
+    .refine(
+      (agents) => new Set(agents.map((agent) => agent.id)).size === agents.length,
+      "ACP agent ids must be unique",
+    ),
   /** Sending while a turn runs: queue the prompt, or keep the composer blocked. */
   followUp: z.enum(["queue", "off"]).default("queue"),
   /** Read Claude, Cursor, Codex and OpenCode history on this machine. */

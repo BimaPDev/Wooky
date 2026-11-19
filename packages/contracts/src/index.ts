@@ -1,5 +1,6 @@
 export * from "./failover.ts";
 export * from "./model.ts";
+export * from "./provider-settings.ts";
 export * from "./commands.ts";
 export * from "./events.ts";
 export * from "./provider.ts";

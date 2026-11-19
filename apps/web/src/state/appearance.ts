@@ -43,6 +43,8 @@ export const ROLE_TO_VAR: Record<ColorRole, string> = {
   providerCursor: "--provider-cursor",
   providerCodex: "--provider-codex",
   providerDemo: "--provider-demo",
+  providerOpencode: "--provider-opencode",
+  providerAcp: "--provider-acp",
 };
 
 export function mix(a: string, b: string, t: number): string {

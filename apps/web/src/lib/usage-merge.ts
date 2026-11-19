@@ -88,6 +88,8 @@ export function emptyCostByType(): UsageCostByType {
   return { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, other: 0 };
 }
 
-export function seriesIdForProvider(provider: ProviderKind): UsageSeriesId {
+/** ACP turns have no usage series yet. OpenCode shares the history origin id. */
+export function seriesIdForProvider(provider: ProviderKind): UsageSeriesId | null {
+  if (provider === "acp") return null;
   return provider;
 }

@@ -585,6 +585,12 @@ button.chip:active {
 .provider-demo {
   background: var(--provider-demo);
 }
+.provider-opencode {
+  background: var(--provider-opencode);
+}
+.provider-acp {
+  background: var(--provider-acp);
+}
 
 .chevron {
   flex: none;
@@ -4265,6 +4271,14 @@ button.tool-line:active {
   --provider-mark: var(--provider-demo);
 }
 
+.provider-mark.provider-opencode {
+  --provider-mark: var(--provider-opencode);
+}
+
+.provider-mark.provider-acp {
+  --provider-mark: var(--provider-acp);
+}
+
 .provider-row-copy {
   position: relative;
   z-index: 1;
@@ -4429,6 +4443,14 @@ button.tool-line:active {
 
 .provider-accent.provider-demo {
   --provider-mark: var(--provider-demo);
+}
+
+.provider-accent.provider-opencode {
+  --provider-mark: var(--provider-opencode);
+}
+
+.provider-accent.provider-acp {
+  --provider-mark: var(--provider-acp);
 }
 
 .provider-display-input {

@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { ThreadFailoverState, TurnFailure, TurnOrigin } from "./failover.ts";
+import { ProviderKind } from "./kind.ts";
 
-/** Runtimes AGE can drive. AGE never ships its own model or account. */
-export const ProviderKind = z.enum(["claude", "cursor", "codex", "demo"]);
-export type ProviderKind = z.infer<typeof ProviderKind>;
+export { ProviderKind };
 
 /**
  * How much the agent may do without asking.
@@ -335,6 +334,10 @@ export const ProviderCapabilities = z
   .partial();
 export type ProviderCapabilities = z.infer<typeof ProviderCapabilities>;
 
+/** Where a model id came from. Absent on probes written before this field existed. */
+export const ModelsSource = z.enum(["live", "static", "custom"]);
+export type ModelsSource = z.infer<typeof ModelsSource>;
+
 export const ProviderStatus = z.object({
   kind: ProviderKind,
   label: z.string(),
@@ -342,7 +345,19 @@ export const ProviderStatus = z.object({
   /** null = unknown (CLI cannot say without spending a turn). */
   authenticated: z.boolean().nullable(),
   version: z.string().nullable(),
-  models: z.array(z.object({ id: z.string(), label: z.string() })),
+  models: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      /** Overrides the provider-level `modelsSource` for this id. */
+      modelsSource: ModelsSource.optional(),
+    }),
+  ),
+  /**
+   * live: the CLI reported it. static: built into AGE. custom: the user added it.
+   * Applies to models that omit their own source.
+   */
+  modelsSource: ModelsSource.optional(),
   /** Why the provider is unavailable, in one plain sentence. */
   problem: z.string().nullable(),
   capabilities: ProviderCapabilities.optional(),

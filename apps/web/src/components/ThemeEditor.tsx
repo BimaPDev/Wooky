@@ -96,6 +96,8 @@ const ROLE_GROUPS: { title: string; roles: [ColorRole, string][] }[] = [
       ["providerCursor", "Cursor"],
       ["providerCodex", "Codex"],
       ["providerDemo", "Demo"],
+      ["providerOpencode", "OpenCode"],
+      ["providerAcp", "ACP agent"],
     ],
   },
 ];
