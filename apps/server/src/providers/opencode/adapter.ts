@@ -7,6 +7,7 @@ import { loadSettings, settingsFor } from "../acp/settings.ts";
 import { runAcpTurn, type AcpTurnSpec } from "../acp/turn.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { openCodeArgs, parseOpenCodeModels, parseOpenCodeVersion } from "./models.ts";
+import { openCodePermission } from "./permission.ts";
 
 const execFileAsync = promisify(execFile);
 const PROBE_TIMEOUT_MS = 4_000;
@@ -51,10 +52,13 @@ async function* runConfiguredTurn(
   const provider = settingsFor(loadSettings(options.settings), "opencode");
   const bin = options.bin ?? provider.binaryPath ?? "opencode";
   const args = openCodeArgs(options.argsPrefix ?? [], provider.extraArgs).acp;
+  const env = childEnv(input.threadId, [provider.env]);
+  // Wins over settings env and project opencode.json. Otherwise approve would not ask.
+  env.OPENCODE_PERMISSION = JSON.stringify(openCodePermission(input.runtimeMode));
   const spec: AcpTurnSpec = {
     command: bin,
     args,
-    env: childEnv(input.threadId, [provider.env]),
+    env,
     modelId: input.model,
     missingCommand: NOT_INSTALLED,
     ...(options.killGraceMs !== undefined ? { killGraceMs: options.killGraceMs } : {}),

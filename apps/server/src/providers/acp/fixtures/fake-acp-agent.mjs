@@ -26,6 +26,7 @@ if (envFile) {
       AGE_THREAD_ID: process.env.AGE_THREAD_ID ?? null,
       AGE_SERVER_URL: process.env.AGE_SERVER_URL ?? null,
       MARKER: process.env.AGE_TEST_ENV_MARKER ?? null,
+      OPENCODE_PERMISSION: process.env.OPENCODE_PERMISSION ?? null,
     }),
   );
 }

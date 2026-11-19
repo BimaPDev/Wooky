@@ -33,7 +33,15 @@ export interface AcpTurnSpec {
   killGraceMs?: number;
   maxLineBytes?: number;
   onDebug?: (message: string) => void;
+  /**
+   * When set, a completed turn that never called session/request_permission gets
+   * one notice. OpenCode does not set this: its permission env makes it ask.
+   */
+  noticeWhenSilent?: boolean;
 }
+
+export const SILENT_AGENT_NOTICE =
+  "This agent does not ask before acting; runtime mode cannot be enforced";
 
 class EventQueue<T> {
   private readonly items: T[] = [];
@@ -73,6 +81,7 @@ export async function* runAcpTurn(
   }
 
   const debug = spec.onDebug ?? acpDebug;
+  let sawPermission = false;
   const resolved = resolveCommand(spec.command, spec.env);
   if (!resolved) {
     yield failed(spec.missingCommand);
@@ -119,6 +128,7 @@ export async function* runAcpTurn(
       onRequest: (method, params, id) => {
         if (method !== "session/request_permission")
           return Promise.reject(new AcpMethodNotFound(method));
+        sawPermission = true;
         return answerPermission(params, id, input, () => aborted || input.signal.aborted);
       },
     });
@@ -213,7 +223,18 @@ export async function* runAcpTurn(
       yield failedFromUnknown(outcome.error);
       return;
     }
-    yield doneFromStop(outcome.result?.stopReason ?? "end_turn");
+    const terminal = doneFromStop(outcome.result?.stopReason ?? "end_turn");
+    if (silentAgentNotice(spec, input, sawPermission, terminal)) {
+      yield {
+        type: "item",
+        item: {
+          kind: "notice",
+          id: fitNotice(input.turnId, "silent"),
+          text: SILENT_AGENT_NOTICE,
+        },
+      };
+    }
+    yield terminal;
   } catch (error) {
     if (input.signal.aborted || aborted) yield interrupted();
     else yield failedFromUnknown(error);
@@ -285,11 +306,11 @@ function answerPermission(
   });
 }
 
-function interrupted(): ProviderEvent {
+function interrupted(): Extract<ProviderEvent, { type: "done" }> {
   return { type: "done", status: "interrupted", error: null };
 }
 
-function failed(message: string, failure?: TurnFailure): ProviderEvent {
+function failed(message: string, failure?: TurnFailure): Extract<ProviderEvent, { type: "done" }> {
   const text = message.length > 2_000 ? message.slice(0, 2_000) : message;
   return {
     type: "done",
@@ -314,7 +335,21 @@ function failedFromUnknown(error: unknown): ProviderEvent {
   return failed(text, failure);
 }
 
-function doneFromStop(stopReason: string): ProviderEvent {
+function silentAgentNotice(
+  spec: AcpTurnSpec,
+  input: TurnInput,
+  sawPermission: boolean,
+  terminal: Extract<ProviderEvent, { type: "done" }>,
+): boolean {
+  return (
+    spec.noticeWhenSilent === true &&
+    !sawPermission &&
+    input.runtimeMode !== "full" &&
+    terminal.status === "completed"
+  );
+}
+
+function doneFromStop(stopReason: string): Extract<ProviderEvent, { type: "done" }> {
   if (stopReason === "cancelled") return interrupted();
   if (stopReason === "refusal") return failed("The agent refused this turn.");
   return { type: "done", status: "completed", error: null };

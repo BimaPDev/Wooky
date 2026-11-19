@@ -39,6 +39,7 @@ describe("OpenCode adapter", () => {
     resetOpenCodeModelsCache();
     delete process.env.AGE_FAKE_ACP_LOG;
     delete process.env.AGE_FAKE_ACP_SCENARIO;
+    delete process.env.AGE_FAKE_ACP_ENV_FILE;
     if (home) await rm(home, { recursive: true, force: true });
     home = "";
   });
@@ -68,6 +69,31 @@ describe("OpenCode adapter", () => {
     expect(entries.find((entry) => entry.method === "argv")?.params).toEqual(["acp", "--pure"]);
     expect(entries.some((entry) => entry.method === "session/set_config_option")).toBe(true);
     expect(text).toContain("opencode/big-pickle");
+  });
+
+  it("sets OPENCODE_PERMISSION from the runtime mode over a settings value", async () => {
+    home = await mkdtemp(join(tmpdir(), "age-opencode-perm-"));
+    const envFile = join(home, "env.json");
+    process.env.AGE_FAKE_ACP_ENV_FILE = envFile;
+    const adapter = createOpenCodeAdapter({
+      bin: process.execPath,
+      argsPrefix: [ACP_FAKE_AGENT_SCRIPT],
+      settings: () =>
+        DeviceSettings.parse({
+          providers: { opencode: { env: { OPENCODE_PERMISSION: '{"edit":"allow"}' } } },
+        }),
+    });
+    const events = await collect(adapter.runTurn(turn({ runtimeMode: "approve" })));
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "completed" });
+    const captured = JSON.parse(await readFile(envFile, "utf8")) as { OPENCODE_PERMISSION: string };
+    expect(JSON.parse(captured.OPENCODE_PERMISSION)).toEqual({
+      edit: "ask",
+      bash: "ask",
+      webfetch: "ask",
+    });
+    expect(events.some((event) => event.type === "item" && event.item.kind === "notice")).toBe(
+      false,
+    );
   });
 
   it("reports a missing binary without spawning a shell", async () => {

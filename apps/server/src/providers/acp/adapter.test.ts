@@ -9,6 +9,7 @@ import { createProviderRegistry } from "../registry.ts";
 import { createOpenCodeAdapter, resetOpenCodeModelsCache } from "../opencode/adapter.ts";
 import type { TurnInput } from "../types.ts";
 import { ACP_FAKE_AGENT_SCRIPT, createAcpAdapter } from "./adapter.ts";
+import { SILENT_AGENT_NOTICE } from "./turn.ts";
 // @ts-expect-error test fixture is plain ESM without types
 import { FAKE_ACP_VERSION } from "./fixtures/fake-acp-agent.mjs";
 
@@ -124,6 +125,29 @@ describe("ACP adapter", () => {
     );
     expect(events.some((event) => event.type === "plan")).toBe(true);
     expect(events.some((event) => event.type === "usage")).toBe(true);
+  });
+
+  it("warns once when an agent never asks, and stays quiet when it does", async () => {
+    const quiet = await collect(
+      createAcpAdapter({ settings: settings() }).runTurn(baseInput({ runtimeMode: "approve" })),
+    );
+    const notices = quiet.filter((event) => event.type === "item" && event.item.kind === "notice");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ item: { text: SILENT_AGENT_NOTICE } });
+    expect(quiet.at(-1)?.type).toBe("done");
+
+    const full = await collect(
+      createAcpAdapter({ settings: settings() }).runTurn(baseInput({ runtimeMode: "full" })),
+    );
+    expect(full.some((event) => event.type === "item" && event.item.kind === "notice")).toBe(false);
+
+    process.env.AGE_FAKE_ACP_SCENARIO = "permission";
+    const asked = await collect(
+      createAcpAdapter({ settings: settings() }).runTurn(baseInput({ runtimeMode: "approve" })),
+    );
+    expect(asked.some((event) => event.type === "item" && event.item.kind === "notice")).toBe(
+      false,
+    );
   });
 
   it("approves and denies a tool permission", async () => {
