@@ -26,7 +26,8 @@ export interface ChangesPanel {
   focusPath: string | null;
 }
 
-export type SettingsPage = "general" | "appearance" | "usage" | "providers" | "projects" | "about";
+export type SettingsPage =
+  "general" | "appearance" | "usage" | "providers" | "failover" | "projects" | "about";
 
 export interface AppState {
   model: ReadModel;
