@@ -1,4 +1,12 @@
-import type { AgeEvent, ReadModel, Thread, TimelineItem, Turn } from "@age/contracts";
+import type {
+  AgeEvent,
+  ReadModel,
+  ReviewNote,
+  Thread,
+  ThreadGroup,
+  TimelineItem,
+  Turn,
+} from "@age/contracts";
 
 /**
  * The one projection. Pure, synchronous, no I/O. Server and every client apply
@@ -6,7 +14,15 @@ import type { AgeEvent, ReadModel, Thread, TimelineItem, Turn } from "@age/contr
  * Returns a new object only for the branches that changed (cheap for React).
  */
 export function emptyReadModel(): ReadModel {
-  return { seq: 0, projects: {}, threads: {}, turns: {}, cooldowns: {} };
+  return {
+    seq: 0,
+    projects: {},
+    threads: {},
+    turns: {},
+    cooldowns: {},
+    groups: {},
+    reviewNotes: {},
+  };
 }
 
 export function applyEvents(model: ReadModel, events: readonly AgeEvent[]): ReadModel {
@@ -37,7 +53,13 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         const list = model.turns[id];
         if (list) turns[id] = list;
       }
-      return { ...model, projects, threads, turns };
+      const groups = Object.fromEntries(
+        Object.entries(model.groups).filter(([, group]) => group.projectId !== event.projectId),
+      );
+      const reviewNotes = Object.fromEntries(
+        Object.entries(model.reviewNotes).filter(([threadId]) => threads[threadId]),
+      );
+      return { ...model, projects, threads, turns, groups, reviewNotes };
     }
 
     case "thread.created":
@@ -53,7 +75,14 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
     case "thread.removed": {
       const { [event.threadId]: _thread, ...threads } = model.threads;
       const { [event.threadId]: _turns, ...turns } = model.turns;
-      return { ...model, threads, turns };
+      const { [event.threadId]: _notes, ...reviewNotes } = model.reviewNotes;
+      return {
+        ...model,
+        threads,
+        turns,
+        reviewNotes,
+        groups: detachThread(model.groups, event.threadId),
+      };
     }
 
     case "thread.configured":
@@ -281,7 +310,133 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         model: event.to.model,
         failover: undefined,
       });
+
+    case "thread.spawned": {
+      // One event records the worker and promotes the parent. A later spawn of the
+      // same parent leaves an existing coordinator role untouched.
+      const thread: Thread = {
+        ...event.thread,
+        role: event.thread.role ?? "worker",
+        parentThreadId: event.parentThreadId,
+      };
+      let threads: ReadModel["threads"] = { ...model.threads, [thread.id]: thread };
+      const parent = threads[event.parentThreadId];
+      if (parent && parent.id !== thread.id && parent.role !== "coordinator") {
+        threads = {
+          ...threads,
+          [parent.id]: { ...parent, role: "coordinator", updatedAt: event.at },
+        };
+      }
+      let groups = model.groups;
+      const group = thread.groupId ? groups[thread.groupId] : undefined;
+      if (group && !group.threadIds.includes(thread.id)) {
+        groups = {
+          ...groups,
+          [group.id]: { ...group, threadIds: [...group.threadIds, thread.id] },
+        };
+      }
+      return {
+        ...model,
+        threads,
+        groups,
+        turns: { ...model.turns, [thread.id]: model.turns[thread.id] ?? [] },
+      };
+    }
+
+    case "group.created":
+      return { ...model, groups: { ...model.groups, [event.group.id]: event.group } };
+
+    case "group.winnerPicked": {
+      const group = model.groups[event.groupId];
+      if (!group || group.winnerThreadId === event.threadId) return model;
+      return {
+        ...model,
+        groups: {
+          ...model.groups,
+          [group.id]: { ...group, winnerThreadId: event.threadId },
+        },
+      };
+    }
+
+    case "thread.mergeChanged":
+      return patchThread(model, event.threadId, event.at, { merge: event.merge });
+
+    case "review.noteAdded": {
+      const threadId = event.note.threadId;
+      const notes = (model.reviewNotes[threadId] ?? []).filter((note) => note.id !== event.note.id);
+      notes.push(event.note);
+      return withNotes(model, threadId, notes);
+    }
+
+    case "review.noteRemoved": {
+      const list = model.reviewNotes[event.threadId];
+      if (!list?.some((note) => note.id === event.noteId)) return model;
+      return withNotes(
+        model,
+        event.threadId,
+        list.filter((note) => note.id !== event.noteId),
+      );
+    }
+
+    case "review.notesSent": {
+      const list = model.reviewNotes[event.threadId];
+      if (!list) return model;
+      const drop = new Set(event.noteIds);
+      if (!list.some((note) => drop.has(note.id))) return model;
+      return withNotes(
+        model,
+        event.threadId,
+        list.filter((note) => !drop.has(note.id)),
+      );
+    }
+
+    case "worker.reported": {
+      if (!model.threads[event.workerThreadId]) return model;
+      return patchThread(model, event.workerThreadId, event.at, {
+        report: {
+          turnId: event.turnId,
+          summary: event.summary,
+          ...(event.diffStat ? { diffStat: event.diffStat } : {}),
+          at: event.at,
+        },
+      });
+    }
   }
+}
+
+function withNotes(model: ReadModel, threadId: string, notes: ReviewNote[]): ReadModel {
+  if (notes.length === 0) {
+    if (!model.reviewNotes[threadId]) return model;
+    const { [threadId]: _gone, ...reviewNotes } = model.reviewNotes;
+    return { ...model, reviewNotes };
+  }
+  return { ...model, reviewNotes: { ...model.reviewNotes, [threadId]: notes } };
+}
+
+/** Drop a removed thread from membership, the winner, and the coordinator slot. */
+function detachThread(groups: ReadModel["groups"], threadId: string): ReadModel["groups"] {
+  let changed = false;
+  const next: ReadModel["groups"] = {};
+  for (const [id, group] of Object.entries(groups)) {
+    const cleaned = withoutMember(group, threadId);
+    next[id] = cleaned;
+    if (cleaned !== group) changed = true;
+  }
+  return changed ? next : groups;
+}
+
+function withoutMember(group: ThreadGroup, threadId: string): ThreadGroup {
+  const listed = group.threadIds.includes(threadId);
+  const winner = group.winnerThreadId === threadId;
+  const coordinator = group.coordinatorThreadId === threadId;
+  if (!listed && !winner && !coordinator) return group;
+  const { winnerThreadId, coordinatorThreadId, ...rest } = group;
+  return {
+    ...rest,
+    threadIds: group.threadIds.filter((id) => id !== threadId),
+    ...(winner || winnerThreadId === undefined ? {} : { winnerThreadId }),
+    ...(coordinator || coordinatorThreadId === undefined ? {} : { coordinatorThreadId }),
+  };
 }
 
 function isOpenRequest(item: TimelineItem): boolean {

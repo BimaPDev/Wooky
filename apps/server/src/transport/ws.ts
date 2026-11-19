@@ -140,7 +140,17 @@ function createHandlers(
     },
     "usage.limits": ({ refresh }) => limits.get({ refresh }),
     "usage.history": (params) => history.get(params),
+    "fleet.overview": unavailable,
+    "git.mergePreview": unavailable,
+    "agents.spawn": unavailable,
+    "agents.list": unavailable,
+    "agents.wait": unavailable,
+    "agents.result": unavailable,
   };
+}
+
+function unavailable(): never {
+  throw new ServiceError("unavailable", "not implemented");
 }
 
 /** Attaches the RPC WebSocket at AGE_WS_PATH. Returns a function that closes every socket. */

@@ -1,4 +1,15 @@
-import type { QueuedPrompt, ReadModel, Thread, TimelineItem, Turn } from "@age/contracts";
+import type {
+  DiffStat,
+  FleetRow,
+  FleetStatus,
+  FleetWaitingOn,
+  QueuedPrompt,
+  ReadModel,
+  ReviewNote,
+  Thread,
+  TimelineItem,
+  Turn,
+} from "@age/contracts";
 
 type ItemOf<K extends TimelineItem["kind"]> = Extract<TimelineItem, { kind: K }>;
 
@@ -111,4 +122,116 @@ export function handoffTranscript(model: ReadModel, threadId: string, maxChars =
   }
   const text = parts.join("\n\n");
   return text.length > maxChars ? text.slice(text.length - maxChars) : text;
+}
+
+/** Workers spawned by this thread, oldest first. */
+export function childrenOf(model: ReadModel, threadId: string): readonly Thread[] {
+  const children = Object.values(model.threads)
+    .filter((thread) => thread.parentThreadId === threadId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  return children.length > 0 ? children : NONE;
+}
+
+/** Threads in the group's `threadIds` order. Missing ids are skipped. */
+export function groupThreads(model: ReadModel, groupId: string): readonly Thread[] {
+  const group = model.groups[groupId];
+  if (!group) return NONE;
+  const threads = group.threadIds.flatMap((id) => {
+    const thread = model.threads[id];
+    return thread ? [thread] : [];
+  });
+  return threads.length > 0 ? threads : NONE;
+}
+
+/**
+ * One board row per thread, newest activity first.
+ * Waiting beats working. A failed last turn beats done. Only a worker or a
+ * non-coordinator group member is `done` after its turn completes or is interrupted.
+ * When both an approval and a question are open, `waitingOn` is `approval`.
+ */
+export function fleetRows(model: ReadModel): readonly FleetRow[] {
+  const rows = Object.values(model.threads).map((thread) => fleetRow(model, thread));
+  if (rows.length === 0) return NONE;
+  rows.sort(
+    (a, b) =>
+      b.lastActivityAt.localeCompare(a.lastActivityAt) || a.threadId.localeCompare(b.threadId),
+  );
+  return rows;
+}
+
+function fleetRow(model: ReadModel, thread: Thread): FleetRow {
+  const { status, waitingOn } = fleetStatus(model, thread);
+  return {
+    threadId: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
+    provider: thread.provider,
+    model: thread.model,
+    role: thread.role ?? "solo",
+    ...(thread.groupId ? { groupId: thread.groupId } : {}),
+    ...(thread.parentThreadId ? { parentThreadId: thread.parentThreadId } : {}),
+    status,
+    ...(waitingOn ? { waitingOn } : {}),
+    lastActivityAt: thread.updatedAt,
+    ...(thread.report?.diffStat ? { diffStat: thread.report.diffStat } : {}),
+  };
+}
+
+function fleetStatus(
+  model: ReadModel,
+  thread: Thread,
+): { status: FleetStatus; waitingOn?: FleetWaitingOn } {
+  const approvals = pendingApprovals(model, thread.id);
+  const questions = pendingQuestions(model, thread.id);
+  if (approvals.length > 0 || questions.length > 0) {
+    return { status: "waiting", waitingOn: approvals.length > 0 ? "approval" : "question" };
+  }
+  if (activeTurn(model, thread.id)) return { status: "working" };
+  const last = model.turns[thread.id]?.at(-1);
+  if (last?.status === "failed") return { status: "failed" };
+  const member =
+    thread.role === "worker" || (thread.groupId !== undefined && thread.role !== "coordinator");
+  if (member && (last?.status === "completed" || last?.status === "interrupted")) {
+    return { status: "done" };
+  }
+  return { status: "idle" };
+}
+
+/** Notes for one thread, path then line then id. A missing thread yields the shared empty array. */
+export function reviewNotesFor(model: ReadModel, threadId: string): readonly ReviewNote[] {
+  const notes = model.reviewNotes[threadId];
+  if (!notes || notes.length === 0) return NONE;
+  return [...notes].sort(compareNotes);
+}
+
+function compareNotes(a: ReviewNote, b: ReviewNote): number {
+  const path = a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  if (path !== 0) return path;
+  if (a.line !== b.line) return a.line - b.line;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/** Markdown `review.send` queues or starts. Notes are emitted in the order given. */
+export function formatReviewPrompt(notes: readonly ReviewNote[], extra?: string): string {
+  const lines = notes.map((note) => `- \`${note.path}:${note.line}\` (${note.side}): ${note.body}`);
+  const head = lines.length > 0 ? ["Review notes:", "", ...lines].join("\n") : "Review notes:";
+  const tail = extra?.trim();
+  return tail ? `${head}\n\n${tail}` : head;
+}
+
+/** Prompt the server queues on a coordinator when `worker.reported` is committed. */
+export function formatWorkerReport(input: {
+  workerThreadId: string;
+  title?: string;
+  turnId: string;
+  summary: string;
+  diffStat?: DiffStat;
+}): string {
+  const who = input.title ? `${input.title} (${input.workerThreadId})` : input.workerThreadId;
+  const lines = [`Worker ${who} finished turn ${input.turnId}.`, "", input.summary];
+  if (input.diffStat) {
+    const { files, additions, deletions } = input.diffStat;
+    lines.push("", `${files} files, +${additions} -${deletions}`);
+  }
+  return lines.join("\n");
 }

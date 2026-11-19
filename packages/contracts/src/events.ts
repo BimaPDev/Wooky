@@ -1,15 +1,20 @@
 import { z } from "zod";
 import { ModelTarget, TurnFailure, TurnFailureKind } from "./failover.ts";
 import {
+  DiffStat,
+  FLEET_LIMITS,
   Id,
   InteractionMode,
   IsoTime,
+  MergeState,
   Project,
   ProviderKind,
   QuestionAnswers,
   QueuedPrompt,
+  ReviewNote,
   RuntimeMode,
   Thread,
+  ThreadGroup,
   TimelineItem,
   TurnStatus,
   Usage,
@@ -178,6 +183,53 @@ export const AgeEvent = z.discriminatedUnion("type", [
     type: z.literal("thread.failoverRestored"),
     threadId: Id,
     to: ModelTarget,
+  }),
+  /** A worker thread was created and its parent is now a coordinator. */
+  z.object({
+    ...meta,
+    type: z.literal("thread.spawned"),
+    thread: Thread,
+    parentThreadId: Id,
+  }),
+  z.object({ ...meta, type: z.literal("group.created"), group: ThreadGroup }),
+  z.object({
+    ...meta,
+    type: z.literal("group.winnerPicked"),
+    groupId: Id,
+    threadId: Id,
+  }),
+  z.object({
+    ...meta,
+    type: z.literal("thread.mergeChanged"),
+    threadId: Id,
+    merge: MergeState,
+  }),
+  z.object({ ...meta, type: z.literal("review.noteAdded"), note: ReviewNote }),
+  z.object({
+    ...meta,
+    type: z.literal("review.noteRemoved"),
+    threadId: Id,
+    noteId: Id,
+  }),
+  /** The notes were copied into a prompt. The projection drops these ids. */
+  z.object({
+    ...meta,
+    type: z.literal("review.notesSent"),
+    threadId: Id,
+    noteIds: z.array(Id),
+  }),
+  /**
+   * A spawned worker's turn finished. The server also queues a follow-up on the
+   * coordinator; this event is the durable copy of what that prompt summarizes.
+   */
+  z.object({
+    ...meta,
+    type: z.literal("worker.reported"),
+    coordinatorThreadId: Id,
+    workerThreadId: Id,
+    turnId: Id,
+    summary: z.string().max(FLEET_LIMITS.maxReportSummary),
+    diffStat: DiffStat.optional(),
   }),
 ]);
 export type AgeEvent = z.infer<typeof AgeEvent>;

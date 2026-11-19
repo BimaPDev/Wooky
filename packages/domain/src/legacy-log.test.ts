@@ -2,7 +2,16 @@ import { describe, expect, it } from "vitest";
 import { AgeEvent, ReadModel } from "@age/contracts";
 import { legacyLog, legacyReadModel } from "./legacy-log.fixture.ts";
 import { applyEvents, emptyReadModel } from "./project.ts";
-import { latestPlan, pendingQuestions, queuedPrompts, resumePoint } from "./selectors.ts";
+import {
+  childrenOf,
+  fleetRows,
+  groupThreads,
+  latestPlan,
+  pendingQuestions,
+  queuedPrompts,
+  resumePoint,
+  reviewNotesFor,
+} from "./selectors.ts";
 
 describe("an event log written before the P0 contracts", () => {
   it("decodes and replays to the read model its own reducer built", () => {
@@ -26,7 +35,14 @@ describe("an event log written before the P0 contracts", () => {
       expect(pendingQuestions(model, threadId)).toEqual([]);
       expect(latestPlan(model, threadId)).toBeNull();
       expect(resumePoint(model, threadId)).toBeNull();
+      expect(childrenOf(model, threadId)).toEqual([]);
+      expect(reviewNotesFor(model, threadId)).toEqual([]);
     }
+    expect(groupThreads(model, "missing")).toEqual([]);
+    expect(fleetRows(model).map((row) => [row.threadId, row.role, row.status])).toEqual([
+      ["t2", "solo", "idle"],
+      ["t1", "solo", "failed"],
+    ]);
   });
 });
 
@@ -37,5 +53,5 @@ function withLegacyDefaults(model: LegacyModel) {
   const threads = Object.fromEntries(
     Object.entries(model.threads).map(([id, thread]) => [id, { ...thread, queue: [] }]),
   );
-  return { ...model, threads, cooldowns: {} };
+  return { ...model, threads, cooldowns: {}, groups: {}, reviewNotes: {} };
 }
