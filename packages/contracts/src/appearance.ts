@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FailoverSettings } from "./failover.ts";
+import { FailoverSettings, ModelTarget } from "./failover.ts";
 import { ProviderKind } from "./model.ts";
 import { AcpAgentConfig, ProviderSettings } from "./provider-settings.ts";
 
@@ -204,6 +204,8 @@ export const DeviceSettings = z.object({
   /** Wallpaper animation. Off stops it; a hidden window and reduced motion stop it too. */
   wallpaperMotion: z.enum(["on", "off"]).default("on"),
   failover: FailoverSettings,
+  /** Models starred in the picker, in the order they were added. */
+  favoriteModels: z.array(ModelTarget).max(30).default([]),
 });
 export type DeviceSettings = z.infer<typeof DeviceSettings>;
 

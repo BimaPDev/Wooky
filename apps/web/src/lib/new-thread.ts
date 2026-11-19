@@ -10,7 +10,7 @@ import type {
 } from "@age/contracts";
 import { isAvailable } from "../components/labels.ts";
 import { defaultModelFor } from "../components/providers/helpers.ts";
-import { defaultEffortFor } from "./composer-model.ts";
+import { defaultEffortFor, modelHasFlag } from "./composer-model.ts";
 
 /** What the person has changed on the draft screen. Anything left out follows the defaults. */
 export interface NewThreadDraft {
@@ -21,6 +21,8 @@ export interface NewThreadDraft {
   runtimeMode?: RuntimeMode;
   interactionMode: InteractionMode;
   effort?: EffortLevel;
+  fastMode?: boolean;
+  ultracode?: boolean;
   isolate: boolean;
 }
 
@@ -73,6 +75,8 @@ export interface ResolvedDraft {
   runtimeMode: RuntimeMode;
   interactionMode: InteractionMode;
   effort: EffortLevel | undefined;
+  fastMode: boolean;
+  ultracode: boolean;
   isolate: boolean;
 }
 
@@ -99,6 +103,8 @@ export function resolveDraft(draft: NewThreadDraft, context: DraftContext): Reso
     runtimeMode: draft.runtimeMode ?? context.prefs.runtimeMode,
     interactionMode: draft.interactionMode,
     effort: draft.effort ?? defaultEffortFor(chosen, model),
+    fastMode: draft.fastMode === true && modelHasFlag(chosen, model, "fastMode"),
+    ultracode: draft.ultracode === true && modelHasFlag(chosen, model, "ultracode"),
     isolate: draft.isolate,
   };
 }
@@ -111,6 +117,8 @@ type Create = {
   runtimeMode: RuntimeMode;
   isolate: boolean;
   effort?: EffortLevel;
+  fastMode?: boolean;
+  ultracode?: boolean;
 };
 type Configure = { type: "thread.configure"; threadId: string; interactionMode: "plan" };
 type Start = { type: "turn.start"; threadId: string; prompt: string };
@@ -139,6 +147,8 @@ export function draftCommands(
       runtimeMode: draft.runtimeMode,
       isolate: draft.isolate,
       ...(draft.effort ? { effort: draft.effort } : {}),
+      ...(draft.fastMode ? { fastMode: true } : {}),
+      ...(draft.ultracode ? { ultracode: true } : {}),
     },
     after: (threadId) => [
       ...(draft.interactionMode === "plan"

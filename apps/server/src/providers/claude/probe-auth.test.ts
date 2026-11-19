@@ -255,6 +255,7 @@ describe("claudeModelOptions", () => {
         ...info("opus", "Opus"),
         resolvedModel: "claude-opus-5-5",
         supportedEffortLevels: ["low", "high"],
+        supportsFastMode: true,
       },
     ]);
     expect(opus).toEqual({
@@ -262,6 +263,8 @@ describe("claudeModelOptions", () => {
       label: "Opus",
       resolvedModel: "claude-opus-5-5",
       efforts: ["low", "high"],
+      fastMode: true,
+      ultracode: true,
     });
     expect(claudeModelOptions([{ ...info("haiku", "Haiku"), supportsEffort: false }])[1]).toEqual({
       id: "haiku",

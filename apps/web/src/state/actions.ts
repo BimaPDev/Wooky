@@ -42,6 +42,7 @@ import {
 } from "../components/panes/layout.ts";
 import {
   currentNavFromState,
+  draftProjectId,
   navTargetExists,
   subscribeToEvents,
   useStore,
@@ -284,6 +285,21 @@ export async function createThread(input: {
 
 // ── The draft "New thread" screen ───────────────────────
 
+/** Star or unstar models. Only this key goes to the server; the screen updates at once. */
+export async function setFavoriteModels(favoriteModels: ModelTarget[]) {
+  const before = useStore.getState().deviceSettings;
+  if (before) useStore.setState({ deviceSettings: { ...before, favoriteModels } });
+  try {
+    const settings = await backend().call("settings.put", { settings: { favoriteModels } });
+    useStore.setState({ deviceSettings: settings });
+  } catch (error) {
+    if (before) useStore.setState({ deviceSettings: before });
+    useStore.setState({
+      notice: error instanceof Error ? error.message : "Could not save your favourites.",
+    });
+  }
+}
+
 const EMPTY_DRAFT: NewThreadDraft = { projectId: null, interactionMode: "default", isolate: false };
 
 /**
@@ -441,6 +457,8 @@ export const configureThread = (
     runtimeMode?: RuntimeMode;
     interactionMode?: InteractionMode;
     effort?: EffortLevel;
+    fastMode?: boolean;
+    ultracode?: boolean;
   },
 ) => dispatch({ type: "thread.configure", threadId, ...patch });
 
@@ -648,6 +666,37 @@ export function openFanoutDialog(input: {
   getPrompt: () => string;
 }) {
   useStore.setState({ fanoutDialog: input, paletteOpen: false, jumpOpen: false });
+}
+
+const composerText = () =>
+  (
+    document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')?.value ?? ""
+  ).trim();
+
+/** "Run on several agents" from the palette: sends what is typed in the composer, in this project. */
+export async function openFanoutFromComposer() {
+  const state = useStore.getState();
+  if (composerText() === "") {
+    useStore.setState({ notice: "Type a message first.", paletteOpen: false });
+    return;
+  }
+  const thread = state.selectedThreadId ? state.model.threads[state.selectedThreadId] : undefined;
+  if (thread) {
+    openFanoutDialog({
+      projectId: thread.projectId,
+      runtimeMode: thread.runtimeMode,
+      getPrompt: composerText,
+    });
+    return;
+  }
+  const projectId = draftProjectId(state) ?? (await ensureScratchProject());
+  if (projectId) {
+    openFanoutDialog({
+      projectId,
+      runtimeMode: state.newThread?.runtimeMode ?? state.draftPrefs.runtimeMode,
+      getPrompt: composerText,
+    });
+  }
 }
 
 export const closeFanoutDialog = () => useStore.setState({ fanoutDialog: null });

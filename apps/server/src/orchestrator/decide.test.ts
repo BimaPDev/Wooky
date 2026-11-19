@@ -256,6 +256,18 @@ describe("decide effort and scratch", () => {
     expect(apply(model, second.events).threads.t1?.effort).toBe("max");
   });
 
+  it("turns fast mode and ultracode on and off with configure, and keeps them otherwise", () => {
+    const on = accepted(
+      run(seed(), command("thread.configure", { threadId: "t1", fastMode: true, ultracode: true })),
+    );
+    const model = apply(seed(), on.events);
+    expect(model.threads.t1).toMatchObject({ fastMode: true, ultracode: true });
+    const off = accepted(
+      run(model, command("thread.configure", { threadId: "t1", fastMode: false })),
+    );
+    expect(apply(model, off.events).threads.t1).toMatchObject({ fastMode: false, ultracode: true });
+  });
+
   it("flags a scratch project and leaves ordinary projects unflagged", () => {
     const scratch = accepted(
       run(

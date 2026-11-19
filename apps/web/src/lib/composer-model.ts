@@ -1,4 +1,10 @@
-import type { DeviceSettings, EffortLevel, ProviderKind, ProviderStatus } from "@age/contracts";
+import type {
+  DeviceSettings,
+  EffortLevel,
+  ModelTarget,
+  ProviderKind,
+  ProviderStatus,
+} from "@age/contracts";
 import { isAvailable } from "../components/labels.ts";
 import { pickerModels } from "../components/providers/helpers.ts";
 
@@ -146,4 +152,88 @@ export function pickerProviders(
     }
     return usable(entry);
   });
+}
+
+/** The model row's full display name: Claude's own models carry the family prefix. */
+export function fullModelName(kind: ProviderKind, label: string, id: string): string {
+  const plain = label.trim() || id;
+  if (kind !== "claude" || id === "default" || /^claude\b/i.test(plain)) return plain;
+  return `Claude ${plain}`;
+}
+
+/** Whether the model, or the model its alias maps to, has the flag (fast mode, ultracode). */
+export function modelHasFlag(
+  status: Pick<ProviderStatus, "models"> | undefined,
+  modelId: string,
+  flag: "fastMode" | "ultracode",
+): boolean {
+  const entry = status?.models.find((model) => model.id === modelId);
+  if (entry?.[flag]) return true;
+  const resolved = entry?.resolvedModel;
+  return resolved ? status?.models.find((model) => model.id === resolved)?.[flag] === true : false;
+}
+
+export const MAX_FAVORITE_MODELS = 30;
+
+export const isFavoriteModel = (
+  favorites: readonly ModelTarget[],
+  provider: ProviderKind,
+  model: string,
+) => favorites.some((entry) => entry.provider === provider && entry.model === model);
+
+/** Add the model to the favourites, or remove it. A full list takes no more. */
+export function toggleFavoriteModel(
+  favorites: readonly ModelTarget[],
+  target: ModelTarget,
+): ModelTarget[] {
+  if (isFavoriteModel(favorites, target.provider, target.model)) {
+    return favorites.filter(
+      (entry) => !(entry.provider === target.provider && entry.model === target.model),
+    );
+  }
+  if (favorites.length >= MAX_FAVORITE_MODELS) return [...favorites];
+  return [...favorites, target];
+}
+
+export interface PickerRow {
+  provider: ProviderKind;
+  id: string;
+  label: string;
+  isDefault: boolean;
+}
+
+/** The rows of one provider's tab. */
+export function providerRows(
+  status: ProviderStatus,
+  settings: Pick<DeviceSettings, "providers" | "acpAgents"> | null,
+): PickerRow[] {
+  return pickerModels(status, settings).map((model) => ({
+    provider: status.kind,
+    id: model.id,
+    label: fullModelName(status.kind, model.label, model.id),
+    isDefault: model.isDefault,
+  }));
+}
+
+/** The rows of the Favorites tab: starred models across the providers that can be used now. */
+export function favoriteRows(
+  favorites: readonly ModelTarget[],
+  visible: readonly ProviderStatus[],
+  settings: Pick<DeviceSettings, "providers" | "acpAgents"> | null,
+): PickerRow[] {
+  const rows: PickerRow[] = [];
+  for (const favorite of favorites) {
+    const status = visible.find((entry) => entry.kind === favorite.provider);
+    if (!status) continue;
+    const row = providerRows(status, settings).find((entry) => entry.id === favorite.model);
+    rows.push(
+      row ?? {
+        provider: favorite.provider,
+        id: favorite.model,
+        label: fullModelName(favorite.provider, favorite.model, favorite.model),
+        isDefault: false,
+      },
+    );
+  }
+  return rows;
 }

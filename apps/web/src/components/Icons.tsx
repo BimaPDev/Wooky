@@ -146,6 +146,21 @@ export const IconPaperclip = () => (
     <path d="M12.8 7.6l-4.6 4.6a3 3 0 01-4.2-4.2l5-5a2 2 0 012.9 2.9L7.2 11.2a1 1 0 01-1.4-1.4l4.2-4.2" />
   </Svg>
 );
+export const IconStar = ({ filled = false }: { filled?: boolean }) => (
+  <Svg fill={filled ? "currentColor" : "none"}>
+    <path d="M8 2l1.8 3.7 4 .6-2.9 2.8.7 4L8 11.2 4.4 13.1l.7-4L2.2 6.3l4-.6z" />
+  </Svg>
+);
+export const IconBolt = () => (
+  <Svg>
+    <path d="M9 1.8L3.5 9H8l-1 5.2L12.5 7H8z" />
+  </Svg>
+);
+export const IconSparkles = () => (
+  <Svg>
+    <path d="M6.5 3l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1zM12 9l.6 1.4L14 11l-1.4.6L12 13l-.6-1.4L10 11l1.4-.6z" />
+  </Svg>
+);
 export const IconAlert = () => (
   <Svg>
     <path d="M8 2.5L14 13.5H2z" />

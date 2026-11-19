@@ -3,6 +3,7 @@ import { fuzzyFilter } from "../lib/fuzzy.ts";
 import {
   configureThread,
   openDialog,
+  openFanoutFromComposer,
   openFleetBoard,
   openNewThread,
   openInSplit,
@@ -52,6 +53,15 @@ function PaletteDialog() {
         label: "New thread with options…",
         hint: "Pick agent, model and isolation first",
         run: () => openDialog({ kind: "newThread", projectId: null }),
+      },
+      {
+        id: "fanout",
+        label: "Run on several agents",
+        hint: "Sends what you typed",
+        run: () => {
+          setPaletteOpen(false);
+          void openFanoutFromComposer();
+        },
       },
       { id: "add-project", label: "Add project", run: () => void pickProjectFolder() },
       {

@@ -42,6 +42,10 @@ export interface TurnInput {
   interactionMode: InteractionMode;
   /** Reasoning effort the user picked. Absent means the model's own default. */
   effort?: EffortLevel;
+  /** Claude fast mode, when the user turned it on. */
+  fastMode?: boolean;
+  /** Claude ultracode, when the user turned it on. */
+  ultracode?: boolean;
   /** Prior conversation as text when the thread was handed off from another provider. */
   handoffContext: string | null;
   /** Absent means solo. A worker cannot spawn; every other role may. */

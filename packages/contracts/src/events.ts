@@ -53,6 +53,8 @@ export const AgeEvent = z.discriminatedUnion("type", [
     handoff: z.boolean(),
     interactionMode: InteractionMode.optional(),
     effort: EffortLevel.optional(),
+    fastMode: z.boolean().optional(),
+    ultracode: z.boolean().optional(),
   }),
   z.object({
     ...meta,

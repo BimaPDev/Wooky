@@ -5,6 +5,11 @@ import {
   defaultEffortFor,
   effortLabel,
   effortsFor,
+  favoriteRows,
+  fullModelName,
+  modelHasFlag,
+  MAX_FAVORITE_MODELS,
+  toggleFavoriteModel,
   pickerProviders,
   shortModelName,
   shownEffort,
@@ -144,5 +149,68 @@ describe("pickerProviders", () => {
     expect(kinds(pickerProviders(list, none, null, { showDemo: false, current: "codex" }))).toEqual(
       ["claude", "codex"],
     );
+  });
+});
+
+describe("fullModelName", () => {
+  it("prefixes Claude's own models and leaves the rest", () => {
+    expect(fullModelName("claude", "Opus 5.5", "claude-opus-5-5")).toBe("Claude Opus 5.5");
+    expect(fullModelName("claude", "Claude Fable 5.2", "fable")).toBe("Claude Fable 5.2");
+    expect(fullModelName("claude", "Default (recommended)", "default")).toBe(
+      "Default (recommended)",
+    );
+    expect(fullModelName("codex", "GPT-5.5 Codex", "gpt")).toBe("GPT-5.5 Codex");
+  });
+});
+
+describe("modelHasFlag", () => {
+  const withFlags: Pick<ProviderStatus, "models"> = {
+    models: [
+      { id: "default", label: "Default", resolvedModel: "claude-opus-5-5" },
+      { id: "claude-opus-5-5", label: "Opus", fastMode: true, ultracode: true },
+      { id: "haiku", label: "Haiku" },
+    ],
+  };
+  it("reads the model's own flag or the one its alias maps to", () => {
+    expect(modelHasFlag(withFlags, "default", "fastMode")).toBe(true);
+    expect(modelHasFlag(withFlags, "claude-opus-5-5", "ultracode")).toBe(true);
+    expect(modelHasFlag(withFlags, "haiku", "fastMode")).toBe(false);
+    expect(modelHasFlag(undefined, "default", "fastMode")).toBe(false);
+  });
+});
+
+describe("favourites", () => {
+  const a = { provider: "claude", model: "claude-opus-5-5" } as const;
+  const b = { provider: "cursor", model: "opus-5.5" } as const;
+
+  it("adds and removes one model without touching the others", () => {
+    expect(toggleFavoriteModel([], a)).toEqual([a]);
+    expect(toggleFavoriteModel([a], b)).toEqual([a, b]);
+    expect(toggleFavoriteModel([a, b], a)).toEqual([b]);
+  });
+
+  it("takes no more than the limit", () => {
+    const full = Array.from({ length: MAX_FAVORITE_MODELS }, (_, index) => ({
+      provider: "claude" as const,
+      model: `m${index}`,
+    }));
+    expect(toggleFavoriteModel(full, a)).toEqual(full);
+    expect(toggleFavoriteModel(full, full[0] ?? a)).toHaveLength(MAX_FAVORITE_MODELS - 1);
+  });
+
+  it("lists favourites across providers with their own labels, skipping unusable providers", () => {
+    const fromClaude = status("claude", { models: [{ id: "claude-opus-5-5", label: "Opus 5.5" }] });
+    const fromCursor = status("cursor", {
+      models: [{ id: "opus-5.5", label: "Opus 5.5 (thinking)" }],
+    });
+    const rows = favoriteRows(
+      [a, b, { provider: "codex", model: "x" }],
+      [fromClaude, fromCursor],
+      null,
+    );
+    expect(rows.map((row) => [row.provider, row.label])).toEqual([
+      ["claude", "Claude Opus 5.5"],
+      ["cursor", "Opus 5.5 (thinking)"],
+    ]);
   });
 });
