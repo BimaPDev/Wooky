@@ -10,7 +10,13 @@ import {
   slashPlanModeAllowed,
   type SlashCommandId,
 } from "../lib/composer-trigger.ts";
-import { configureThread, interruptTurn, openDialog, startTurn } from "../state/actions.ts";
+import {
+  configureThread,
+  interruptTurn,
+  openDialog,
+  openFanoutDialog,
+  startTurn,
+} from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { ComposerMenuPanel, useComposerMenu } from "./ComposerMenu.tsx";
 import { IconAlert, IconChevron, IconMic, IconPlus, IconSend, IconStop } from "./Icons.tsx";
@@ -271,6 +277,22 @@ export function Composer({ threadId }: { threadId: string }) {
                 forceOpen={modelPickerOpen}
                 onOpenChange={setModelPickerOpen}
               />
+              <button
+                type="button"
+                className="composer-chip"
+                aria-label="Run on several agents"
+                title="Run on several agents"
+                disabled={!draft.trim()}
+                onClick={() =>
+                  openFanoutDialog({
+                    projectId: thread.projectId,
+                    prompt: draft.trim(),
+                    runtimeMode: thread.runtimeMode,
+                  })
+                }
+              >
+                Several agents
+              </button>
             </div>
             <div className="composer-toolbar-end">
               <button
