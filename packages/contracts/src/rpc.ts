@@ -207,3 +207,5 @@ export type ServerMessage = z.infer<typeof ServerMessage>;
 
 export const AGE_WS_PATH = "/ws";
 export const AGE_DEFAULT_PORT = 4317;
+/** How long the server waits for the folder dialog before killing its child. */
+export const PICK_FOLDER_TIMEOUT_MS = 10 * 60 * 1000;

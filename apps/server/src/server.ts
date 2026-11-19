@@ -11,6 +11,7 @@ import { createDispatcher } from "./orchestrator/dispatcher.ts";
 import { builtinAdapters } from "./providers/index.ts";
 import { createProviderRegistry } from "./providers/registry.ts";
 import type { ProviderAdapter } from "./providers/types.ts";
+import type { FolderPicker } from "./process/folder-picker.ts";
 import { createQueries } from "./queries.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
@@ -30,6 +31,10 @@ export interface ServerOptions {
   git?: GitService;
   /** Directory whose children `fs.pickable` suggests. Defaults to the OS home. */
   userHome?: string;
+  /** When set, a non-loopback client may open the folder chooser. */
+  allowRemotePicker?: boolean;
+  /** Test seam. Production builds one from the operating system. */
+  folderPicker?: FolderPicker;
 }
 
 export interface RunningServer {
@@ -98,6 +103,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     http,
     { store, dispatcher, providers, queries, themes, terminals, limits, history },
     new Set(options.allowedHosts ?? []),
+    {
+      allowRemotePicker: options.allowRemotePicker === true,
+      ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
+    },
   );
   try {
     await new Promise<void>((resolve, reject) => {

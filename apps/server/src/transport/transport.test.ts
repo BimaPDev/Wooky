@@ -1,13 +1,24 @@
+import { EventEmitter } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { AGE_WS_PATH, type AgeEvent, RpcPush, RpcResponse } from "@age/contracts";
+import { createFolderPicker } from "../process/folder-picker.ts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer, type ServerOptions } from "../server.ts";
 import { openEventStore } from "../store/event-store.ts";
 import { createFakeGit, tempDir } from "../testing.ts";
-import { originAllowed } from "./ws.ts";
+import { folderPickerAllowed, originAllowed } from "./ws.ts";
+
+function unsetPid(pid: number): void {
+  throw new Error(`Folder dialog kill was not armed for ${pid}.`);
+}
+
+function unsetOpen(): void {
+  throw new Error("The folder dialog was not opened.");
+}
 
 const servers: RunningServer[] = [];
 const sockets: WebSocket[] = [];
@@ -73,6 +84,7 @@ async function connect(server: RunningServer) {
       if (seen) return Promise.resolve(seen);
       return new Promise((resolve) => waiters.push({ match, resolve }));
     },
+    close: () => socket.close(),
   };
 }
 
@@ -277,6 +289,95 @@ describe("transport", () => {
     expect(originAllowed("http://127.0.0.1:5173", "evil.example:4317")).toBe(false);
     expect(originAllowed("http://evil.example", "127.0.0.1:4317")).toBe(false);
     expect(originAllowed("not a url", "x")).toBe(false);
+  });
+
+  it("opens the folder chooser only for loopback peers unless the operator opts in", () => {
+    expect(folderPickerAllowed("127.0.0.1", false)).toBe(true);
+    expect(folderPickerAllowed("::1", false)).toBe(true);
+    expect(folderPickerAllowed("::ffff:127.0.0.1", false)).toBe(true);
+    expect(folderPickerAllowed("::FFFF:127.0.0.1", false)).toBe(true);
+    expect(folderPickerAllowed("192.168.1.20", false)).toBe(false);
+    expect(folderPickerAllowed(undefined, false)).toBe(false);
+    expect(folderPickerAllowed("192.168.1.20", true)).toBe(true);
+  });
+
+  it("conflicts a second connection and kills the dialog when its connection closes", async () => {
+    const killed: number[] = [];
+    const opened = { resolve: unsetOpen };
+    const ready = new Promise<void>((resolve) => {
+      opened.resolve = resolve;
+    });
+    const killedGate = { resolve: unsetPid };
+    const killedDone = new Promise<number>((resolve) => {
+      killedGate.resolve = resolve;
+    });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 8801,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+    const folderPicker = createFolderPicker({
+      platform: "darwin",
+      spawn: () => {
+        opened.resolve();
+        return child as never;
+      },
+      kill: (pid) => {
+        killed.push(pid);
+        killedGate.resolve(pid);
+        queueMicrotask(() => child.emit("close", null, "SIGKILL"));
+      },
+    });
+    const { server } = await boot({ folderPicker });
+    const first = await connect(server);
+    const second = await connect(server);
+    const pending = first.call("fs.pickFolder", {});
+    await ready;
+    expect(await second.call("fs.pickFolder", {})).toMatchObject({
+      ok: false,
+      error: { code: "conflict", message: "A folder chooser is already open." },
+    });
+    first.close();
+    await expect(killedDone).resolves.toBe(8801);
+    expect(killed).toEqual([8801]);
+    pending.catch(() => undefined);
+  });
+
+  it("kills the folder dialog when the server closes", async () => {
+    const opened = { resolve: unsetOpen };
+    const ready = new Promise<void>((resolve) => {
+      opened.resolve = resolve;
+    });
+    const killedGate = { resolve: unsetPid };
+    const killedDone = new Promise<number>((resolve) => {
+      killedGate.resolve = resolve;
+    });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 8802,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+    const folderPicker = createFolderPicker({
+      platform: "darwin",
+      spawn: () => {
+        opened.resolve();
+        return child as never;
+      },
+      kill: (pid) => {
+        killedGate.resolve(pid);
+        queueMicrotask(() => child.emit("close", null, "SIGKILL"));
+      },
+    });
+    const { server } = await boot({ folderPicker });
+    const client = await connect(server);
+    const pending = client.call("fs.pickFolder", {});
+    await ready;
+    const closing = server.close();
+    await expect(killedDone).resolves.toBe(8802);
+    await closing;
+    pending.catch(() => undefined);
   });
 
   it("serves health and the web build with an SPA fallback", async () => {

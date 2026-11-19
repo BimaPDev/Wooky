@@ -2,14 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   awaitListening,
   buildServerLaunch,
+  createSingleFlight,
   ListeningLineParser,
   decideNavigation,
   errorPage,
   isPermissionAllowed,
   parseListeningLine,
+  usableWindow,
   type ChildEvents,
   type ChildExit,
 } from "./logic.ts";
+
+function unsetPath(path: string): void {
+  throw new Error(`Folder dialog was not armed for ${path}.`);
+}
 
 type Listener<T> = (value: T) => void;
 
@@ -200,6 +206,45 @@ describe("permissions", () => {
     expect(isPermissionAllowed("media")).toBe(false);
     expect(isPermissionAllowed("notifications")).toBe(false);
     expect(isPermissionAllowed("geolocation")).toBe(false);
+  });
+});
+
+describe("folder dialog", () => {
+  it("shares one in-flight promise", async () => {
+    const run = createSingleFlight();
+    const gateHolder = { resolve: unsetPath };
+    const gate = new Promise<string>((resolve) => {
+      gateHolder.resolve = resolve;
+    });
+    let starts = 0;
+    const first = run(() => {
+      starts += 1;
+      return gate;
+    });
+    const second = run(() => {
+      starts += 1;
+      return Promise.resolve("other");
+    });
+    expect(second).toBe(first);
+    expect(starts).toBe(1);
+    gateHolder.resolve("/tmp/app");
+    await expect(first).resolves.toBe("/tmp/app");
+    await expect(
+      run(() => {
+        starts += 1;
+        return Promise.resolve("/tmp/next");
+      }),
+    ).resolves.toBe("/tmp/next");
+    expect(starts).toBe(2);
+  });
+
+  it("refuses a window that is missing or destroyed", () => {
+    expect(usableWindow(null)).toBeNull();
+    expect(usableWindow(undefined)).toBeNull();
+    const gone = { isDestroyed: () => true };
+    expect(usableWindow(gone)).toBeNull();
+    const live = { isDestroyed: () => false };
+    expect(usableWindow(live)).toBe(live);
   });
 });
 

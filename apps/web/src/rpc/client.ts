@@ -1,4 +1,5 @@
 import {
+  PICK_FOLDER_TIMEOUT_MS,
   RpcMethods,
   ServerMessage,
   type AgeEvent,
@@ -66,8 +67,8 @@ interface Pending {
 }
 
 const OPEN = 1;
-/** The folder dialog waits on the person. Other calls still fail fast. */
-const FOLDER_PICK_TIMEOUT_MS = 10 * 60 * 1000;
+/** The server kills the dialog at PICK_FOLDER_TIMEOUT_MS. Wait a little longer for that error. */
+const FOLDER_PICK_CLIENT_TIMEOUT_MS = PICK_FOLDER_TIMEOUT_MS + 5_000;
 
 export function backoffDelay(attempt: number, baseMs: number, maxMs: number, random: number) {
   const capped = Math.min(maxMs, baseMs * 2 ** attempt);
@@ -190,9 +191,14 @@ export function createRpcClient(options: RpcClientOptions) {
       const timer = setTimeout(
         () => {
           pending.delete(id);
-          reject(new RpcCallError("timeout", `${method} timed out.`));
+          reject(
+            new RpcCallError(
+              "timeout",
+              method === "fs.pickFolder" ? "The folder chooser timed out." : `${method} timed out.`,
+            ),
+          );
         },
-        method === "fs.pickFolder" ? FOLDER_PICK_TIMEOUT_MS : timeoutMs,
+        method === "fs.pickFolder" ? FOLDER_PICK_CLIENT_TIMEOUT_MS : timeoutMs,
       );
       const sent = socket !== null && socket.readyState === OPEN;
       pending.set(id, {

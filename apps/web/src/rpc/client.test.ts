@@ -1,4 +1,4 @@
-import type { AgeEvent, ReadModel } from "@age/contracts";
+import { PICK_FOLDER_TIMEOUT_MS, type AgeEvent, type ReadModel } from "@age/contracts";
 import { applyEvent, emptyReadModel } from "@age/domain";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRpcClient, RpcCallError, type SocketHandlers, type SocketLike } from "./client.ts";
@@ -135,6 +135,30 @@ describe("rpc client", () => {
     await expect(settled).resolves.toEqual({
       ok: true,
       value: { path: "/tmp/app", supported: true },
+    });
+    client.close();
+  });
+
+  it("times out a folder dialog five seconds after the server, with a chooser message", async () => {
+    const { client, socket } = setup({ timeoutMs: 500 });
+    socket().open();
+    const call = client.call("fs.pickFolder", {});
+    const settled = call.then(
+      () => ({ timedOut: false }),
+      (error: unknown) => ({ timedOut: true, error }),
+    );
+    await vi.advanceTimersByTimeAsync(PICK_FOLDER_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(4_999);
+    let done = false;
+    void settled.then(() => {
+      done = true;
+    });
+    await Promise.resolve();
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(settled).resolves.toMatchObject({
+      timedOut: true,
+      error: { code: "timeout", message: "The folder chooser timed out." },
     });
     client.close();
   });

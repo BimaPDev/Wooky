@@ -1,13 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { stat as statPath } from "node:fs/promises";
 import { posix, win32 } from "node:path";
+import { PICK_FOLDER_TIMEOUT_MS } from "@age/contracts";
 import { ServiceError } from "../errors.ts";
 
-/** Past this, kill the chooser child. The dialog stays open until the user answers. */
-export const PICK_FOLDER_TIMEOUT_MS = 10 * 60 * 1000;
-
-const MAX_OUTPUT_CHARS = 64 * 1024;
+const MAX_OUTPUT_BYTES = 64 * 1024;
 const DEFAULT_TITLE = "Add project";
+const CHOOSER_FAILED = "Could not open the folder chooser.";
 
 export interface PickFolderRequest {
   title?: string;
@@ -40,75 +39,115 @@ interface Outcome {
   stderr: string;
 }
 
-export function createFolderPicker(deps: FolderPickerDeps = {}) {
+interface Running {
+  outcome: Promise<Outcome>;
+  cancel(): void;
+}
+
+interface ActivePick {
+  key: object;
+  result: Promise<PickFolderResult>;
+  abort(): void;
+}
+
+export interface FolderPicker {
+  /** One dialog per key. A different key, while one is open, is a conflict. */
+  pick(key: object, request?: PickFolderRequest): Promise<PickFolderResult>;
+  /** Kill the child spawned for this key, if it is the one that is open. */
+  cancel(key: object): void;
+  /** Kill whichever child is open. Used when the server itself is closing. */
+  close(): void;
+}
+
+export function createFolderPicker(deps: FolderPickerDeps = {}): FolderPicker {
   const platform = deps.platform ?? process.platform;
   const spawnProcess = deps.spawn ?? defaultSpawn;
   const kill = deps.kill ?? defaultKill;
   const stat = deps.stat ?? statPath;
   const timeoutMs = deps.timeoutMs ?? PICK_FOLDER_TIMEOUT_MS;
-  // One chooser at a time. A second call shares the in-flight promise.
-  let pending: Promise<PickFolderResult> | null = null;
+  let active: ActivePick | null = null;
 
-  function pick(request: PickFolderRequest = {}): Promise<PickFolderResult> {
-    if (pending) return pending;
-    const run = choose(request).finally(() => {
-      pending = null;
+  function pick(key: object, request: PickFolderRequest = {}): Promise<PickFolderResult> {
+    if (active) {
+      if (active.key === key) return active.result;
+      return Promise.reject(new ServiceError("conflict", "A folder chooser is already open."));
+    }
+    let abort = () => {};
+    const result = run(request, (fn) => {
+      abort = fn;
+    }).finally(() => {
+      if (active?.result === result) active = null;
     });
-    pending = run;
-    return run;
+    active = {
+      key,
+      result,
+      abort() {
+        abort();
+      },
+    };
+    return result;
   }
 
-  async function choose(request: PickFolderRequest): Promise<PickFolderResult> {
+  function cancel(key: object) {
+    if (active?.key === key) active.abort();
+  }
+
+  function close() {
+    active?.abort();
+  }
+
+  async function run(
+    request: PickFolderRequest,
+    registerAbort: (fn: () => void) => void,
+  ): Promise<PickFolderResult> {
     const title = folderChooserTitle(request.title);
-    if (platform === "darwin") return pickDarwin(title);
-    if (platform === "win32") return pickWindows(title);
-    return pickLinux(title);
+    if (platform === "darwin")
+      return finishDarwin(await oneChild("osascript", ["-e", appleScript(title)], registerAbort));
+    if (platform === "win32")
+      return finishWindows(await oneChild("powershell", windowsArgs(title), registerAbort));
+    return pickLinux(title, registerAbort);
   }
 
-  async function pickDarwin(title: string): Promise<PickFolderResult> {
-    const outcome = await runChild(
-      spawnProcess,
-      kill,
-      "osascript",
-      ["-e", appleScript(title)],
-      timeoutMs,
-    );
+  function oneChild(
+    command: string,
+    args: readonly string[],
+    registerAbort: (fn: () => void) => void,
+  ): Promise<Outcome> {
+    const running = runChild(spawnProcess, kill, command, args, timeoutMs);
+    registerAbort(running.cancel);
+    return running.outcome;
+  }
+
+  async function finishDarwin(outcome: Outcome): Promise<PickFolderResult> {
     if (outcome.missing) return { path: null, supported: false };
     if (outcome.code === 0) return resultFromOutput(outcome.stdout, platform, stat);
     if (isMacCancel(outcome)) return { path: null, supported: true };
-    throw new ServiceError(
-      "unavailable",
-      outcome.stderr.trim() || "Could not open the folder chooser.",
-    );
+    throw chooserFailed(outcome.stderr);
   }
 
-  async function pickWindows(title: string): Promise<PickFolderResult> {
-    const outcome = await runChild(spawnProcess, kill, "powershell", windowsArgs(title), timeoutMs);
+  async function finishWindows(outcome: Outcome): Promise<PickFolderResult> {
     if (outcome.missing) return { path: null, supported: false };
     if (outcome.code === 0) return resultFromOutput(outcome.stdout, platform, stat);
-    throw new ServiceError(
-      "unavailable",
-      outcome.stderr.trim() || "Could not open the folder chooser.",
-    );
+    if (outcome.code === null) return { path: null, supported: true };
+    throw chooserFailed(outcome.stderr);
   }
 
-  async function pickLinux(title: string): Promise<PickFolderResult> {
-    const zenity = await runChild(
-      spawnProcess,
-      kill,
+  async function pickLinux(
+    title: string,
+    registerAbort: (fn: () => void) => void,
+  ): Promise<PickFolderResult> {
+    const zenity = await oneChild(
       "zenity",
       ["--file-selection", "--directory", `--title=${title}`],
-      timeoutMs,
+      registerAbort,
     );
-    if (!zenity.missing) return finishLinux(zenity);
-    const kdialog = await runChild(
-      spawnProcess,
-      kill,
+    if (!shouldFallThrough(zenity)) return finishLinux(zenity);
+    const kdialog = await oneChild(
       "kdialog",
       ["--title", title, "--getexistingdirectory"],
-      timeoutMs,
+      registerAbort,
     );
-    if (kdialog.missing) return { path: null, supported: false };
+    if (shouldFallThrough(kdialog)) return { path: null, supported: false };
     return finishLinux(kdialog);
   }
 
@@ -116,21 +155,10 @@ export function createFolderPicker(deps: FolderPickerDeps = {}) {
     if (outcome.code === 0) return resultFromOutput(outcome.stdout, platform, stat);
     if (outcome.code === 1 || outcome.code === null)
       return Promise.resolve({ path: null, supported: true });
-    return Promise.reject(
-      new ServiceError(
-        "unavailable",
-        outcome.stderr.trim() || "Could not open the folder chooser.",
-      ),
-    );
+    return Promise.reject(chooserFailed(outcome.stderr));
   }
 
-  return { pick };
-}
-
-const shared = createFolderPicker();
-
-export function pickFolder(request: PickFolderRequest = {}): Promise<PickFolderResult> {
-  return shared.pick(request);
+  return { pick, cancel, close };
 }
 
 function defaultSpawn(command: string, args: readonly string[]): ChildProcess {
@@ -161,31 +189,52 @@ function appleScript(title: string): string {
 
 function windowsArgs(title: string): readonly string[] {
   const description = title.replaceAll("'", "''");
-  const script = [
+  const body = [
     "Add-Type -AssemblyName System.Windows.Forms",
     "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
     `$dialog.Description = '${description}'`,
     "$dialog.ShowNewFolderButton = $true",
     "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }",
   ].join("; ");
-  return ["-NoProfile", "-STA", "-Command", script];
+  const script = `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $ErrorActionPreference='Stop'; try { ${body} } catch { Write-Error $_; exit 1 }`;
+  return [
+    "-NoProfile",
+    "-STA",
+    "-EncodedCommand",
+    Buffer.from(script, "utf16le").toString("base64"),
+  ];
 }
 
+/** Exit 1 is a cancel only when osascript says the person dismissed the dialog. */
 function isMacCancel(outcome: Outcome): boolean {
-  if (outcome.code === 1 || outcome.code === null) return true;
+  if (outcome.code === null) return true;
+  if (outcome.code !== 1) return false;
   return outcome.stderr.includes("User canceled") || outcome.stderr.includes("-128");
 }
 
+function shouldFallThrough(outcome: Outcome): boolean {
+  if (outcome.missing || outcome.code === 127) return true;
+  if (outcome.code !== 1) return false;
+  if (normalizePickedPath(outcome.stdout) !== "") return false;
+  return isLaunchFailure(outcome.stderr);
+}
+
+function isLaunchFailure(stderr: string): boolean {
+  return (
+    stderr.includes("cannot open display") ||
+    stderr.includes("Failed to") ||
+    stderr.includes("Gtk-")
+  );
+}
+
+/** Drop the trailing line break and trailing slashes. Spaces in the path stay. */
 function normalizePickedPath(raw: string): string {
-  const line =
-    raw
-      .replace(/^\uFEFF/, "")
-      .trim()
-      .split(/\r?\n/, 1)[0]
-      ?.trim() ?? "";
-  if (!line) return "";
-  if (line === "/" || line === "\\") return line;
-  const stripped = line.replace(/[\\/]+$/, "");
+  let path = raw;
+  if (path.endsWith("\r\n")) path = path.slice(0, -2);
+  else if (path.endsWith("\n") || path.endsWith("\r")) path = path.slice(0, -1);
+  if (path === "") return "";
+  if (path === "/" || path === "\\") return path;
+  const stripped = path.replace(/[\\/]+$/, "");
   if (stripped === "") return "/";
   if (/^[A-Za-z]:$/.test(stripped)) return `${stripped}\\`;
   return stripped;
@@ -215,74 +264,106 @@ function pathIsAbsolute(platform: NodeJS.Platform, path: string): boolean {
   return platform === "win32" ? win32.isAbsolute(path) : posix.isAbsolute(path);
 }
 
+function chooserFailed(detail: unknown): ServiceError {
+  console.error("Folder chooser failed", detail);
+  return new ServiceError("unavailable", CHOOSER_FAILED);
+}
+
 function runChild(
   spawnProcess: PickerSpawn,
   kill: PickerKill,
   command: string,
   args: readonly string[],
   timeoutMs: number,
-): Promise<Outcome> {
-  return new Promise((resolve, reject) => {
-    let child: ChildProcess;
+): Running {
+  let child: ChildProcess | undefined;
+  let pid: number | undefined;
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const outcome = new Promise<Outcome>((resolve, reject) => {
     try {
       child = spawnProcess(command, args);
     } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
+      reject(chooserFailed(error));
       return;
     }
+    if (typeof child.pid === "number") pid = child.pid;
 
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    const stdoutBytes = { n: 0 };
+    const stderrBytes = { n: 0 };
 
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       fn();
     };
 
-    const timer = setTimeout(() => {
-      const pid = child.pid;
-      if (typeof pid === "number") {
-        try {
-          kill(pid, "SIGKILL");
-        } catch (error) {
-          if (errorCode(error) !== "ESRCH") {
-            finish(() => reject(error instanceof Error ? error : new Error(String(error))));
-            return;
-          }
-        }
-      }
+    timer = setTimeout(() => {
+      cancelChild();
       finish(() => reject(new ServiceError("unavailable", "The folder chooser timed out.")));
     }, timeoutMs);
 
-    child.stdout?.on("data", (chunk: string | Buffer) => {
-      stdout = appendCapped(stdout, chunk);
+    child.stdout?.on("data", (chunk: Buffer | string) => {
+      pushChunk(stdoutChunks, stdoutBytes, chunk);
     });
-    child.stderr?.on("data", (chunk: string | Buffer) => {
-      stderr = appendCapped(stderr, chunk);
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      pushChunk(stderrChunks, stderrBytes, chunk);
     });
 
     child.once("error", (error: Error) => {
       if (errorCode(error) === "ENOENT") {
-        finish(() => resolve({ missing: true, code: null, signal: null, stdout: "", stderr: "" }));
+        finish(() => resolve(emptyOutcome(true)));
         return;
       }
-      finish(() => reject(error));
+      finish(() => reject(chooserFailed(error)));
     });
 
-    child.once("exit", (code, signal) => {
-      finish(() => resolve({ missing: false, code, signal, stdout, stderr }));
+    // `close` fires after stdio is flushed. `exit` can run before the last bytes arrive.
+    child.once("close", (code, signal) => {
+      finish(() =>
+        resolve({
+          missing: false,
+          code,
+          signal,
+          stdout: decodeChunks(stdoutChunks),
+          stderr: decodeChunks(stderrChunks),
+        }),
+      );
     });
   });
+
+  function cancelChild() {
+    if (typeof pid !== "number") return;
+    try {
+      kill(pid, "SIGKILL");
+    } catch (error) {
+      if (errorCode(error) !== "ESRCH") console.error("Folder chooser failed", error);
+    }
+  }
+
+  return { outcome, cancel: cancelChild };
 }
 
-function appendCapped(current: string, chunk: string | Buffer): string {
-  const piece = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-  const next = current + piece;
-  if (next.length <= MAX_OUTPUT_CHARS) return next;
-  return next.slice(next.length - MAX_OUTPUT_CHARS);
+function emptyOutcome(missing: boolean): Outcome {
+  return { missing, code: null, signal: null, stdout: "", stderr: "" };
+}
+
+function pushChunk(chunks: Buffer[], bytes: { n: number }, chunk: Buffer | string) {
+  if (bytes.n >= MAX_OUTPUT_BYTES) return;
+  const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+  const room = MAX_OUTPUT_BYTES - bytes.n;
+  const slice = buf.length > room ? buf.subarray(0, room) : buf;
+  chunks.push(slice);
+  bytes.n += slice.length;
+}
+
+function decodeChunks(chunks: Buffer[]): string {
+  if (chunks.length === 0) return "";
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function errorCode(error: unknown): string | null {

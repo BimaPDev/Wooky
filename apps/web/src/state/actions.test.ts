@@ -230,4 +230,36 @@ describe("pickProjectFolder", () => {
     expect(calls).toHaveLength(1);
     expect(useStore.getState().pickingFolder).toBe(false);
   });
+
+  it("opens the path dialog when the chooser fails", async () => {
+    installBridge(async () => {
+      throw new Error("The folder chooser timed out.");
+    });
+    useBackend(() => {
+      throw new Error("unexpected");
+    });
+
+    await pickProjectFolder();
+
+    expect(useStore.getState().notice).toBe("The folder chooser timed out.");
+    expect(useStore.getState().dialog).toEqual({ kind: "addProject" });
+  });
+
+  it("does not open a chooser while another dialog is open", async () => {
+    useStore.setState({ dialog: { kind: "addProject" } });
+    let picks = 0;
+    installBridge(async () => {
+      picks += 1;
+      return "/Users/demo/app";
+    });
+    useBackend(() => {
+      throw new Error("unexpected");
+    });
+
+    await pickProjectFolder();
+
+    expect(picks).toBe(0);
+    expect(useStore.getState().dialog).toEqual({ kind: "addProject" });
+    expect(useStore.getState().pickingFolder).toBe(false);
+  });
 });

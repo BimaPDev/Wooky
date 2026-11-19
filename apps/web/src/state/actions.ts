@@ -190,7 +190,8 @@ function desktopFolderPicker(): (() => Promise<string | null>) | null {
 }
 
 export async function pickProjectFolder(): Promise<void> {
-  if (useStore.getState().pickingFolder) return;
+  const state = useStore.getState();
+  if (state.pickingFolder || state.dialog) return;
   useStore.setState({ pickingFolder: true, paletteOpen: false });
   try {
     const bridge = desktopFolderPicker();
@@ -209,6 +210,7 @@ export async function pickProjectFolder(): Promise<void> {
     useStore.setState({
       notice: error instanceof Error ? error.message : "Could not open the folder chooser.",
     });
+    openDialog({ kind: "addProject" });
   } finally {
     useStore.setState({ pickingFolder: false });
   }
