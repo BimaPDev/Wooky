@@ -565,33 +565,6 @@ button.chip:active {
   max-width: 200px;
 }
 
-.provider-mark {
-  width: 7px;
-  height: 7px;
-  border-radius: 2px;
-  flex: none;
-  background: var(--text-3);
-}
-
-.provider-claude {
-  background: var(--provider-claude);
-}
-.provider-cursor {
-  background: var(--provider-cursor);
-}
-.provider-codex {
-  background: var(--provider-codex);
-}
-.provider-demo {
-  background: var(--provider-demo);
-}
-.provider-opencode {
-  background: var(--provider-opencode);
-}
-.provider-acp {
-  background: var(--provider-acp);
-}
-
 .chevron {
   flex: none;
   transition: transform var(--duration-fast) var(--ease);
@@ -3330,6 +3303,12 @@ button.tool-line:active {
   flex: none;
 }
 
+.usage-filter-item .provider-mark,
+.usage-provider-title .provider-mark,
+.usage-model-name .provider-mark {
+  margin-top: 0;
+}
+
 .usage-filter-sep {
   height: 1px;
   margin: 4px 6px;
@@ -3454,13 +3433,6 @@ button.tool-line:active {
 .usage-provider-meta {
   margin: 0;
   font-size: var(--text-xs);
-}
-
-.usage-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  flex: none;
 }
 
 .usage-hero-chart {
@@ -3992,6 +3964,14 @@ button.tool-line:active {
   --provider-mark: var(--provider-acp);
 }
 
+.provider-mark.provider-antigravity {
+  --provider-mark: var(--provider-antigravity);
+}
+
+.provider-mark .provider-glyph {
+  display: block;
+}
+
 .provider-row-copy {
   position: relative;
   z-index: 1;
@@ -4164,6 +4144,10 @@ button.tool-line:active {
 
 .provider-accent.provider-acp {
   --provider-mark: var(--provider-acp);
+}
+
+.provider-accent.provider-antigravity {
+  --provider-mark: var(--provider-antigravity);
 }
 
 .provider-display-input {
@@ -6515,6 +6499,10 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
 
 .provider-glyph-demo {
   color: var(--provider-demo);
+}
+
+.provider-glyph-antigravity {
+  color: var(--provider-antigravity);
 }
 
 .composer-foot {

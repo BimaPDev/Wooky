@@ -114,6 +114,7 @@
   --provider-demo: #a7c79a;
   --provider-opencode: #c6b59a;
   --provider-acp: #8e9a9e;
+  --provider-antigravity: #8aabc4;
 }
 
 :root[data-theme="light"] {
@@ -151,6 +152,7 @@
   --provider-demo: #4f7c43;
   --provider-opencode: #7a6a55;
   --provider-acp: #4d5c61;
+  --provider-antigravity: #3f6280;
 }
 
 @media (prefers-color-scheme: light) {
@@ -189,6 +191,7 @@
     --provider-demo: #4f7c43;
     --provider-opencode: #7a6a55;
     --provider-acp: #4d5c61;
+    --provider-antigravity: #3f6280;
   }
 }
 
