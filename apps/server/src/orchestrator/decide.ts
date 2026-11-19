@@ -315,12 +315,17 @@ function promoteQueued(
   if (isBusy(thread)) return reject("conflict", "A turn is already running on this thread.");
   const item = thread.queue?.find((queued) => queued.id === command.queueId);
   if (!item) return notFound("queued prompt", command.queueId);
-  const started = beginTurn(model, thread, item.prompt, ctx, item.id);
+  const prelude = failoverPrelude(model, ctx);
+  const started =
+    thread.failover && ctx.failoverSettings.switchBack && shouldSwitchBack(thread, model, ctx.now())
+      ? switchBackThenStart(model, thread, item.prompt, ctx, item.id)
+      : beginTurn(model, thread, item.prompt, ctx, item.id);
   if (!started.ok) return started;
   return accept(
     command,
     [
       { type: "queue.removed", threadId: thread.id, queueId: item.id, reason: "started" },
+      ...prelude,
       ...started.events,
     ],
     started.effects,
@@ -340,23 +345,28 @@ function threadFailover(
   if (ctx.hasProvider && !ctx.hasProvider(command.to.provider))
     return reject("bad_request", `Unknown provider ${command.to.provider}.`);
 
+  const from: ModelTarget = command.from ?? {
+    provider: thread.provider,
+    model: thread.model,
+  };
+  if (thread.provider !== from.provider || thread.model !== from.model)
+    return reject("conflict", "The thread has moved on from the failed target.");
+
+  if (command.failedTurnId) {
+    const latest = (model.turns[thread.id] ?? []).at(-1);
+    if (!latest || latest.id !== command.failedTurnId)
+      return reject("conflict", "That failure is no longer the latest turn.");
+    if (latest.status !== "failed") return reject("conflict", "That turn did not fail.");
+    if (latest.provider !== from.provider || latest.model !== from.model)
+      return reject("conflict", "The failed turn does not match the failed target.");
+  }
+
   const now = ctx.now();
   const events: Draft[] = [...failoverPrelude(model, ctx)];
-  const from: ModelTarget = { provider: thread.provider, model: thread.model };
   const cooled = cooledDownIfNeeded(model, from, command.failure, now);
   if (cooled) events.push(cooled);
 
   const handoff = command.to.provider !== thread.provider;
-  events.push(configuredDraft(thread, command.to.provider, command.to.model, handoff));
-  events.push({
-    type: "thread.failedOver",
-    threadId: thread.id,
-    from,
-    to: command.to,
-    failure: command.failure,
-    switches: (thread.failover?.switches ?? 0) + 1,
-  });
-
   const nextThread: Thread = {
     ...thread,
     provider: command.to.provider,
@@ -370,7 +380,17 @@ function threadFailover(
     failure: command.failure,
     switches: (thread.failover?.switches ?? 0) + 1,
   });
-  if (!started.ok) return started;
+  if (!started.ok) return accept(command, events, []);
+
+  events.push(configuredDraft(thread, command.to.provider, command.to.model, handoff));
+  events.push({
+    type: "thread.failedOver",
+    threadId: thread.id,
+    from,
+    to: command.to,
+    failure: command.failure,
+    switches: (thread.failover?.switches ?? 0) + 1,
+  });
   return accept(command, [...events, ...started.events], started.effects);
 }
 
@@ -379,6 +399,7 @@ function switchBackThenStart(
   thread: Thread,
   prompt: string,
   ctx: DecideContext,
+  fromQueueId?: string,
 ): { ok: true; events: Draft[]; effects: Effect[] } | Rejection {
   const original = thread.failover?.original;
   if (!original) return reject("conflict", "This thread has no failover state to restore.");
@@ -398,7 +419,7 @@ function switchBackThenStart(
     providerSessionId: original.provider !== thread.provider ? null : thread.providerSessionId,
     failover: undefined,
   };
-  const started = beginTurn(model, restored, prompt, ctx, undefined, {
+  const started = beginTurn(model, restored, prompt, ctx, fromQueueId, {
     kind: "restore",
     from: { provider: thread.provider, model: thread.model },
     to: original,

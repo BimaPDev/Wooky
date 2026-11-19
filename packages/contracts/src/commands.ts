@@ -140,6 +140,10 @@ export const Command = z.discriminatedUnion("type", [
     to: ModelTarget,
     failure: TurnFailure,
     retryPrompt: z.string().min(1),
+    /** Target that failed; defaults to the thread's active model when absent. */
+    from: ModelTarget.optional(),
+    /** Latest turn id that failed; required for race-safe failover dispatch. */
+    failedTurnId: Id.optional(),
   }),
   /**
    * Spawn an isolated worker under a solo or coordinator thread and start its first turn.

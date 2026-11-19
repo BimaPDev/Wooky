@@ -936,7 +936,30 @@ describe("decide thread.failover", () => {
   });
 
   it("cools down, reconfigures, records failedOver, and starts a retry turn", () => {
-    const model = seed({ provider: "claude", model: "sonnet" });
+    const model = apply(seed({ provider: "claude", model: "sonnet", status: "error" }), [
+      {
+        type: "turn.started",
+        commandId: "seed",
+        threadId: "t1",
+        turnId: "u-fail",
+        prompt: "Ship it",
+        provider: "claude",
+        model: "sonnet",
+        checkpointBefore: "refs/age/checkpoints/t1/u-fail/before",
+      },
+      {
+        type: "turn.finished",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u-fail",
+        status: "failed",
+        checkpointAfter: null,
+        changedFiles: [],
+        usage: null,
+        error: "rate",
+        failure,
+      },
+    ]);
     const decision = accepted(
       run(
         model,
@@ -945,6 +968,8 @@ describe("decide thread.failover", () => {
           to: { provider: "codex", model: "gpt-6.1-sol" },
           failure,
           retryPrompt: "Ship it",
+          from: { provider: "claude", model: "sonnet" },
+          failedTurnId: "u-fail",
         }),
       ),
     );
@@ -1024,6 +1049,54 @@ describe("decide thread.failover", () => {
     });
     const next = apply(switched, decision.events as PendingEvent[]);
     expect(next.threads.t1?.failover?.original).toEqual({ provider: "claude", model: "sonnet" });
+  });
+
+  it("records cooldown when beginTurn rejects plan mode on the target", () => {
+    const model = apply(
+      seed({ provider: "claude", model: "sonnet", status: "error", interactionMode: "plan" }),
+      [
+        {
+          type: "turn.started",
+          commandId: "seed",
+          threadId: "t1",
+          turnId: "u-fail",
+          prompt: "plan",
+          provider: "claude",
+          model: "sonnet",
+          checkpointBefore: null,
+          interactionMode: "plan",
+        },
+        {
+          type: "turn.finished",
+          commandId: null,
+          threadId: "t1",
+          turnId: "u-fail",
+          status: "failed",
+          checkpointAfter: null,
+          changedFiles: [],
+          usage: null,
+          error: "rate",
+          failure,
+        },
+      ],
+    );
+    const ctx = testContext((provider) => (provider === "claude" ? { planMode: true } : undefined));
+    const decision = accepted(
+      decide(
+        model,
+        command("thread.failover", {
+          threadId: "t1",
+          to: { provider: "codex", model: "gpt-6.1-sol" },
+          failure,
+          retryPrompt: "plan",
+          from: { provider: "claude", model: "sonnet" },
+          failedTurnId: "u-fail",
+        }),
+        ctx,
+      ),
+    );
+    expect(decision.events.map((event) => event.type)).toEqual(["provider.cooledDown"]);
+    expect(decision.effects).toEqual([]);
   });
 
   it("clears expired cooldowns lazily on failover", () => {
