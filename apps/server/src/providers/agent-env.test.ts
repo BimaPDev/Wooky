@@ -54,17 +54,15 @@ describe("agentEnv", () => {
 });
 
 describe("fleet instructions", () => {
-  it("keeps the coordinator note short and names the commands and limits", () => {
+  it("keeps the coordinator note short and points at age agents guide", () => {
     const text = coordinatorInstructions();
-    expect(text.split("\n").length).toBeLessThanOrEqual(25);
-    expect(text).toContain("age agents spawn");
-    expect(text).toContain("age agents wait");
-    expect(text).toContain("age agents result");
+    expect(text.split("\n").length).toBeLessThanOrEqual(5);
+    expect(text).toContain("age agents guide");
+    expect(text).toContain("age CLI");
     expect(text).toContain("git worktrees");
-    expect(text).toContain("follow-up message");
-    expect(text).toContain("8");
     expect(text).toContain("cannot spawn");
-    expect(text).toContain("independent subtasks");
+    expect(text).not.toContain("age agents spawn");
+    expect(text).not.toContain("age agents wait");
   });
 
   it("selects the worker note only for workers", () => {

@@ -3,10 +3,12 @@ import type { AddressInfo } from "node:net";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
+import { DeviceSettings, type ProviderStatus } from "@age/contracts";
 import { describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import type { CliIo } from "./agents.ts";
 import { runAgentsCli } from "./agents.ts";
+import { fleetGuide, usableAgents } from "../fleet/guide.ts";
 import { tempDir } from "../testing.ts";
 
 function capture(): { io: CliIo; stdout: () => string; stderr: () => string } {
@@ -355,6 +357,89 @@ describe("age agents", () => {
         );
         expect(code).toBe(1);
         expect(captured.stderr().trim()).toBe("not implemented");
+      },
+    );
+  });
+
+  it("lists usable providers as text and json", async () => {
+    const providers: ProviderStatus[] = [
+      {
+        kind: "demo",
+        label: "Demo",
+        installed: true,
+        authenticated: true,
+        version: "1",
+        models: [{ id: "demo", label: "Demo" }],
+        problem: null,
+      },
+      {
+        kind: "claude",
+        label: "Claude",
+        installed: true,
+        authenticated: true,
+        version: "1",
+        models: [
+          { id: "sonnet", label: "Sonnet" },
+          { id: "haiku", label: "haiku" },
+        ],
+        problem: null,
+      },
+      {
+        kind: "codex",
+        label: "Codex",
+        installed: true,
+        authenticated: true,
+        version: "1",
+        models: [{ id: "gpt", label: "GPT" }],
+        problem: null,
+      },
+    ];
+    const settings = DeviceSettings.parse({ disabledProviders: ["codex"] });
+    await withServer(
+      (method) => {
+        if (method === "providers.list") return providers;
+        if (method === "settings.get") return settings;
+        throw new Error(`unexpected ${method}`);
+      },
+      async (url) => {
+        const plain = capture();
+        expect(await runAgentsCli(["providers"], { AGE_SERVER_URL: url }, plain.io)).toBe(0);
+        expect(plain.stdout()).toBe(
+          ["--provider claude  (Claude)", "  sonnet  (Sonnet)", "  haiku", ""].join("\n"),
+        );
+
+        const json = capture();
+        expect(await runAgentsCli(["providers", "--json"], { AGE_SERVER_URL: url }, json.io)).toBe(
+          0,
+        );
+        expect(JSON.parse(json.stdout())).toEqual(usableAgents(providers, ["codex"]));
+      },
+    );
+  });
+
+  it("prints the fleet guide with the live usable agents", async () => {
+    const providers: ProviderStatus[] = [
+      {
+        kind: "claude",
+        label: "Claude",
+        installed: true,
+        authenticated: true,
+        version: "1",
+        models: [{ id: "sonnet", label: "Sonnet" }],
+        problem: null,
+      },
+    ];
+    const settings = DeviceSettings.parse({});
+    await withServer(
+      (method) => {
+        if (method === "providers.list") return providers;
+        if (method === "settings.get") return settings;
+        throw new Error(`unexpected ${method}`);
+      },
+      async (url) => {
+        const captured = capture();
+        expect(await runAgentsCli(["guide"], { AGE_SERVER_URL: url }, captured.io)).toBe(0);
+        expect(captured.stdout()).toBe(`${fleetGuide(usableAgents(providers))}\n`);
       },
     );
   });

@@ -9,17 +9,20 @@ import {
   type RpcParams,
   type RpcResult,
 } from "@age/contracts";
+import { fleetGuide, formatAgents, usableAgents } from "../fleet/guide.ts";
 import { discoverServerUrl } from "../presence.ts";
 import { rpcCall } from "./rpc-client.ts";
 
 const USAGE = `Usage: age agents <command>
 
+  providers [--json]
+  guide
   spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--key <idempotency>] [--prompt-file <path>] -- <prompt...>
   list [--json]
   wait [--timeout <seconds>] <threadId>...
   result <threadId> [--json]
 
-spawn and list use $AGE_THREAD_ID as the parent thread. The server is $AGE_SERVER_URL, or AGE_HOME/server.json when that process is still running. --timeout is seconds, default ${FLEET_LIMITS.maxAgentsWaitMs / 1000}.`;
+providers and guide list usable agents. spawn and list use $AGE_THREAD_ID as the parent thread. The server is $AGE_SERVER_URL, or AGE_HOME/server.json when that process is still running. --timeout is seconds, default ${FLEET_LIMITS.maxAgentsWaitMs / 1000}.`;
 
 const DEFAULT_TIMEOUT_SECONDS = FLEET_LIMITS.maxAgentsWaitMs / 1000;
 const RPC_TIMEOUT_MS = 30_000;
@@ -62,6 +65,10 @@ async function run(args: string[], env: NodeJS.ProcessEnv, io: CliIo): Promise<n
     return 0;
   }
   switch (command) {
+    case "providers":
+      return providers(flags, positionals, env, io);
+    case "guide":
+      return guide(flags, positionals, env, io);
     case "spawn":
       return spawn(flags, positionals, env, io);
     case "list":
@@ -74,6 +81,44 @@ async function run(args: string[], env: NodeJS.ProcessEnv, io: CliIo): Promise<n
       io.stderr.write(`${USAGE}\n`);
       return 1;
   }
+}
+
+async function providers(
+  flags: Map<string, string | true>,
+  positionals: string[],
+  env: NodeJS.ProcessEnv,
+  io: CliIo,
+): Promise<number> {
+  rejectUnknown(flags, ["json", "help"]);
+  if (positionals.length > 0) throw new Error("Unexpected argument.");
+  const agents = await loadUsableAgents(env);
+  if (flags.has("json")) {
+    io.stdout.write(`${JSON.stringify(agents, null, 2)}\n`);
+    return 0;
+  }
+  io.stdout.write(`${formatAgents(agents)}\n`);
+  return 0;
+}
+
+async function guide(
+  flags: Map<string, string | true>,
+  positionals: string[],
+  env: NodeJS.ProcessEnv,
+  io: CliIo,
+): Promise<number> {
+  rejectUnknown(flags, ["help"]);
+  if (positionals.length > 0) throw new Error("Unexpected argument.");
+  const agents = await loadUsableAgents(env);
+  io.stdout.write(`${fleetGuide(agents)}\n`);
+  return 0;
+}
+
+async function loadUsableAgents(env: NodeJS.ProcessEnv) {
+  const [listed, settings] = await Promise.all([
+    call(env, "providers.list", {}),
+    call(env, "settings.get", {}),
+  ]);
+  return usableAgents(listed, settings.disabledProviders);
 }
 
 async function spawn(

@@ -339,7 +339,7 @@ describe("ACP adapter", () => {
     expect(loaded.some((entry) => entry.method === "session/new")).toBe(false);
     const prompt = loaded.find((entry) => entry.method === "session/prompt");
     expect(JSON.stringify(prompt?.params)).not.toContain("prior talk");
-    expect(JSON.stringify(prompt?.params)).not.toContain("age agents spawn");
+    expect(JSON.stringify(prompt?.params)).not.toContain("age agents guide");
 
     process.env.AGE_FAKE_ACP_SCENARIO = "no-load";
     const handed = await collect(
@@ -352,7 +352,7 @@ describe("ACP adapter", () => {
     const again = await readLog(log);
     const nextPrompt = again.filter((entry) => entry.method === "session/prompt").at(-1);
     expect(JSON.stringify(nextPrompt?.params)).toContain("prior talk");
-    expect(JSON.stringify(nextPrompt?.params)).toContain("age agents spawn");
+    expect(JSON.stringify(nextPrompt?.params)).toContain("age agents guide");
   });
 
   it("merges env without logging it and injects the fleet variables", async () => {

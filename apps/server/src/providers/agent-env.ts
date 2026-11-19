@@ -1,5 +1,5 @@
 import { delimiter, dirname } from "node:path";
-import { FLEET_LIMITS, type ThreadRole } from "@age/contracts";
+import type { ThreadRole } from "@age/contracts";
 
 interface AgentRuntime {
   serverUrl: string;
@@ -67,24 +67,9 @@ export function fleetChildEnv(
 }
 
 export function coordinatorInstructions(): string {
-  const workers = FLEET_LIMITS.maxLiveWorkers;
   return [
-    "You can delegate subtasks to other agents with the age CLI. Workers run in their own git worktrees.",
-    "",
-    "age agents spawn --provider <provider> --model <model> [--title <text>] [--runtime-mode approve|auto-edits|full] -- <prompt>",
-    "Starts a worker and prints its thread id. --prompt-file <path> reads the prompt from a file; - reads stdin.",
-    "",
-    "age agents list [--json]",
-    "Lists your workers: id, status, provider, model, and title.",
-    "",
-    "age agents wait <threadId...> [--timeout <seconds>]",
-    "Waits until each id is done or failed. Exit 0 means all finished; exit 2 means the timeout elapsed. The default is 600 seconds.",
-    "",
-    "age agents result <threadId> [--json]",
-    "Prints the worker's status, summary, diff stat, and worktree path.",
-    "",
-    "When a worker finishes, its result arrives here automatically as a follow-up message. Prefer splitting independent subtasks and spawning them together.",
-    `At most ${workers} workers may be live (working, waiting, or idle). A worker cannot spawn further workers.`,
+    "You can delegate subtasks to other agents with the age CLI. Workers run in their own git worktrees and cannot spawn further workers.",
+    "Run `age agents guide` for the full playbook (workflow, brief writing, commands, limits) and the live list of usable agents and models.",
   ].join("\n");
 }
 
