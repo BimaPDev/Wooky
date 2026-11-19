@@ -10,7 +10,7 @@ import {
   toggleSidebar,
   toggleTerminal,
 } from "../state/actions.ts";
-import { useStore } from "../state/store.ts";
+import { draftProjectId, isDraftView, useStore } from "../state/store.ts";
 import { Counts } from "./DiffView.tsx";
 import {
   IconBranch,
@@ -35,6 +35,11 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
   const project = useStore((state) =>
     thread ? state.model.projects[thread.projectId] : undefined,
   );
+  const draftView = useStore(isDraftView);
+  const draftProject = useStore((state) => {
+    const id = draftProjectId(state);
+    return id ? state.model.projects[id] : undefined;
+  });
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const changesOpen = useStore((state) => state.changes.open);
   const terminalOpen = useStore((state) => state.terminalOpen);
@@ -112,6 +117,17 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
                 {thread.title || "Untitled thread"}
               </button>
             )}
+          </>
+        ) : draftView ? (
+          <>
+            {draftProject ? <ProjectMonogram name={draftProject.name} /> : <IconFolder />}
+            <span className="crumb-project" title={draftProject?.root}>
+              {draftProject?.name ?? "No project"}
+            </span>
+            <span className="crumb-sep" aria-hidden="true">
+              /
+            </span>
+            <span className="topbar-draft-title">New thread</span>
           </>
         ) : hasProjects ? (
           <span className="topbar-placeholder">Pick a thread</span>

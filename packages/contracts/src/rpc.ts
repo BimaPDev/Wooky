@@ -128,6 +128,8 @@ export const RpcMethods = {
     }),
     result: z.array(WorkspaceEntry),
   },
+  /** The id of the hidden "No project" project, created on first use. */
+  "projects.scratch": { params: z.object({}), result: z.object({ projectId: Id }) },
   "settings.get": { params: z.object({}), result: DeviceSettings },
   "settings.put": {
     params: z.object({ settings: DeviceSettingsPatch }),

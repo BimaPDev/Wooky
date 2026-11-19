@@ -1,5 +1,5 @@
 import type { InteractionMode } from "@age/contracts";
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import {
   composerMenuDismissalForDraft,
   composerMenuIdentity,
@@ -13,21 +13,93 @@ import {
 import {
   configureThread,
   interruptTurn,
-  openDialog,
   openFanoutDialog,
+  openNewThread,
   startTurn,
 } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { ComposerMenuPanel, useComposerMenu } from "./ComposerMenu.tsx";
-import { IconAlert, IconChevron, IconMic, IconPlus, IconSend, IconStop } from "./Icons.tsx";
-import { modelLabel, runtimeLabel } from "./labels.ts";
-import { ModelPickerButton, PermissionsPickerButton } from "./ModelPicker.tsx";
+import { IconMic, IconPaperclip, IconSend, IconStop } from "./Icons.tsx";
+import {
+  ModelChip,
+  RuntimeIndicator,
+  type PickerPatch,
+  type PickerTarget,
+} from "./ModelPicker.tsx";
 import { QueuedPrompts } from "./QueuedPrompts.tsx";
 
 export function Composer({ threadId }: { threadId: string }) {
   const thread = useStore((state) => state.model.threads[threadId]);
-  const providers = useStore((state) => state.providers);
   const followUp = useStore((state) => state.deviceSettings?.followUp ?? "queue");
+  if (!thread) return null;
+  const target: PickerTarget = {
+    provider: thread.provider,
+    model: thread.model,
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode ?? "default",
+    effort: thread.effort,
+  };
+  return (
+    <ComposerForm
+      threadId={threadId}
+      target={target}
+      status={thread.status === "running" || thread.status === "waiting" ? thread.status : "idle"}
+      followUp={followUp}
+      failoverThread={thread}
+      queue={<QueuedPrompts threadId={threadId} />}
+      onChange={(patch) => {
+        const { isolate: _isolate, ...rest } = patch;
+        void configureThread(threadId, rest);
+      }}
+      onSend={async (prompt, whenBusy) => Boolean(await startTurn(threadId, prompt, whenBusy))}
+      onStop={() => void interruptTurn(threadId)}
+      onNewThread={() => openNewThread(thread.projectId)}
+      onFanout={(getPrompt) =>
+        openFanoutDialog({
+          projectId: thread.projectId,
+          runtimeMode: thread.runtimeMode,
+          getPrompt,
+        })
+      }
+    />
+  );
+}
+
+export interface ComposerFormProps {
+  /** null on the draft screen, where there is no workspace to tag files from. */
+  threadId: string | null;
+  target: PickerTarget;
+  status: "idle" | "running" | "waiting";
+  followUp: string;
+  failoverThread?: Parameters<typeof ModelChip>[0]["failoverThread"];
+  queue?: ReactNode;
+  className?: string;
+  autoFocus?: boolean;
+  onChange: (patch: PickerPatch) => void;
+  /** Resolves true when the prompt was taken, so the box can clear. */
+  onSend: (prompt: string, whenBusy?: "queue") => Promise<boolean>;
+  onStop?: () => void;
+  onNewThread: () => void;
+  onFanout: (getPrompt: () => string) => void;
+}
+
+/** The composer: text, attach, model chip, mic and send, with the runtime mode in a line below. */
+export function ComposerForm({
+  threadId,
+  target,
+  status,
+  followUp,
+  failoverThread,
+  queue,
+  className,
+  autoFocus,
+  onChange,
+  onSend,
+  onStop,
+  onNewThread,
+  onFanout,
+}: ComposerFormProps) {
+  const providers = useStore((state) => state.providers);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [caret, setCaret] = useState(0);
@@ -47,24 +119,22 @@ export function Composer({ threadId }: { threadId: string }) {
     searchUnavailable,
   } = useComposerMenu(threadId, draft, caret);
 
-  if (!thread) return null;
-  const running = thread.status === "running";
-  const waiting = thread.status === "waiting";
+  const running = status === "running";
+  const waiting = status === "waiting";
   const busy = running || waiting;
   const queueSend = running && followUp === "queue";
-  const fullAccess = thread.runtimeMode === "full";
-  const mode: InteractionMode = thread.interactionMode ?? "default";
-  const provider = providers.find((entry) => entry.kind === thread.provider);
-  const planModeSupported = provider?.capabilities?.planMode === true;
+  const mode: InteractionMode = target.interactionMode;
+  const planModeSupported =
+    providers.find((entry) => entry.kind === target.provider)?.capabilities?.planMode === true;
 
   const send = async () => {
     const prompt = draft.trim();
     if (!prompt || sending) return;
     if (busy && !queueSend) return;
     setSending(true);
-    const ack = await startTurn(threadId, prompt, queueSend ? "queue" : undefined);
+    const taken = await onSend(prompt, queueSend ? "queue" : undefined);
     setSending(false);
-    if (ack) {
+    if (taken) {
       setDraft("");
       setCaret(0);
       setMenuDismissedFor(null);
@@ -89,6 +159,14 @@ export function Composer({ threadId }: { threadId: string }) {
     });
   };
 
+  const setMode = (interactionMode: InteractionMode) => {
+    if (interactionMode === "plan" && !planModeSupported) {
+      useStore.setState({ notice: PLAN_MODE_UNAVAILABLE });
+      return;
+    }
+    onChange({ interactionMode });
+  };
+
   const applySlash = (command: SlashCommandId) => {
     setDraft("");
     setCaret(0);
@@ -100,17 +178,17 @@ export function Composer({ threadId }: { threadId: string }) {
           useStore.setState({ notice: allowed.reason });
           return;
         }
-        void configureThread(threadId, { interactionMode: "plan" });
+        onChange({ interactionMode: "plan" });
         break;
       }
       case "default":
-        void configureThread(threadId, { interactionMode: "default" });
+        onChange({ interactionMode: "default" });
         break;
       case "model":
         setModelPickerOpen(true);
         break;
       case "new":
-        openDialog({ kind: "newThread", projectId: thread.projectId });
+        onNewThread();
         break;
     }
   };
@@ -143,19 +221,27 @@ export function Composer({ threadId }: { threadId: string }) {
     setCaret(el.selectionStart ?? 0);
   };
 
-  const setMode = (interactionMode: InteractionMode) => {
-    if (!planModeSupported && interactionMode === "plan") return;
-    void configureThread(threadId, { interactionMode });
-  };
+  const placeholder = running
+    ? followUp === "queue"
+      ? "Queue a follow-up while the agent works"
+      : "The agent is working"
+    : waiting
+      ? "Waiting for you"
+      : threadId
+        ? "Ask anything. @ files, / commands"
+        : "Ask anything. / commands";
 
   return (
-    <div className="composer-col" data-slot="composer-host">
-      <QueuedPrompts threadId={threadId} />
+    <div
+      className={className ? `composer-col ${className}` : "composer-col"}
+      data-slot="composer-host"
+    >
+      {queue}
       <form
         className="composer"
         onSubmit={(event) => {
           event.preventDefault();
-          if (running) void interruptTurn(threadId);
+          if (running) onStop?.();
           else void send();
         }}
       >
@@ -188,15 +274,8 @@ export function Composer({ threadId }: { threadId: string }) {
             aria-label="Message"
             aria-controls={panelOpen ? listId : undefined}
             aria-expanded={panelOpen}
-            placeholder={
-              running
-                ? followUp === "queue"
-                  ? "Queue a follow-up while the agent works"
-                  : "The agent is working"
-                : waiting
-                  ? "Waiting for you"
-                  : "Ask anything, @tag files/folders, or use / to show available commands"
-            }
+            placeholder={placeholder}
+            autoFocus={autoFocus}
             onChange={(event) => {
               const el = event.currentTarget;
               const nextCaret = el.selectionStart ?? 0;
@@ -209,6 +288,11 @@ export function Composer({ threadId }: { threadId: string }) {
             onSelect={(event) => syncCaret(event.currentTarget)}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                return;
+              }
+              if (event.key === "Tab" && event.shiftKey) {
+                event.preventDefault();
+                if (!busy) setMode(mode === "plan" ? "default" : "plan");
                 return;
               }
               if (
@@ -254,47 +338,27 @@ export function Composer({ threadId }: { threadId: string }) {
                 type="button"
                 className="composer-icon-btn"
                 aria-label="Add context"
-                title="Tag a file or folder"
+                title={
+                  threadId ? "Tag a file or folder" : "Files can be tagged once the thread starts"
+                }
+                disabled={threadId === null}
                 onClick={insertMention}
               >
-                <IconPlus />
-              </button>
-              <PlanModeControl mode={mode} supported={planModeSupported} onMode={setMode} />
-              <PermissionsPickerButton thread={thread} className="composer-chip" placement="above">
-                {fullAccess ? (
-                  <span className="composer-mode-warn" aria-hidden="true">
-                    <IconAlert />
-                  </span>
-                ) : null}
-                <span className={fullAccess ? "composer-mode-label warn" : "composer-mode-label"}>
-                  {runtimeLabel(thread.runtimeMode)}
-                </span>
-                <IconChevron />
-              </PermissionsPickerButton>
-              <ModelPickerOpen
-                thread={thread}
-                providers={providers}
-                forceOpen={modelPickerOpen}
-                onOpenChange={setModelPickerOpen}
-              />
-              <button
-                type="button"
-                className="composer-chip"
-                aria-label="Run on several agents"
-                title="Run on several agents"
-                disabled={!draft.trim()}
-                onClick={() =>
-                  openFanoutDialog({
-                    projectId: thread.projectId,
-                    runtimeMode: thread.runtimeMode,
-                    getPrompt: () => (area.current?.value ?? "").trim(),
-                  })
-                }
-              >
-                Several agents
+                <IconPaperclip />
               </button>
             </div>
             <div className="composer-toolbar-end">
+              <ModelChip
+                target={target}
+                onChange={onChange}
+                locked={busy}
+                planSupported={planModeSupported}
+                {...(failoverThread ? { failoverThread } : {})}
+                open={modelPickerOpen}
+                onOpenChange={setModelPickerOpen}
+                fanoutDisabled={!draft.trim()}
+                onFanout={() => onFanout(() => (area.current?.value ?? "").trim())}
+              />
               <button
                 type="button"
                 className="composer-icon-btn"
@@ -322,70 +386,15 @@ export function Composer({ threadId }: { threadId: string }) {
           </div>
         </div>
       </form>
+      <div className="composer-foot">
+        <RuntimeIndicator
+          runtimeMode={target.runtimeMode}
+          interactionMode={mode}
+          locked={busy}
+          onChange={onChange}
+        />
+      </div>
     </div>
-  );
-}
-
-function PlanModeControl({
-  mode,
-  supported,
-  onMode,
-}: {
-  mode: InteractionMode;
-  supported: boolean;
-  onMode: (mode: InteractionMode) => void;
-}) {
-  const title = supported ? "Switch between default and plan mode" : PLAN_MODE_UNAVAILABLE;
-  return (
-    <div className="plan-mode-control" title={supported ? undefined : title}>
-      <button
-        type="button"
-        className={mode === "default" ? "composer-chip active" : "composer-chip"}
-        disabled={!supported && mode !== "default"}
-        aria-pressed={mode === "default"}
-        onClick={() => onMode("default")}
-      >
-        Default
-      </button>
-      <button
-        type="button"
-        className={mode === "plan" ? "composer-chip active" : "composer-chip"}
-        disabled={!supported}
-        aria-pressed={mode === "plan"}
-        title={supported ? title : title}
-        onClick={() => onMode("plan")}
-      >
-        Plan
-      </button>
-    </div>
-  );
-}
-
-function ModelPickerOpen({
-  thread,
-  providers,
-  forceOpen,
-  onOpenChange,
-}: {
-  thread: Parameters<typeof ModelPickerButton>[0]["thread"];
-  providers: Parameters<typeof modelLabel>[0];
-  forceOpen: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <ModelPickerButton
-      thread={thread}
-      className="composer-chip"
-      placement="above"
-      open={forceOpen}
-      onOpenChange={onOpenChange}
-    >
-      <span className={`provider-mark provider-${thread.provider}`} aria-hidden="true" />
-      <span className="composer-model-label">
-        {modelLabel(providers, thread.provider, thread.model)}
-      </span>
-      <IconChevron />
-    </ModelPickerButton>
   );
 }
 

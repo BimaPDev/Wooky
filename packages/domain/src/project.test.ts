@@ -643,3 +643,48 @@ describe("applyEvent: plan mode", () => {
     expect(after.turns.t1?.[0]).toBe(before.turns.t1?.[0]);
   });
 });
+
+describe("effort and scratch", () => {
+  it("applies a configured effort and keeps it through a configure that omits it", () => {
+    const log = [
+      ...seed(),
+      ev({
+        type: "thread.configured",
+        commandId: "c9",
+        threadId: "t1",
+        provider: "claude",
+        model: "opus",
+        runtimeMode: "approve",
+        handoff: true,
+        effort: "high",
+      }),
+      ev({
+        type: "thread.configured",
+        commandId: "c10",
+        threadId: "t1",
+        provider: "claude",
+        model: "opus",
+        runtimeMode: "full",
+        handoff: false,
+      }),
+    ];
+    expect(applyEvents(emptyReadModel(), log).threads.t1?.effort).toBe("high");
+  });
+
+  it("passes the scratch flag through to the project", () => {
+    const model = applyEvents(emptyReadModel(), [
+      ev({
+        type: "project.added",
+        commandId: "c1",
+        project: {
+          id: "s",
+          name: "No project",
+          root: "/age/scratch",
+          createdAt: at,
+          scratch: true,
+        },
+      }),
+    ]);
+    expect(model.projects.s?.scratch).toBe(true);
+  });
+});

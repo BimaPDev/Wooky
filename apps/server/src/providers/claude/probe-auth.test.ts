@@ -249,6 +249,26 @@ describe("claudeModelOptions", () => {
     ]);
   });
 
+  it("carries the resolved model and the effort levels the SDK reports", () => {
+    const [, opus] = claudeModelOptions([
+      {
+        ...info("opus", "Opus"),
+        resolvedModel: "claude-opus-5-5",
+        supportedEffortLevels: ["low", "high"],
+      },
+    ]);
+    expect(opus).toEqual({
+      id: "opus",
+      label: "Opus",
+      resolvedModel: "claude-opus-5-5",
+      efforts: ["low", "high"],
+    });
+    expect(claudeModelOptions([{ ...info("haiku", "Haiku"), supportsEffort: false }])[1]).toEqual({
+      id: "haiku",
+      label: "Haiku",
+    });
+  });
+
   it("orders default, then aliases, then explicit ids and 1M variants, stably", () => {
     const ids = claudeModelOptions([
       info("claude-sonnet-5-5"),

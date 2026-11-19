@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ModelTarget, TurnFailure } from "./failover.ts";
 import {
+  EffortLevel,
   FLEET_LIMITS,
   Id,
   InteractionMode,
@@ -69,6 +70,8 @@ export const Command = z.discriminatedUnion("type", [
     type: z.literal("project.add"),
     root: z.string().min(1),
     name: z.string().optional(),
+    /** Marks the hidden "No project" folder. Only the server's scratch service sets it. */
+    scratch: z.boolean().optional(),
   }),
   z.object({ ...base, type: z.literal("project.remove"), projectId: Id }),
   z.object({
@@ -81,6 +84,7 @@ export const Command = z.discriminatedUnion("type", [
     /** Give the thread its own git worktree so parallel threads never share a checkout. */
     isolate: z.boolean(),
     title: z.string().optional(),
+    effort: EffortLevel.optional(),
   }),
   z.object({ ...base, type: z.literal("thread.rename"), threadId: Id, title: z.string().min(1) }),
   z.object({ ...base, type: z.literal("thread.remove"), threadId: Id }),
@@ -93,6 +97,7 @@ export const Command = z.discriminatedUnion("type", [
     model: z.string().optional(),
     runtimeMode: RuntimeMode.optional(),
     interactionMode: InteractionMode.optional(),
+    effort: EffortLevel.optional(),
   }),
   z.object({
     ...base,

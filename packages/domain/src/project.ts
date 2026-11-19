@@ -92,6 +92,7 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         runtimeMode: event.runtimeMode,
         ...(event.handoff ? { providerSessionId: null } : {}),
         ...(event.interactionMode ? { interactionMode: event.interactionMode } : {}),
+        ...(event.effort ? { effort: event.effort } : {}),
       });
 
     case "thread.sessionBound":

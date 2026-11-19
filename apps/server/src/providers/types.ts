@@ -1,5 +1,6 @@
 import type {
   ApprovalRequest,
+  EffortLevel,
   InteractionMode,
   ProviderEvent,
   ProviderKind,
@@ -39,6 +40,8 @@ export interface TurnInput {
    */
   resumeAt: string | null;
   interactionMode: InteractionMode;
+  /** Reasoning effort the user picked. Absent means the model's own default. */
+  effort?: EffortLevel;
   /** Prior conversation as text when the thread was handed off from another provider. */
   handoffContext: string | null;
   /** Absent means solo. A worker cannot spawn; every other role may. */

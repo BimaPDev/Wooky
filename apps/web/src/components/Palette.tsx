@@ -4,6 +4,7 @@ import {
   configureThread,
   openDialog,
   openFleetBoard,
+  openNewThread,
   openInSplit,
   pickProjectFolder,
   selectThread,
@@ -45,9 +46,11 @@ function PaletteDialog() {
     const disabled = new Set(disabledProviders);
     const close = () => setPaletteOpen(false);
     const list: PaletteAction[] = [
+      { id: "new-thread", label: "New thread", run: () => openNewThread() },
       {
-        id: "new-thread",
-        label: "New thread",
+        id: "new-thread-options",
+        label: "New thread with options…",
+        hint: "Pick agent, model and isolation first",
         run: () => openDialog({ kind: "newThread", projectId: null }),
       },
       { id: "add-project", label: "Add project", run: () => void pickProjectFolder() },
