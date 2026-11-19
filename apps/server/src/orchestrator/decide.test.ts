@@ -66,7 +66,7 @@ function running(threadFields: Partial<Thread> = {}): ReadModel {
       prompt: "hi",
       provider: "demo",
       model: "demo",
-      checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+      checkpointBefore: "refs/wooky/checkpoints/t1/u1/before",
     },
   ]);
 }
@@ -114,7 +114,7 @@ function finishAt(
         threadId,
         turnId,
         status: "completed",
-        checkpointAfter: `refs/age/checkpoints/${threadId}/${turnId}/after`,
+        checkpointAfter: `refs/wooky/checkpoints/${threadId}/${turnId}/after`,
         changedFiles: [],
         usage: null,
         error: null,
@@ -179,7 +179,7 @@ describe("decide project.remove", () => {
   });
 
   it("removes the project and the worktrees of its isolated threads", () => {
-    const worktree = { path: "/work/.age-worktrees/demo/t1", branch: "age/t1" };
+    const worktree = { path: "/work/.wooky-worktrees/demo/t1", branch: "wooky/t1" };
     const { events, effects } = accepted(
       run(seed({ worktree }), command("project.remove", { projectId: "p1" })),
     );
@@ -308,7 +308,7 @@ describe("decide thread.rename / thread.remove", () => {
   });
 
   it("removes an isolated thread together with its worktree", () => {
-    const worktree = { path: "/wt/t1", branch: "age/t1" };
+    const worktree = { path: "/wt/t1", branch: "wooky/t1" };
     const { events, effects } = accepted(
       run(seed({ worktree }), command("thread.remove", { threadId: "t1" })),
     );
@@ -414,7 +414,7 @@ describe("decide turn.start", () => {
       prompt,
       provider: "demo",
       model: "demo",
-      checkpointBefore: "refs/age/checkpoints/t1/turn-1/before",
+      checkpointBefore: "refs/wooky/checkpoints/t1/turn-1/before",
       interactionMode: "default",
     });
     expect(effects).toEqual([{ kind: "turn.run", threadId: "t1", turnId: "turn-1" }]);
@@ -530,7 +530,7 @@ describe("decide turn.revert", () => {
   });
 
   it("restores the checkpoint in the thread's worktree", () => {
-    const worktree = { path: "/wt/t1", branch: "age/t1" };
+    const worktree = { path: "/wt/t1", branch: "wooky/t1" };
     const { events, effects } = accepted(
       run(
         finished(running({ worktree })),
@@ -544,7 +544,7 @@ describe("decide turn.revert", () => {
         threadId: "t1",
         turnId: "u1",
         cwd: "/wt/t1",
-        ref: "refs/age/checkpoints/t1/u1/before",
+        ref: "refs/wooky/checkpoints/t1/u1/before",
       },
       {
         kind: "session.rewind",
@@ -569,7 +569,7 @@ describe("decide turn.revert", () => {
           prompt: "next",
           provider: "demo",
           model: "demo",
-          checkpointBefore: "refs/age/checkpoints/t1/u2/before",
+          checkpointBefore: "refs/wooky/checkpoints/t1/u2/before",
         },
       ],
       "2026-01-02T00:00:00.000Z",
@@ -829,7 +829,7 @@ describe("decide turn.revert restoreFiles", () => {
           prompt: "later",
           provider: "demo",
           model: "demo",
-          checkpointBefore: "refs/age/checkpoints/t2/u2/before",
+          checkpointBefore: "refs/wooky/checkpoints/t2/u2/before",
         },
       ],
       "2026-01-02T00:00:00.000Z",
@@ -884,7 +884,7 @@ describe("decide turn.revert restoreFiles", () => {
           prompt: "earlier",
           provider: "demo",
           model: "demo",
-          checkpointBefore: "refs/age/checkpoints/t2/u2/before",
+          checkpointBefore: "refs/wooky/checkpoints/t2/u2/before",
         },
       ],
       "2025-12-01T00:00:00.000Z",
@@ -901,7 +901,7 @@ describe("decide turn.revert restoreFiles", () => {
           prompt: "hi",
           provider: "demo",
           model: "demo",
-          checkpointBefore: "refs/age/checkpoints/t1/u1/before",
+          checkpointBefore: "refs/wooky/checkpoints/t1/u1/before",
         },
       ],
       "2026-01-01T00:00:00.000Z",
@@ -911,7 +911,7 @@ describe("decide turn.revert restoreFiles", () => {
       accepted(run(ready, command("turn.revert", { threadId: "t1", turnId: "u1" }))).effects[0],
     ).toMatchObject({ kind: "checkpoint.restore" });
 
-    const own = finished(running({ worktree: { path: "/wt/t1", branch: "age/t1" } }));
+    const own = finished(running({ worktree: { path: "/wt/t1", branch: "wooky/t1" } }));
     const crowded = applyAt(
       own,
       [
@@ -1001,7 +1001,7 @@ describe("decide thread.failover", () => {
         prompt: "Ship it",
         provider: "claude",
         model: "sonnet",
-        checkpointBefore: "refs/age/checkpoints/t1/u-fail/before",
+        checkpointBefore: "refs/wooky/checkpoints/t1/u-fail/before",
       },
       {
         type: "turn.finished",

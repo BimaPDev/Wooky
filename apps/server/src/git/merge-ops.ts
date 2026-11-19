@@ -25,9 +25,11 @@ const WOOKY_IDENTITY = {
   GIT_COMMITTER_EMAIL: "age@localhost",
 } as const;
 
-const WOOKY_BRANCH = /^age\/[\w./-]+$/;
-const MARKER_FILE = "age-merge-in-progress";
-const LOCK_FILE = "age-merge.lock";
+/** New worktrees use wooky/<id>. age/<id> remains valid so stored threads can still merge. */
+const WOOKY_BRANCH = /^(?:wooky|age)\/[\w./-]+$/;
+const MARKER_FILE = "wooky-merge-in-progress";
+const LEGACY_MARKER_FILE = "age-merge-in-progress";
+const LOCK_FILE = "wooky-merge.lock";
 const UNPARSABLE_LOCK_STALE_MS = 60_000;
 const MID_MERGE = "Project is mid-merge; run git merge --abort";
 const MID_SQUASH = "Project has a half-applied squash merge; run git reset --merge";
@@ -226,6 +228,21 @@ export function createMergeOps(deps: MergeOpsDeps) {
     return "unreadable";
   }
 
+  function markerPaths(dir: string): string[] {
+    return [join(dir, MARKER_FILE), join(dir, LEGACY_MARKER_FILE)];
+  }
+
+  /** The marker this process wrote, or one left by a build that still used the age filename. */
+  async function findMarker(
+    dir: string,
+  ): Promise<{ path: string; marker: Marker | "unreadable" } | null> {
+    for (const path of markerPaths(dir)) {
+      const marker = await readMarker(path);
+      if (marker !== null) return { path, marker };
+    }
+    return null;
+  }
+
   /**
    * Put the root back in the state it had before an AGE merge began. Only ever acts on state
    * AGE created (the marker proves it); a mid-merge root without the marker is the user's.
@@ -236,8 +253,10 @@ export function createMergeOps(deps: MergeOpsDeps) {
     top: string,
     dir: string,
   ): Promise<{ ok: true } | { ok: false; message: string }> {
-    const markerPath = join(dir, MARKER_FILE);
-    const marker = await readMarker(markerPath);
+    const found = await findMarker(dir);
+    const marker = found?.marker ?? null;
+    const markerName =
+      found?.path.endsWith(LEGACY_MARKER_FILE) === true ? LEGACY_MARKER_FILE : MARKER_FILE;
     const mergeHead = await hasMergeHead(top);
     if (marker === null) {
       return mergeHead ? { ok: false, message: MID_MERGE } : { ok: true };
@@ -245,7 +264,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
     if (marker === "unreadable") {
       return {
         ok: false,
-        message: mergeHead ? MID_MERGE : `${MID_MERGE} (unreadable ${MARKER_FILE})`,
+        message: mergeHead ? MID_MERGE : `${MID_MERGE} (unreadable ${markerName})`,
       };
     }
     if (mergeHead) {
@@ -261,7 +280,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
     if ((await hasMergeHead(top)) || (await conflictPaths(top)).length > 0) {
       return { ok: false, message: MID_MERGE };
     }
-    await rm(markerPath, { force: true });
+    await Promise.all(markerPaths(dir).map((path) => rm(path, { force: true })));
     return { ok: true };
   }
 
@@ -295,7 +314,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
       const undone = await undoSquash(top);
       if (!undone.ok) return undone;
     }
-    await rm(join(dir, MARKER_FILE), { force: true });
+    await Promise.all(markerPaths(dir).map((path) => rm(path, { force: true })));
     return { ok: true };
   }
 

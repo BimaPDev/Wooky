@@ -46,11 +46,13 @@ export type Effect =
 export type StoredEffect = Effect & { id: number };
 
 export function checkpointRef(threadId: string, turnId: string, side: "before" | "after"): string {
-  return `refs/age/checkpoints/${threadId}/${turnId}/${side}`;
+  return `refs/wooky/checkpoints/${threadId}/${turnId}/${side}`;
 }
 
 /**
  * Id of the notice the runner adds when a turn's `before` checkpoint was skipped or failed.
  * turn.started stamps checkpointBefore purely, so this item is what marks it as unusable.
  */
-export const NO_CHECKPOINT_ITEM = "age-no-checkpoint";
+export const NO_CHECKPOINT_ITEM = "wooky-no-checkpoint";
+/** Notice id written before the rebrand. Still blocks revert. */
+export const LEGACY_NO_CHECKPOINT_ITEM = "age-no-checkpoint";

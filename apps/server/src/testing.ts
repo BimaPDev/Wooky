@@ -67,7 +67,7 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
       calls.push(`createWorktree ${threadId}`);
       const path = join(projectRoot, ".worktrees", threadId);
       mkdirSync(path, { recursive: true });
-      return { path, branch: `age/${threadId}` };
+      return { path, branch: `wooky/${threadId}` };
     },
     async removeWorktree(_root, worktree) {
       calls.push(`removeWorktree ${worktree.path}`);

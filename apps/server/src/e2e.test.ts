@@ -46,7 +46,7 @@ function git(cwd: string, ...args: string[]): string {
 
 async function makeRepo(): Promise<string> {
   const root = await tempDir("e2e-repo");
-  cleanup.push(() => rm(join(root, "..", ".age-worktrees"), { recursive: true, force: true }));
+  cleanup.push(() => rm(join(root, "..", ".wooky-worktrees"), { recursive: true, force: true }));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   git(root, "init", "-q", "-b", "main");
   writeFileSync(join(root, "README.md"), "hello\n");
@@ -176,7 +176,7 @@ describe("end-to-end: isolated demo turn with approvals, diff, revert, restart",
     const threadId = (await client.next("thread.created")).thread.id;
     const { worktree } = await client.next("thread.worktreeBound", (e) => e.threadId === threadId);
     expect(existsSync(worktree.path)).toBe(true);
-    expect(worktree.branch).toBe(`age/${threadId}`);
+    expect(worktree.branch).toBe(`wooky/${threadId}`);
 
     // Answer every approval card with "allow" until the turn finishes.
     const answered = new Set<string>();
@@ -206,7 +206,7 @@ describe("end-to-end: isolated demo turn with approvals, diff, revert, restart",
     expect(done.status).toBe("completed");
     expect(answered.size).toBeGreaterThan(0);
     expect(done.changedFiles).toContain("WOOKY_DEMO.md");
-    expect(done.checkpointAfter).toMatch(/^refs\/age\/checkpoints\//);
+    expect(done.checkpointAfter).toMatch(/^refs\/wooky\/checkpoints\//);
 
     // Isolation: the edit lives in the worktree only; the user's checkout is untouched.
     expect(existsSync(join(worktree.path, "WOOKY_DEMO.md"))).toBe(true);
@@ -246,7 +246,7 @@ describe("end-to-end: isolated demo turn with approvals, diff, revert, restart",
     await again.dispatch({ type: "thread.remove", threadId });
     await again.next("thread.removed", (e) => e.threadId === threadId);
     await waitUntilGone(worktree.path, again);
-    expect(git(root, "branch", "--list", `age/${threadId}`)).toContain(`age/${threadId}`);
+    expect(git(root, "branch", "--list", `wooky/${threadId}`)).toContain(`wooky/${threadId}`);
   });
 });
 

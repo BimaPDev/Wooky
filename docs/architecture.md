@@ -46,13 +46,13 @@ turn on an `isolate` thread never falls back to the project root; it creates the
 worktree or fails with the reason.
 
 When a checkpoint cannot be taken (not a repo, or capture failed) the runner upserts a
-`notice` item with the fixed id `age-no-checkpoint`, and `turn.revert` rejects that turn.
+`notice` item with the fixed id `wooky-no-checkpoint`, and `turn.revert` rejects that turn.
 
 ## Checkpoints
 
 Before and after each turn the git service snapshots the working tree into a commit built
 from a temporary index (`GIT_INDEX_FILE`), stored at
-`refs/age/checkpoints/<threadId>/<turnId>/{before,after}`. User branches, index and stash
+`refs/wooky/checkpoints/<threadId>/<turnId>/{before,after}`. User branches, index and stash
 are untouched. `turn.revert` restores `before` and drops that turn and later ones from the
 read model. Non-git projects run without checkpoints.
 
@@ -84,5 +84,5 @@ prints exactly one stdout line `WOOKY_LISTENING http://<host>:<port>`; the deskt
 dev runner wait for it. It exits cleanly on SIGINT/SIGTERM, aborting running turns.
 
 Checkpoint refs are deterministic, so `turn.started.checkpointBefore` is decided purely:
-`refs/age/checkpoints/<threadId>/<turnId>/before` (and `/after`). If the project is not a
+`refs/wooky/checkpoints/<threadId>/<turnId>/before` (and `/after`). If the project is not a
 git repository the capture is skipped and the turn shows a notice.

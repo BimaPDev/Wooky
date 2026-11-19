@@ -75,7 +75,7 @@ describe("agents.wait", () => {
         prompt: "go",
         provider: "demo",
         model: "demo",
-        checkpointBefore: "refs/age/checkpoints/w1/u1/before",
+        checkpointBefore: "refs/wooky/checkpoints/w1/u1/before",
       },
       {
         type: "turn.finished",

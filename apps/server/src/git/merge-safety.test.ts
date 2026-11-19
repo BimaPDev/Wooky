@@ -70,7 +70,7 @@ async function cleanWorker(root: string, id: string, file = `${id}.txt`) {
 async function expectCleanRoot(root: string): Promise<void> {
   expect(await raw(root, "status", "--porcelain")).toBe("");
   expect(existsSync(join(await gitDir(root), "MERGE_HEAD"))).toBe(false);
-  expect(existsSync(join(await gitDir(root), "age-merge-in-progress"))).toBe(false);
+  expect(existsSync(join(await gitDir(root), "wooky-merge-in-progress"))).toBe(false);
 }
 
 describe("merge safety: conflicts and crash recovery", () => {
@@ -121,7 +121,7 @@ describe("merge safety: conflicts and crash recovery", () => {
     const wt = await cleanWorker(root, "crash2");
     await commitFile(root, "main-only.txt", "m\n");
     await writeFile(
-      join(await gitDir(root), "age-merge-in-progress"),
+      join(await gitDir(root), "wooky-merge-in-progress"),
       JSON.stringify({ branch: wt.branch, strategy: "merge" }),
     );
     await raw(root, "merge", "--no-ff", "--no-commit", `refs/heads/${wt.branch}`);
@@ -137,7 +137,7 @@ describe("merge safety: conflicts and crash recovery", () => {
     const root = await makeRepo();
     const wt = await cleanWorker(root, "crash3");
     await writeFile(
-      join(await gitDir(root), "age-merge-in-progress"),
+      join(await gitDir(root), "wooky-merge-in-progress"),
       JSON.stringify({ branch: wt.branch, strategy: "squash" }),
     );
     await raw(root, "merge", "--squash", `refs/heads/${wt.branch}`);
@@ -186,7 +186,7 @@ describe("merge safety: squash commit failures", () => {
     expect(await raw(root, "status", "--porcelain")).toBe(" M seed.txt\n");
     expect(await raw(root, "diff", "--cached", "--name-only")).toBe("");
     const dir = await gitDir(root);
-    expect(existsSync(join(dir, "age-merge-in-progress"))).toBe(false);
+    expect(existsSync(join(dir, "wooky-merge-in-progress"))).toBe(false);
     expect(existsSync(join(dir, "SQUASH_MSG"))).toBe(false);
   });
 });
@@ -345,13 +345,13 @@ describe("merge locking", () => {
     expect(existsSync(join(root, "ser1.txt"))).toBe(true);
     expect(existsSync(join(root, "ser2.txt"))).toBe(true);
     await expectCleanRoot(root);
-    expect(existsSync(join(await gitDir(root), "age-merge.lock"))).toBe(false);
+    expect(existsSync(join(await gitDir(root), "wooky-merge.lock"))).toBe(false);
   });
 
   it("recovers a stale lockfile left by a dead process", async () => {
     const root = await makeRepo();
     const wt = await cleanWorker(root, "stale1");
-    const lock = join(await gitDir(root), "age-merge.lock");
+    const lock = join(await gitDir(root), "wooky-merge.lock");
     await writeFile(lock, "2147483646");
     const res = await git.mergeWorktree(root, wt, "merge", "Worker");
     expect(res.ok).toBe(true);
@@ -361,7 +361,7 @@ describe("merge locking", () => {
   it("refuses while a live process holds the lock, and leaves its lockfile", async () => {
     const root = await makeRepo();
     const wt = await cleanWorker(root, "live1");
-    const lock = join(await gitDir(root), "age-merge.lock");
+    const lock = join(await gitDir(root), "wooky-merge.lock");
     await writeFile(lock, String(process.ppid));
     const res = await git.mergeWorktree(root, wt, "merge", "Worker");
     expect(res).toMatchObject({ ok: false, kind: "failed" });

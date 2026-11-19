@@ -2,12 +2,12 @@ import type { DiffStat, FileDiff, MergePreview, MergeStrategy, Worktree } from "
 
 /**
  * Git seam. Checkpoints are commits stored under hidden refs
- * (refs/age/checkpoints/<threadId>/<turnId>/{before,after}) built from a temporary
+ * (refs/wooky/checkpoints/<threadId>/<turnId>/{before,after}) built from a temporary
  * index, so the user's branches, index and stash are never touched.
  */
 export interface GitService {
   isRepo(cwd: string): Promise<boolean>;
-  /** Create `<root>/../.age-worktrees/<repo>/<threadId>` on branch `age/<threadId>`. */
+  /** Create `<root>/../.wooky-worktrees/<repo>/<threadId>` on branch `wooky/<threadId>`. */
   createWorktree(projectRoot: string, threadId: string): Promise<Worktree>;
   removeWorktree(projectRoot: string, worktree: Worktree): Promise<void>;
   /** Snapshot the working tree (tracked + untracked, respecting .gitignore). Returns the ref name. */

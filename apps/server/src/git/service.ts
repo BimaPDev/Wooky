@@ -62,7 +62,8 @@ const TRUNCATION_NOTICE = "\n… diff truncated\n";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_STDOUT_CAP = 64 * 1024 * 1024;
 
-const WOOKY_REF = /^refs\/age\/[A-Za-z0-9._/-]+$/;
+/** New checkpoints use refs/wooky/. refs/age/ remains valid so stored events can still restore. */
+const WOOKY_REF = /^refs\/(?:wooky|age)\/[A-Za-z0-9._/-]+$/;
 
 interface RunOptions {
   cwd: string;
@@ -203,7 +204,7 @@ export function createGitService(options?: {
       throw new GitError(
         ["check-ref-format", ref],
         null,
-        `ref must be a safe refs/age/ ref: ${ref}`,
+        `ref must be a safe refs/wooky/ or refs/age/ ref: ${ref}`,
       );
     }
     const res = await run(["check-ref-format", ref], { cwd, allowFail: true });
@@ -211,7 +212,7 @@ export function createGitService(options?: {
       throw new GitError(
         ["check-ref-format", ref],
         res.code,
-        `ref must be a safe refs/age/ ref: ${ref}`,
+        `ref must be a safe refs/wooky/ or refs/age/ ref: ${ref}`,
       );
     }
   }
@@ -395,8 +396,8 @@ export function createGitService(options?: {
         throw new GitError(["worktree", "add"], null, "Isolation needs at least one commit");
       }
       const root = resolve(projectRoot);
-      const path = join(dirname(root), ".age-worktrees", basename(root), threadId);
-      const branch = `age/${threadId}`;
+      const path = join(dirname(root), ".wooky-worktrees", basename(root), threadId);
+      const branch = `wooky/${threadId}`;
       await mkdir(dirname(path), { recursive: true });
       const hasBranch = await run(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
         cwd: top,

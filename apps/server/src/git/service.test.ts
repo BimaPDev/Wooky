@@ -39,7 +39,7 @@ async function raw(cwd: string, ...args: string[]): Promise<string> {
   return stdout;
 }
 
-/** Fresh repo at <base>/repo so `.age-worktrees` lands under <base> and is cleaned with it. */
+/** Fresh repo at <base>/repo so `.wooky-worktrees` lands under <base> and is cleaned with it. */
 async function makeRepo(withCommit = true): Promise<string> {
   const base = await mkdtemp(join(tmpdir(), "age-git-test-"));
   bases.push(base);
@@ -73,11 +73,21 @@ describe("isRepo", () => {
 });
 
 describe("ref safety", () => {
-  it("refuses a ref outside refs/age/ for capture and restore", async () => {
+  it("refuses a ref outside refs/wooky/ for capture and restore", async () => {
     const root = await makeRepo();
     await expect(git.captureCheckpoint(root, "refs/heads/main")).rejects.toBeInstanceOf(GitError);
-    await expect(git.captureCheckpoint(root, "refs/heads/main")).rejects.toThrow(/refs\/age\//);
-    await expect(git.restoreCheckpoint(root, "refs/tags/x")).rejects.toThrow(/refs\/age\//);
+    await expect(git.captureCheckpoint(root, "refs/heads/main")).rejects.toThrow(/refs\/wooky\//);
+    await expect(git.restoreCheckpoint(root, "refs/tags/x")).rejects.toThrow(/refs\/wooky\//);
+  });
+
+  it("still accepts a checkpoint stored under the legacy refs/age/ prefix", async () => {
+    const root = await makeRepo();
+    await writeFile(join(root, "a.txt"), "v1\n");
+    const ref = "refs/age/checkpoints/t1/u1/before";
+    expect(await git.captureCheckpoint(root, ref)).toBe(ref);
+    await writeFile(join(root, "a.txt"), "v2\n");
+    await git.restoreCheckpoint(root, ref);
+    expect(await readFile(join(root, "a.txt"), "utf8")).toBe("v1\n");
   });
 });
 
@@ -95,7 +105,7 @@ describe("capture / restore round-trip", () => {
     await raw(root, "commit", "-qm", "work");
     await writeFile(join(root, "ignored.log"), "ignore-original\n");
 
-    const ref = "refs/age/checkpoints/t1/u1/before";
+    const ref = "refs/wooky/checkpoints/t1/u1/before";
     expect(await git.captureCheckpoint(root, ref)).toBe(ref);
 
     await writeFile(join(root, "a.txt"), "v2 changed\n");
@@ -133,7 +143,7 @@ describe("capture isolation", () => {
     const headBefore = await raw(root, "rev-parse", "HEAD");
     const branchesBefore = await raw(root, "for-each-ref", "refs/heads");
 
-    await git.captureCheckpoint(root, "refs/age/checkpoints/t/u/before");
+    await git.captureCheckpoint(root, "refs/wooky/checkpoints/t/u/before");
 
     expect(await raw(root, "status", "--porcelain=v1")).toBe(statusBefore);
     expect(await raw(root, "diff", "--cached")).toBe(cachedBefore);
@@ -147,7 +157,7 @@ describe("empty repo", () => {
     const root = await makeRepo(false);
     await writeFile(join(root, "file.txt"), "a\n");
 
-    const ref = "refs/age/checkpoints/t/u/before";
+    const ref = "refs/wooky/checkpoints/t/u/before";
     expect(await git.captureCheckpoint(root, ref)).toBe(ref);
     expect((await raw(root, "rev-parse", ref)).trim()).toMatch(/^[0-9a-f]{40}$/);
 
@@ -167,7 +177,7 @@ describe("diff", () => {
     await raw(root, "add", "-A");
     await raw(root, "commit", "-qm", "base");
 
-    const from = "refs/age/checkpoints/t/a/before";
+    const from = "refs/wooky/checkpoints/t/a/before";
     await git.captureCheckpoint(root, from);
 
     await writeFile(join(root, "mod.txt"), "l1\nCHANGED\nl2\n");
@@ -177,7 +187,7 @@ describe("diff", () => {
     await writeFile(join(root, "bin.dat"), Buffer.from([0, 1, 2, 0, 3, 255, 0]));
     await raw(root, "add", "-A");
 
-    const to = "refs/age/checkpoints/t/b/after";
+    const to = "refs/wooky/checkpoints/t/b/after";
     await git.captureCheckpoint(root, to);
 
     const diffs = await git.diff(root, from, to);
@@ -211,7 +221,7 @@ describe("diff", () => {
     await raw(root, "add", "-A");
     await raw(root, "commit", "-qm", "base");
 
-    const from = "refs/age/checkpoints/t/a/before";
+    const from = "refs/wooky/checkpoints/t/a/before";
     await git.captureCheckpoint(root, from);
 
     await writeFile(join(root, "mod.txt"), "one\ntwo\n");
@@ -229,12 +239,12 @@ describe("diff", () => {
 
   it("caps a large patch at the limit with a truncation notice", async () => {
     const root = await makeRepo();
-    const from = "refs/age/checkpoints/t/a/before";
+    const from = "refs/wooky/checkpoints/t/a/before";
     await git.captureCheckpoint(root, from);
 
     const big = "abcdefghij\n".repeat(30_000);
     await writeFile(join(root, "big.txt"), big);
-    const to = "refs/age/checkpoints/t/b/after";
+    const to = "refs/wooky/checkpoints/t/b/after";
     await git.captureCheckpoint(root, to);
 
     const diffs = await git.diff(root, from, to);
@@ -249,16 +259,28 @@ describe("worktrees", () => {
     const root = await makeRepo();
     const wt = await git.createWorktree(root, "thread-1");
 
-    expect(wt.branch).toBe("age/thread-1");
-    expect(wt.path).toBe(join(dirname(root), ".age-worktrees", basename(root), "thread-1"));
+    expect(wt.branch).toBe("wooky/thread-1");
+    expect(wt.path).toBe(join(dirname(root), ".wooky-worktrees", basename(root), "thread-1"));
     expect(existsSync(wt.path)).toBe(true);
-    expect(await raw(root, "branch", "--list", "age/thread-1")).toContain("age/thread-1");
+    expect(await raw(root, "branch", "--list", "wooky/thread-1")).toContain("wooky/thread-1");
 
     await git.removeWorktree(root, wt);
     expect(existsSync(wt.path)).toBe(false);
-    expect(await raw(root, "branch", "--list", "age/thread-1")).toContain("age/thread-1");
+    expect(await raw(root, "branch", "--list", "wooky/thread-1")).toContain("wooky/thread-1");
 
     await expect(git.removeWorktree(root, wt)).resolves.toBeUndefined();
+  });
+
+  it("still summarises a branch created under the legacy age/ prefix", async () => {
+    const root = await makeRepo();
+    const start = (await raw(root, "rev-parse", "--abbrev-ref", "HEAD")).trim();
+    await raw(root, "checkout", "-b", "age/legacy");
+    await writeFile(join(root, "legacy.txt"), "old\n");
+    await raw(root, "add", "-A");
+    await raw(root, "commit", "-qm", "legacy branch");
+    await raw(root, "checkout", start);
+    const summary = await git.diffBranchStat(root, "age/legacy");
+    expect(summary).toMatchObject({ files: 1, additions: 1 });
   });
 
   it("refuses isolation in a repo with no commits", async () => {
@@ -272,7 +294,7 @@ describe("concurrency", () => {
     const root = await makeRepo();
     await writeFile(join(root, "a.txt"), "content\n");
 
-    const refs = Array.from({ length: 5 }, (_, i) => `refs/age/concurrent/${i}`);
+    const refs = Array.from({ length: 5 }, (_, i) => `refs/wooky/concurrent/${i}`);
     const results = await Promise.all(refs.map((ref) => git.captureCheckpoint(root, ref)));
     expect(results).toEqual(refs);
 
@@ -285,7 +307,7 @@ describe("concurrency", () => {
 describe("restore best-effort over a nested repo (fix 1)", () => {
   it("removes every deletable file and never descends into a nested repo", async () => {
     const root = await makeRepo();
-    const ref = "refs/age/checkpoints/t/u/before";
+    const ref = "refs/wooky/checkpoints/t/u/before";
     await git.captureCheckpoint(root, ref);
 
     await writeFile(join(root, "del1.txt"), "x\n");
@@ -308,7 +330,7 @@ describe("restore best-effort over a nested repo (fix 1)", () => {
 describe("restore and the real index (fix 2)", () => {
   it("drops deleted paths from the index but leaves a staged survivor untouched", async () => {
     const root = await makeRepo();
-    const ref = "refs/age/checkpoints/t/u/before";
+    const ref = "refs/wooky/checkpoints/t/u/before";
     await git.captureCheckpoint(root, ref);
 
     await writeFile(join(root, "agent-new.txt"), "new\n");
@@ -330,10 +352,10 @@ describe("restore and the real index (fix 2)", () => {
 describe("env hygiene (fix 3)", () => {
   it("ignores a hostile GIT_EXTERNAL_DIFF in the environment", async () => {
     const root = await makeRepo();
-    const from = "refs/age/checkpoints/t/a/before";
+    const from = "refs/wooky/checkpoints/t/a/before";
     await git.captureCheckpoint(root, from);
     await writeFile(join(root, "hello.txt"), "hello\n");
-    const to = "refs/age/checkpoints/t/b/after";
+    const to = "refs/wooky/checkpoints/t/b/after";
     await git.captureCheckpoint(root, to);
 
     const base = await mkdtemp(join(tmpdir(), "age-git-ext-"));
@@ -361,24 +383,24 @@ describe("worktree re-creation (fix 5)", () => {
     const root = await makeRepo();
     const wt1 = await git.createWorktree(root, "re");
     await git.removeWorktree(root, wt1);
-    expect(await raw(root, "branch", "--list", "age/re")).toContain("age/re");
+    expect(await raw(root, "branch", "--list", "wooky/re")).toContain("wooky/re");
 
     const wt2 = await git.createWorktree(root, "re");
     expect(existsSync(wt2.path)).toBe(true);
-    expect(wt2.branch).toBe("age/re");
+    expect(wt2.branch).toBe("wooky/re");
   });
 });
 
 describe("patch truncation on a code-point boundary (fix 7)", () => {
   it("never emits U+FFFD when a multibyte char straddles the limit", async () => {
     const root = await makeRepo();
-    const from = "refs/age/checkpoints/t/a/before";
+    const from = "refs/wooky/checkpoints/t/a/before";
     await git.captureCheckpoint(root, from);
 
     // The patch header length is constant for a single-line add of this filename, so measure
     // where the content begins from a tiny probe and pad so the 200 KB cut lands mid-character.
     await writeFile(join(root, "big.txt"), "中");
-    const probe = "refs/age/checkpoints/t/probe/after";
+    const probe = "refs/wooky/checkpoints/t/probe/after";
     await git.captureCheckpoint(root, probe);
     const full = await raw(
       root,
@@ -396,7 +418,7 @@ describe("patch truncation on a code-point boundary (fix 7)", () => {
     const pad = (200 * 1024 - contentStart) % 3 === 0 ? 1 : 0;
 
     await writeFile(join(root, "big.txt"), "a".repeat(pad) + "中".repeat(100_000));
-    const to = "refs/age/checkpoints/t/b/after";
+    const to = "refs/wooky/checkpoints/t/b/after";
     await git.captureCheckpoint(root, to);
 
     const diffs = await git.diff(root, from, to);
@@ -410,13 +432,13 @@ describe("patch truncation on a code-point boundary (fix 7)", () => {
 describe("patch parsing by position (fix 8)", () => {
   it("produces a patch for a filename containing a newline", async () => {
     const root = await makeRepo();
-    const from = "refs/age/checkpoints/t/a/before";
+    const from = "refs/wooky/checkpoints/t/a/before";
     await git.captureCheckpoint(root, from);
 
     const weird = "we\nird.txt";
     await writeFile(join(root, weird), "weird content\n");
     await writeFile(join(root, "plain.txt"), "plain content\n");
-    const to = "refs/age/checkpoints/t/b/after";
+    const to = "refs/wooky/checkpoints/t/b/after";
     await git.captureCheckpoint(root, to);
 
     const diffs = await git.diff(root, from, to);
@@ -433,21 +455,21 @@ describe("ref safety, hardened (fix 10)", () => {
   it("rejects traversal, double-slash, trailing slash, .lock and dot-component refs early", async () => {
     const root = await makeRepo();
     const bad = [
-      "refs/age/../heads/main",
-      "refs/age/foo//bar",
-      "refs/age/foo.lock",
-      "refs/age/foo/",
-      "refs/age/.hidden/x",
+      "refs/wooky/../heads/main",
+      "refs/wooky/foo//bar",
+      "refs/wooky/foo.lock",
+      "refs/wooky/foo/",
+      "refs/wooky/.hidden/x",
     ];
     for (const ref of bad) {
       await expect(git.captureCheckpoint(root, ref)).rejects.toMatchObject({
         argv: ["check-ref-format", ref],
       });
     }
-    await expect(git.restoreCheckpoint(root, "refs/age/../heads/main")).rejects.toMatchObject({
-      argv: ["check-ref-format", "refs/age/../heads/main"],
+    await expect(git.restoreCheckpoint(root, "refs/wooky/../heads/main")).rejects.toMatchObject({
+      argv: ["check-ref-format", "refs/wooky/../heads/main"],
     });
-    await expect(git.captureCheckpoint(root, "refs/age/foo/")).rejects.toThrow(/refs\/age\//);
+    await expect(git.captureCheckpoint(root, "refs/wooky/foo/")).rejects.toThrow(/refs\/wooky\//);
   });
 });
 
@@ -534,7 +556,7 @@ describe("serialization under the repo lock (fix 9)", () => {
     process.env.FAKE_REC = rec;
     try {
       await Promise.all(
-        Array.from({ length: 5 }, (_, i) => fake.captureCheckpoint(mainPath, `refs/age/c/${i}`)),
+        Array.from({ length: 5 }, (_, i) => fake.captureCheckpoint(mainPath, `refs/wooky/c/${i}`)),
       );
       const intervals = await readIntervals(rec);
       expect(intervals.length).toBe(5);
@@ -556,12 +578,12 @@ describe("one lock key through symlinked paths (fix 4)", () => {
     process.env.FAKE_MAINLINK = join(base, "mainlink");
     try {
       await Promise.all([
-        fake.captureCheckpoint(mainPath, "refs/age/m/0"),
-        fake.captureCheckpoint(wtPath, "refs/age/w/0"),
-        fake.captureCheckpoint(mainPath, "refs/age/m/1"),
-        fake.captureCheckpoint(wtPath, "refs/age/w/1"),
-        fake.captureCheckpoint(mainPath, "refs/age/m/2"),
-        fake.captureCheckpoint(wtPath, "refs/age/w/2"),
+        fake.captureCheckpoint(mainPath, "refs/wooky/m/0"),
+        fake.captureCheckpoint(wtPath, "refs/wooky/w/0"),
+        fake.captureCheckpoint(mainPath, "refs/wooky/m/1"),
+        fake.captureCheckpoint(wtPath, "refs/wooky/w/1"),
+        fake.captureCheckpoint(mainPath, "refs/wooky/m/2"),
+        fake.captureCheckpoint(wtPath, "refs/wooky/w/2"),
       ]);
       const intervals = await readIntervals(rec);
       expect(intervals.length).toBe(6);
@@ -592,7 +614,7 @@ describe("bounded run (fix 6)", () => {
     await writeFile(bin, SLOW_GIT);
     await chmod(bin, 0o755);
     const fake = createGitService({ gitBin: bin, timeoutMs: 150 });
-    await expect(fake.captureCheckpoint(base, "refs/age/x/y")).rejects.toThrow(/timed out/);
+    await expect(fake.captureCheckpoint(base, "refs/wooky/x/y")).rejects.toThrow(/timed out/);
   });
 
   it("kills a git that floods stdout past the cap", async () => {
@@ -602,7 +624,7 @@ describe("bounded run (fix 6)", () => {
     await writeFile(bin, HUGE_GIT);
     await chmod(bin, 0o755);
     const fake = createGitService({ gitBin: bin, maxStdoutBytes: 1024 });
-    await expect(fake.captureCheckpoint(base, "refs/age/x/y")).rejects.toThrow(/exceeded cap/);
+    await expect(fake.captureCheckpoint(base, "refs/wooky/x/y")).rejects.toThrow(/exceeded cap/);
   });
 });
 

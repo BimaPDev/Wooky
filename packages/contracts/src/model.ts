@@ -308,7 +308,7 @@ export const Turn = z.object({
   items: z.array(TimelineItem),
   startedAt: IsoTime,
   endedAt: IsoTime.nullable(),
-  /** Hidden git refs captured around the turn (refs/age/checkpoints/...). */
+  /** Hidden git refs captured around the turn (refs/wooky/checkpoints/...). */
   checkpointBefore: z.string().nullable(),
   checkpointAfter: z.string().nullable(),
   changedFiles: z.array(z.string()),

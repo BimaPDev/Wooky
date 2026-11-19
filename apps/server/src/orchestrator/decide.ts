@@ -31,7 +31,12 @@ import {
   decideThreadMerge,
   decideThreadSpawn,
 } from "./fleet-decide.ts";
-import { checkpointRef, NO_CHECKPOINT_ITEM, type Effect } from "./effects.ts";
+import {
+  checkpointRef,
+  LEGACY_NO_CHECKPOINT_ITEM,
+  NO_CHECKPOINT_ITEM,
+  type Effect,
+} from "./effects.ts";
 
 export interface DecideContext {
   now(): string;
@@ -528,7 +533,12 @@ function revertTurn(model: ReadModel, command: CommandOf<"turn.revert">): Decisi
       "Another thread is using this folder, so files were not restored. Conversation-only revert is available.",
     );
   }
-  if (!turn.checkpointBefore || turn.items.some((item) => item.id === NO_CHECKPOINT_ITEM))
+  if (
+    !turn.checkpointBefore ||
+    turn.items.some(
+      (item) => item.id === NO_CHECKPOINT_ITEM || item.id === LEGACY_NO_CHECKPOINT_ITEM,
+    )
+  )
     return reject("conflict", "This turn has no checkpoint, so it cannot be reverted.");
   const cwd = workspaceOf(model, thread);
   if (!cwd) return notFound("project", thread.projectId);

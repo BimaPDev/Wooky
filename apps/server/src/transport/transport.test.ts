@@ -179,7 +179,7 @@ describe("transport", () => {
       ok: true,
       result: [{ path: "WOOKY_DEMO.md", status: "modified" }],
     });
-    expect(fake.calls.at(-1)).toMatch(/^diff refs\/age\/checkpoints\/.+\/before null$/);
+    expect(fake.calls.at(-1)).toMatch(/^diff refs\/wooky\/checkpoints\/.+\/before null$/);
   });
 
   it("refuses dispatches while shutting down and finishes the running turn", async () => {

@@ -198,7 +198,7 @@ describe("resumePoint", () => {
 });
 
 describe("threadsSharingWorkspace", () => {
-  const worktree = { path: "/work/.age-worktrees/w", branch: "age/w" };
+  const worktree = { path: "/work/.wooky-worktrees/w", branch: "wooky/w" };
   const log = testLog()
     .project("p1", "/work")
     .project("p2", "/other")
