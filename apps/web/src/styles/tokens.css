@@ -33,6 +33,18 @@
   --radius-xl: 14px;
   --appearance-contrast: 100%;
   --glass-opacity: 80%;
+  --surface-opacity: 82%;
+  --panel-blur: 0px;
+
+  /* T3-style variable aliases, overridable by theme CSS. */
+  --background: var(--bg-0);
+  --foreground: var(--text);
+  --card: var(--bg-2);
+  --border: var(--line);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-ink);
+  --muted-foreground: var(--text-3);
+  --info: var(--provider-codex);
 
   /* Project monograms and usage chart series: identity colours, the same in every theme. */
   --monogram-1: #9ca3af;

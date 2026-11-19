@@ -37,7 +37,7 @@ export function ThreadView({ threadId }: { threadId: string }) {
   }, []);
 
   return (
-    <div className="thread-scroll" ref={scroller}>
+    <div className="thread-scroll" data-workspace-area="conversation" ref={scroller}>
       <div className="thread-content" ref={content}>
         {turnIds.length === 0 ? (
           <p className="empty-state">Send a message to start this thread.</p>
@@ -68,7 +68,9 @@ const TurnView = memo(function TurnView({
   if (!turn) return null;
   return (
     <article className="turn" aria-label={`Turn: ${turn.prompt.slice(0, 60)}`}>
-      <div className="prompt">{turn.prompt}</div>
+      <div className="prompt" data-user-message-bubble="">
+        {turn.prompt}
+      </div>
       {turn.status === "running" ? (
         <LiveTurn turn={turn} />
       ) : (

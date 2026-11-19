@@ -3,7 +3,7 @@ import { parseMarkdown, type Block, type Inline } from "../lib/markdown.ts";
 import { IconCheck, IconCopy } from "./Icons.tsx";
 
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
-  return <div className="md">{parseMarkdown(text).map(renderBlock)}</div>;
+  return <div className="md chat-markdown">{parseMarkdown(text).map(renderBlock)}</div>;
 });
 
 function renderBlock(block: Block, index: number): ReactNode {
@@ -57,7 +57,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
     );
   };
   return (
-    <div className="code-block">
+    <div className="code-block chat-markdown-codeblock">
       <div className="code-head">
         <span>{lang || "text"}</span>
         <button

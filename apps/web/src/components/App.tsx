@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { dismissNotice, openDialog, setPaletteOpen } from "../state/actions.ts";
 import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
-import { useStore } from "../state/store.ts";
+import { useStore, type Theme } from "../state/store.ts";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
 import { Dialogs } from "./Dialogs.tsx";
@@ -12,9 +12,18 @@ import { Sidebar } from "./Sidebar.tsx";
 import { TerminalPane } from "./TerminalPane.tsx";
 import { ThreadView } from "./ThreadView.tsx";
 import { TopBar } from "./TopBar.tsx";
+import { Wallpaper } from "./Wallpaper.tsx";
 
 export function App() {
   const theme = useStore((state) => state.theme);
+  const preview = useStore((state) => state.previewAppearance);
+  const [systemMode, setSystemMode] = useState<Theme>(() =>
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark",
+  );
   const threadId = useStore((state) => state.selectedThreadId);
   const thread = useStore((state) =>
     state.selectedThreadId ? state.model.threads[state.selectedThreadId] : undefined,
@@ -31,13 +40,27 @@ export function App() {
   const macDesktop = isMacDesktopShell();
   const desktopShell = isElectronShell();
 
-  // sync: document root attribute drives the CSS theme tokens + WCO vars
+  const forcedTheme = preview ? preview.appearance : theme;
+  const effectiveMode: Theme = forcedTheme ?? systemMode;
+
+  // sync: OS prefers-color-scheme media query keeps effective mode current in system mode
   useEffect(() => {
-    if (theme) document.documentElement.dataset.theme = theme;
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia("(prefers-color-scheme: light)");
+    const onChange = (event: MediaQueryListEvent) =>
+      setSystemMode(event.matches ? "light" : "dark");
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+
+  // sync: document root attribute and dark class drive the CSS theme tokens + WCO vars
+  useEffect(() => {
+    if (forcedTheme) document.documentElement.dataset.theme = forcedTheme;
     else delete document.documentElement.dataset.theme;
+    document.documentElement.classList.toggle("dark", effectiveMode === "dark");
     document.documentElement.classList.toggle("wco", desktopShell);
     document.documentElement.classList.toggle("desktop-darwin", macDesktop);
-  }, [theme, desktopShell, macDesktop]);
+  }, [forcedTheme, effectiveMode, desktopShell, macDesktop]);
 
   // sync: window title + favicon monogram for the open project/thread
   useEffect(() => {
@@ -91,6 +114,7 @@ export function App() {
 
   return (
     <>
+      <Wallpaper mode={effectiveMode} />
       <div className={shellClass}>
         {sidebarOpen ? <Sidebar macDesktop={macDesktop} /> : null}
         <div className="workspace">

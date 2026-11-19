@@ -174,12 +174,29 @@ connected clients:
 
 ## Stable selectors
 
-Theme `css` may target only the selectors in this list. The web station fills it in.
-Until then, no selector is stable.
+Theme `css` may target only the selectors in this list.
 
-- TODO: page root
-- TODO: panels that frost over a wallpaper
-- TODO: sidebar
-- TODO: transcript
-- TODO: composer
-- TODO: wallpaper layer
+- **Page root**: `:root`, `html.dark` (set when the effective colour mode is dark), `:root:not(.dark)` (light mode), `html[data-theme="dark"]`, `html[data-theme="light"]`, `html[data-wallpaper]` (present when a wallpaper is active).
+- **Panels that frost over a wallpaper**: `.sidebar`, `[data-workspace-area="sidebar"]`, `.workspace`, `.composer-box`, `.popover`, `.composer-menu`, `.usage-filter-menu`, `.usage-info-popover`, `.modal`.
+- **Sidebar**: `.sidebar`, `[data-workspace-area="sidebar"]`.
+- **Thread header**: `.topbar`, `[data-chat-header]`.
+- **Transcript**: `.thread-scroll`, `[data-workspace-area="conversation"]`, `.prompt`, `[data-user-message-bubble]`, `.md`, `.chat-markdown`, `.code-block`, `.chat-markdown-codeblock`.
+- **Composer**: `.composer-col`, `[data-slot="composer-host"]`, `.composer`, `.composer-box`.
+- **Wallpaper layer**: `.wallpaper`, `[data-wallpaper]`, `.wallpaper-image`, `.wallpaper-tile`, `.wallpaper-veil`.
+
+### T3-style variable aliases
+
+Defined on `:root` in `apps/web/src/styles/tokens.css` and overridable by theme `css`:
+
+| Alias                  | Maps to                 |
+| ---------------------- | ----------------------- |
+| `--background`         | `var(--bg-0)`           |
+| `--foreground`         | `var(--text)`           |
+| `--card`               | `var(--bg-2)`           |
+| `--border`             | `var(--line)`           |
+| `--primary`            | `var(--accent)`         |
+| `--primary-foreground` | `var(--accent-ink)`     |
+| `--muted-foreground`   | `var(--text-3)`         |
+| `--accent`             | `var(--accent)`         |
+| `--font-mono`          | `var(--font-mono)`      |
+| `--info`               | `var(--provider-codex)` |

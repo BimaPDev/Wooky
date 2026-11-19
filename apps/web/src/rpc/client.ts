@@ -8,6 +8,7 @@ import {
   type RpcParams,
   type RpcResult,
   type TerminalPush,
+  type ThemesPush,
 } from "@age/contracts";
 
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "offline";
@@ -47,6 +48,7 @@ export interface RpcClientOptions {
   onSnapshot: (model: ReadModel) => void;
   onEvent: (event: AgeEvent) => void;
   onTerminal?: (message: TerminalPush) => void;
+  onThemes?: (message: ThemesPush) => void;
   onStatus?: (status: ConnectionStatus) => void;
   requestTimeoutMs?: number;
   backoffBaseMs?: number;
@@ -166,6 +168,7 @@ export function createRpcClient(options: RpcClientOptions) {
     if ("push" in message) {
       if (message.push === "terminal") options.onTerminal?.(message);
       else if (message.push === "event") options.onEvent(message.event);
+      else if (message.push === "themes") options.onThemes?.(message);
       return;
     }
     const entry = pending.get(message.id);

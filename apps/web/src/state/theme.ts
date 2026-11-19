@@ -11,8 +11,17 @@ export function loadTheme(): Theme | null {
   }
 }
 
+export function syncRootThemeClass(theme: Theme | null) {
+  if (typeof document === "undefined") return;
+  const effective = effectiveTheme(theme);
+  if (theme) document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+  document.documentElement.classList.toggle("dark", effective === "dark");
+}
+
 export function setTheme(theme: Theme) {
   useStore.setState({ theme });
+  syncRootThemeClass(theme);
   try {
     localStorage.setItem(KEY, theme);
   } catch {

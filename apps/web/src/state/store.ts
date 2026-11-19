@@ -42,6 +42,7 @@ export interface AppState {
   settingsPage: SettingsPage;
   deviceSettings: DeviceSettings | null;
   activeAppearance: AppearanceTheme | null;
+  previewAppearance: AppearanceTheme | null;
   dialog: Dialog | null;
   /** null = follow the system preference. */
   theme: Theme | null;
@@ -81,6 +82,7 @@ export const useStore = create<AppState>(() => ({
   settingsPage: "general",
   deviceSettings: null,
   activeAppearance: null,
+  previewAppearance: null,
   dialog: null,
   theme: null,
   diffVersion: 0,

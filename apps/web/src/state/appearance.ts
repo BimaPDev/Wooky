@@ -1,10 +1,13 @@
-import type { AppearanceTheme, DeviceSettings, ThemeColorRoles } from "@age/contracts";
+import type { AppearanceTheme, DeviceSettings, ThemeColorRoles, ThemesPush } from "@age/contracts";
 import { backend } from "./backend.ts";
 import { useStore } from "./store.ts";
-import { setTheme } from "./theme.ts";
+import { setTheme, syncRootThemeClass } from "./theme.ts";
 import { BASE_PALETTES as BASE, WHITE } from "./theme-data.ts";
 
 const STYLE_ID = "age-appearance-theme";
+const SVG_DATA_URL_PREFIX = "data:image/svg+xml;base64,";
+const FREEZE_SVG_CSS = "*{animation:none!important;transition:none!important}";
+const SMIL_TAGS = ["animate", "animateTransform", "animateMotion", "set"] as const;
 
 type Mode = "dark" | "light";
 export type ColorRole = keyof ThemeColorRoles;
@@ -85,7 +88,6 @@ export function contrastRatio(foreground: string, background: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-/** Full palette for a theme: derived from canvas + accent, then explicit role overrides. */
 /** Pick whichever base ink reads better on the accent (higher WCAG contrast). */
 export function accentInkFor(accent: string): string {
   const darkInk = BASE.dark.accentInk;
@@ -93,12 +95,32 @@ export function accentInkFor(accent: string): string {
   return contrastRatio(darkInk, accent) >= contrastRatio(lightInk, accent) ? darkInk : lightInk;
 }
 
-export function resolvePalette(theme: AppearanceTheme): Palette {
-  const dark = theme.appearance === "dark";
-  const base = BASE[theme.appearance];
+/**
+ * When the effective colour mode differs from theme.appearance and a matching
+ * variant exists, replace canvas, accent, colors and background with the
+ * variant's values while keeping fonts, shape and css from the theme.
+ */
+export function resolveThemeVariant(theme: AppearanceTheme, mode: Mode): AppearanceTheme {
+  const variant = mode !== theme.appearance ? theme.variants?.[mode] : undefined;
+  if (!variant) return theme;
+  return {
+    ...theme,
+    appearance: mode,
+    canvas: variant.canvas,
+    accent: variant.accent,
+    colors: variant.colors,
+    background: variant.background,
+  };
+}
+
+/** Full palette for a theme: derived from canvas + accent, then explicit role overrides. */
+export function resolvePalette(theme: AppearanceTheme, mode: Mode = theme.appearance): Palette {
+  const resolved = resolveThemeVariant(theme, mode);
+  const dark = resolved.appearance === "dark";
+  const base = BASE[resolved.appearance];
   const ink = base.text;
-  const canvas = theme.canvas;
-  const accent = theme.accent;
+  const canvas = resolved.canvas;
+  const accent = resolved.accent;
   const derived: Palette = {
     ...base,
     bg0: canvas,
@@ -122,10 +144,92 @@ export function resolvePalette(theme: AppearanceTheme): Palette {
     delBg: mix(canvas, base.red, dark ? 0.14 : 0.1),
   };
   if (!dark) derived.bg2 = mix(canvas, WHITE, 0.7);
-  for (const [role, value] of Object.entries(theme.colors)) {
+  for (const [role, value] of Object.entries(resolved.colors)) {
     if (value) derived[role as ColorRole] = value;
   }
   return derived;
+}
+
+const stillSvgCache = new Map<string, string>();
+
+function decodeBase64Utf8(b64: string): string {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function encodeBase64Utf8(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function freezeSvgWithDomParser(svg: string): string | null {
+  const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+  const root = doc.documentElement;
+  if (
+    !root ||
+    root.nodeName.toLowerCase() === "parsererror" ||
+    doc.getElementsByTagName("parsererror").length > 0
+  ) {
+    return null;
+  }
+  for (const tag of SMIL_TAGS) {
+    for (const el of Array.from(doc.getElementsByTagName(tag))) {
+      el.remove();
+    }
+  }
+  const style = doc.createElementNS("http://www.w3.org/2000/svg", "style");
+  style.textContent = FREEZE_SVG_CSS;
+  root.appendChild(style);
+  return new XMLSerializer().serializeToString(doc);
+}
+
+function freezeSvgFallback(svg: string): string {
+  const withoutSelfClosing = svg.replace(
+    /<(animate|animateTransform|animateMotion|set)\b[^>]*\/\s*>/g,
+    "",
+  );
+  const withoutSmil = withoutSelfClosing.replace(
+    /<(animate|animateTransform|animateMotion|set)\b[^>]*>[\s\S]*?<\/\1\s*>/g,
+    "",
+  );
+  const styleTag = `<style>${FREEZE_SVG_CSS}</style>`;
+  if (/<\/svg\s*>/i.test(withoutSmil)) {
+    return withoutSmil.replace(/<\/svg\s*>/i, `${styleTag}</svg>`);
+  }
+  if (/<svg\b[^>]*\/\s*>/i.test(withoutSmil)) {
+    return withoutSmil.replace(/\/\s*>$/, `>${styleTag}</svg>`);
+  }
+  return withoutSmil;
+}
+
+/**
+ * Strip SMIL animation elements and disable CSS animations/transitions inside
+ * a base64 SVG data URL. Memoized per input.
+ */
+export function stillSvgDataUrl(dataUrl: string): string {
+  if (!dataUrl.startsWith(SVG_DATA_URL_PREFIX)) return dataUrl;
+  const cached = stillSvgCache.get(dataUrl);
+  if (cached !== undefined) return cached;
+
+  try {
+    const rawSvg = decodeBase64Utf8(dataUrl.slice(SVG_DATA_URL_PREFIX.length));
+    const hasDomParser = typeof DOMParser !== "undefined" && typeof XMLSerializer !== "undefined";
+    const stillSvg = hasDomParser ? freezeSvgWithDomParser(rawSvg) : freezeSvgFallback(rawSvg);
+    if (stillSvg === null) return dataUrl;
+    const encoded = `${SVG_DATA_URL_PREFIX}${encodeBase64Utf8(stillSvg)}`;
+    stillSvgCache.set(dataUrl, encoded);
+    return encoded;
+  } catch {
+    return dataUrl;
+  }
 }
 
 /** Contrast stretches surfaces, hairlines and muted text away from (or toward) the canvas. */
@@ -149,13 +253,6 @@ function applyContrast(palette: Palette, percent: number): Palette {
   };
 }
 
-function alphaHex(hex: string, percent: number): string {
-  const rgb = parseHex(hex);
-  if (!rgb) return hex;
-  const a = Math.round((Math.max(0, Math.min(100, percent)) / 100) * 255);
-  return `#${[...rgb, a].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
-}
-
 const DENSITY = { compact: 0.8, cozy: 1, comfortable: 1.2 } as const;
 
 interface Interface {
@@ -163,29 +260,41 @@ interface Interface {
   glassOpacity: number;
 }
 
+function glassRules(root: string): string {
+  return [
+    `${root} body, ${root} .shell, ${root} .topbar, ${root} .workspace-body, ${root} .main, ${root} .panel, ${root} .terminal-pane, ${root} .settings-shell, ${root} .settings-main, ${root} .usage-shell, ${root} .usage-topbar { background: transparent; }`,
+    `${root} .sidebar, ${root} [data-workspace-area="sidebar"], ${root} .terminal-dock, ${root} .settings-nav { background: color-mix(in srgb, var(--bg-0) var(--surface-opacity, 82%), transparent); }`,
+    `${root} .workspace, ${root} .modal.app-route-modal { background: color-mix(in srgb, var(--bg-1) var(--surface-opacity, 82%), transparent); }`,
+    `${root} .composer-box, ${root} .popover, ${root} .composer-menu, ${root} .usage-filter-menu, ${root} .usage-info-popover, ${root} .modal:not(.app-route-modal) { background: color-mix(in srgb, var(--bg-2) var(--surface-opacity, 82%), transparent); }`,
+    `@supports (backdrop-filter: blur(1px)) {\n  ${root} .sidebar, ${root} [data-workspace-area="sidebar"], ${root} .workspace, ${root} .composer-box, ${root} .popover, ${root} .composer-menu, ${root} .usage-filter-menu, ${root} .usage-info-popover, ${root} .modal {\n    -webkit-backdrop-filter: blur(var(--panel-blur, 0px));\n    backdrop-filter: blur(var(--panel-blur, 0px));\n  }\n}`,
+  ].join("\n");
+}
+
 /** The whole appearance as one stylesheet. Selectors outrank tokens.css in every mode. */
 export function buildAppearanceCss(theme: AppearanceTheme | null, ui: Interface): string {
   const custom = theme && theme.id !== "default" ? theme : null;
-  const image = custom?.background?.image;
-  const surface = custom?.background?.surfaceOpacity ?? 82;
+  const resolvedFor = (mode: Mode) => (custom ? resolveThemeVariant(custom, mode) : null);
 
   const paletteFor = (mode: Mode) => {
-    let palette = custom && custom.appearance === mode ? resolvePalette(custom) : BASE[mode];
-    palette = applyContrast(palette, ui.appearanceContrast);
-    if (image && custom?.appearance === mode) {
-      palette = {
-        ...palette,
-        bg0: alphaHex(palette.bg0, surface),
-        bg1: alphaHex(palette.bg1, Math.min(100, surface + 6)),
-      };
-    }
-    return palette;
+    const resolved = resolvedFor(mode);
+    const palette = resolved ? resolvePalette(resolved) : BASE[mode];
+    return applyContrast(palette, ui.appearanceContrast);
   };
+
   const block = (selector: string, mode: Mode) => {
-    const vars = Object.entries(paletteFor(mode))
-      .map(([role, value]) => `  ${ROLE_TO_VAR[role as ColorRole]}: ${value};`)
-      .join("\n");
-    return `${selector} {\n  color-scheme: ${mode};\n${vars}\n}`;
+    const resolved = resolvedFor(mode);
+    const scheme = resolved ? resolved.appearance : mode;
+    const lines = Object.entries(paletteFor(mode)).map(
+      ([role, value]) => `  ${ROLE_TO_VAR[role as ColorRole]}: ${value};`,
+    );
+    const bg = resolved?.background;
+    if (bg?.image) {
+      lines.push(
+        `  --surface-opacity: ${bg.surfaceOpacity ?? 82}%;`,
+        `  --panel-blur: ${bg.panelBlur ?? 0}px;`,
+      );
+    }
+    return `${selector} {\n  color-scheme: ${scheme};\n${lines.join("\n")}\n}`;
   };
 
   const out = [
@@ -227,38 +336,13 @@ export function buildAppearanceCss(theme: AppearanceTheme | null, ui: Interface)
   if (shape?.sidebarWidth) globals.push(`  --sidebar-width: ${shape.sidebarWidth}px;`);
   out.push(`html:root {\n${globals.join("\n")}\n}`);
 
-  if (image && custom) {
-    const bg = custom.background ?? {};
-    const veil = alphaHex(resolvePalette(custom).bg0, bg.dim ?? 35);
-    const blur = bg.blur ?? 0;
-    const fit =
-      bg.fit === "tile"
-        ? "background-repeat: repeat; background-size: auto;"
-        : `background-repeat: no-repeat; background-position: center; background-size: ${bg.fit ?? "cover"};`;
-    const layer = `{
-  content: "";
-  position: fixed;
-  inset: ${-blur * 2}px;
-  z-index: -1;
-  pointer-events: none;
-  background-image: linear-gradient(${veil}, ${veil}), url("${image}");
-  ${fit}
-  filter: blur(${blur}px);
-}`;
-    const mode = custom.appearance;
-    const solid = resolvePalette(custom).bg0;
-    const rules = (root: string) =>
-      [
-        `${root} { background-color: ${solid}; }`,
-        `${root} body, ${root} .shell, ${root} .workspace, ${root} .workspace-body, ${root} .main { background: transparent; }`,
-        `${root}::before ${layer}`,
-      ].join(" ");
-    out.push(
-      rules(`html:root[data-theme="${mode}"]`),
-      `@media (prefers-color-scheme: ${mode}) {
-${rules("html:root:not([data-theme])")}
-}`,
-    );
+  for (const mode of ["dark", "light"] as const) {
+    if (resolvedFor(mode)?.background?.image) {
+      out.push(
+        glassRules(`html:root[data-theme="${mode}"]`),
+        `@media (prefers-color-scheme: ${mode}) {\n${glassRules("html:root:not([data-theme])")}\n}`,
+      );
+    }
   }
 
   if (custom?.css.trim()) out.push(custom.css.trim());
@@ -273,6 +357,7 @@ function interfaceOf(settings: DeviceSettings | null): Interface {
 }
 
 function writeStyle(css: string) {
+  if (typeof document === "undefined") return;
   const existing = document.getElementById(STYLE_ID);
   const el = existing ?? document.createElement("style");
   el.id = STYLE_ID;
@@ -283,8 +368,10 @@ function writeStyle(css: string) {
 export function applyAppearanceTheme(theme: AppearanceTheme | null) {
   const settings = useStore.getState().deviceSettings;
   writeStyle(buildAppearanceCss(theme, interfaceOf(settings)));
-  if (settings) document.documentElement.dataset.chatWidth = settings.chatWidth;
-  useStore.setState({ activeAppearance: theme });
+  if (settings && typeof document !== "undefined") {
+    document.documentElement.dataset.chatWidth = settings.chatWidth;
+  }
+  useStore.setState({ activeAppearance: theme, previewAppearance: null });
 }
 
 function reapply() {
@@ -306,9 +393,42 @@ export async function loadDeviceSettings() {
   }
 }
 
+/** Handle server `{ push: "themes", activeThemeId, changedIds }` notifications. */
+export async function handleThemesPush(push: ThemesPush) {
+  try {
+    const prev = useStore.getState();
+    const prevActiveId =
+      prev.deviceSettings?.activeThemeId ?? prev.activeAppearance?.id ?? "default";
+    const [, settings] = await Promise.all([
+      backend().call("themes.list", {}),
+      backend().call("settings.get", {}),
+    ]);
+    useStore.setState({ deviceSettings: settings });
+    applyColorMode(settings.colorMode);
+    const nextId = settings.activeThemeId || push.activeThemeId || "default";
+    if (nextId === "default") {
+      applyAppearanceTheme(null);
+      return;
+    }
+    const activeChanged =
+      nextId !== prevActiveId ||
+      push.activeThemeId !== prevActiveId ||
+      prev.activeAppearance?.id !== nextId;
+    if (activeChanged || push.changedIds.includes(nextId)) {
+      const theme = await backend().call("themes.get", { id: nextId });
+      applyAppearanceTheme(theme);
+    } else {
+      applyAppearanceTheme(prev.activeAppearance);
+    }
+  } catch (error) {
+    console.error("Wooky: themes push sync failed", error);
+  }
+}
+
 export function applyColorMode(mode: DeviceSettings["colorMode"]) {
   if (mode === "system") {
     useStore.setState({ theme: null });
+    syncRootThemeClass(null);
     try {
       localStorage.removeItem("age.theme");
     } catch {
@@ -336,9 +456,12 @@ export async function patchDeviceSettings(patch: Partial<DeviceSettings>) {
 /** Activate a theme and switch the colour mode to match it, so it is actually visible. */
 export async function activateTheme(id: string, appearance: Mode) {
   const settings = useStore.getState().deviceSettings;
-  const systemMode: Mode = window.matchMedia("(prefers-color-scheme: light)").matches
-    ? "light"
-    : "dark";
+  const systemMode: Mode =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
   const effective = settings?.colorMode === "system" ? systemMode : settings?.colorMode;
   const patch: Partial<DeviceSettings> = { activeThemeId: id };
   if (id !== "default" && effective !== appearance) patch.colorMode = appearance;
@@ -369,12 +492,15 @@ export async function deleteTheme(id: string) {
 /** Live preview while editing; `restoreSavedTheme` undoes it. */
 export function previewThemeLocally(theme: AppearanceTheme) {
   writeStyle(buildAppearanceCss(theme, interfaceOf(useStore.getState().deviceSettings)));
-  document.documentElement.dataset.theme = theme.appearance;
+  useStore.setState({ previewAppearance: theme });
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.theme = theme.appearance;
+    document.documentElement.classList.toggle("dark", theme.appearance === "dark");
+  }
 }
 
 export function restoreSavedTheme() {
   const mode = useStore.getState().theme;
-  if (mode) document.documentElement.dataset.theme = mode;
-  else delete document.documentElement.dataset.theme;
+  syncRootThemeClass(mode);
   reapply();
 }

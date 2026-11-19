@@ -143,7 +143,7 @@ export function Composer({ threadId }: { threadId: string }) {
   };
 
   return (
-    <div className="composer-col">
+    <div className="composer-col" data-slot="composer-host">
       <QueuedPrompts threadId={threadId} />
       <form
         className="composer"

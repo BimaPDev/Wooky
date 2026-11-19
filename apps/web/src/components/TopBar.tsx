@@ -48,7 +48,7 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
     .join(" ");
 
   return (
-    <header className="topbar">
+    <header className="topbar" data-chat-header="">
       <div className={leadClass}>
         {!sidebarOpen ? (
           <button
