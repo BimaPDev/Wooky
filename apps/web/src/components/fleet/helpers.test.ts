@@ -1,4 +1,5 @@
-import type { FleetRow, Thread, ThreadGroup } from "@age/contracts";
+import type { AgeEvent, FleetRow, ReadModel, Thread, ThreadGroup, Turn } from "@age/contracts";
+import { emptyReadModel } from "@age/domain";
 import { describe, expect, it } from "vitest";
 import {
   BOARD_STATUS_LABEL,
@@ -6,17 +7,40 @@ import {
   fanoutTargetError,
   filterFleetRows,
   fleetRoleLabel,
+  fleetStatusSignature,
   formatRelativeActivity,
   groupFleetRows,
+  groupIdFromCreatedEvent,
+  groupIdFromDispatchAck,
   jumpItemsFromRows,
   lastAssistantText,
   promptPreview,
   rankJumpItems,
+  selectFleetRows,
+  selectFleetStatusById,
   summarizeStatuses,
   workerCountLabel,
 } from "./helpers.ts";
 
 const at = "2026-01-01T00:00:00.000Z";
+
+const turn = (id: string, extra: Partial<Turn> = {}): Turn => ({
+  id,
+  threadId: "t1",
+  prompt: "Go",
+  provider: "demo",
+  model: "demo",
+  status: "running",
+  items: [{ kind: "message", id: "m1", role: "assistant", text: "hi" }],
+  startedAt: at,
+  endedAt: null,
+  checkpointBefore: null,
+  checkpointAfter: null,
+  changedFiles: [],
+  usage: null,
+  error: null,
+  ...extra,
+});
 
 const thread = (id: string, extra: Partial<Thread> = {}): Thread => ({
   id,
@@ -31,6 +55,14 @@ const thread = (id: string, extra: Partial<Thread> = {}): Thread => ({
   status: "idle",
   createdAt: at,
   updatedAt: at,
+  ...extra,
+});
+
+const selectorModel = (seq: number, extra: Partial<ReadModel> = {}): ReadModel => ({
+  ...emptyReadModel(),
+  seq,
+  threads: { t1: thread("t1") },
+  turns: { t1: [turn("u1")] },
   ...extra,
 });
 
@@ -133,6 +165,16 @@ describe("buildSidebarTree", () => {
     expect(nodes).toEqual([{ kind: "coordinator", thread: coordinator, workers: [worker] }]);
   });
 
+  it("shows workers whose coordinator is gone as orphaned worker rows", () => {
+    const worker = thread("w1", { role: "worker", parentThreadId: "gone", title: "Draft" });
+    const solo = thread("solo");
+    const nodes = buildSidebarTree([worker, solo], [worker, solo], {});
+    expect(nodes).toEqual([
+      { kind: "orphaned", thread: worker },
+      { kind: "thread", thread: solo },
+    ]);
+  });
+
   it("does not treat orchestrated groups as fan-out rows", () => {
     const coordinator = thread("coord", { role: "coordinator", groupId: "orch" });
     const worker = thread("w1", { role: "worker", parentThreadId: "coord", groupId: "orch" });
@@ -216,6 +258,7 @@ describe("copy helpers", () => {
   it("labels roles and truncates prompts", () => {
     expect(fleetRoleLabel({ role: "coordinator" })).toBe("Coordinator");
     expect(fleetRoleLabel({ role: "worker", parentThreadId: "c" }, "Lead")).toBe("Worker of Lead");
+    expect(fleetRoleLabel({ role: "worker", parentThreadId: "gone" })).toBe("Orphaned worker");
     expect(fleetRoleLabel({ role: "worker", groupId: "g" })).toBe("Fan-out");
     expect(fleetRoleLabel({ role: "solo" })).toBe("Solo");
     expect(promptPreview("Try three models on pagination")).toBe("Try three models on pagination");
@@ -223,6 +266,89 @@ describe("copy helpers", () => {
     expect(lastAssistantText("")).toBe("No final message yet.");
   });
 
+  it("reads a group id only from group.created for this command", () => {
+    const event = {
+      type: "group.created",
+      commandId: "c1",
+      seq: 1,
+      at,
+      group: {
+        id: "g-new",
+        projectId: "p1",
+        kind: "fanout",
+        prompt: "try",
+        threadIds: ["a"],
+        createdAt: at,
+      },
+    } satisfies AgeEvent;
+    expect(groupIdFromCreatedEvent(event, "c1")).toBe("g-new");
+    expect(groupIdFromCreatedEvent(event, "other")).toBeNull();
+    expect(
+      groupIdFromCreatedEvent(
+        {
+          type: "group.winnerPicked",
+          commandId: "c1",
+          seq: 2,
+          at,
+          groupId: "g-new",
+          threadId: "a",
+        },
+        "c1",
+      ),
+    ).toBeNull();
+  });
+
+  it("reads a group id from dispatch ack events when the server includes them", () => {
+    expect(groupIdFromDispatchAck({ commandId: "c1" })).toBeNull();
+    expect(
+      groupIdFromDispatchAck({
+        commandId: "c1",
+        events: [
+          {
+            type: "group.created",
+            commandId: "c1",
+            seq: 1,
+            at,
+            group: {
+              id: "g-ack",
+              projectId: "p1",
+              kind: "fanout",
+              prompt: "try",
+              threadIds: ["a"],
+              createdAt: at,
+            },
+          },
+        ],
+      }),
+    ).toBe("g-ack");
+  });
+});
+
+describe("fleet selectors", () => {
+  it("reuses fleetRows for the same model.seq", () => {
+    const first = selectorModel(10);
+    const rows = selectFleetRows(first);
+    expect(selectFleetRows(first)).toBe(rows);
+    expect(selectFleetRows({ ...first, seq: 11 })).not.toBe(rows);
+  });
+
+  it("keeps the sidebar status map across itemDelta text", () => {
+    const running = selectorModel(3);
+    const afterDelta = selectorModel(4, {
+      turns: {
+        t1: [
+          turn("u1", {
+            items: [{ kind: "message", id: "m1", role: "assistant", text: "longer now" }],
+          }),
+        ],
+      },
+    });
+    expect(fleetStatusSignature(running)).toBe(fleetStatusSignature(afterDelta));
+    expect(selectFleetStatusById(afterDelta)).toBe(selectFleetStatusById(running));
+  });
+});
+
+describe("relative activity", () => {
   it("formats relative activity without ticking", () => {
     const now = Date.parse("2026-01-01T01:00:00.000Z");
     expect(formatRelativeActivity("2026-01-01T00:59:50.000Z", now)).toBe("now");

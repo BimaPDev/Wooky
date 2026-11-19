@@ -1,6 +1,11 @@
-import { fleetRows } from "@age/domain";
 import { useEffect, useMemo, useState } from "react";
-import { BOARD_STATUS_LABEL, jumpItemsFromRows, rankJumpItems } from "./helpers.ts";
+import { isTypingTarget } from "../panes/guards.ts";
+import {
+  BOARD_STATUS_LABEL,
+  jumpItemsFromRows,
+  rankJumpItems,
+  selectFleetRows,
+} from "./helpers.ts";
 import { IconSearch } from "../Icons.tsx";
 import { Modal } from "../Modal.tsx";
 import { providerLabels } from "../labels.ts";
@@ -16,8 +21,11 @@ export function JumpSwitcher() {
     const onKey = (event: KeyboardEvent) => {
       if (event.repeat || event.altKey || event.shiftKey) return;
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "j") return;
+      if (isTypingTarget(event.target)) return;
+      const state = useStore.getState();
+      if (state.paletteOpen || state.settingsOpen || state.dialog || state.fanoutDialog) return;
       event.preventDefault();
-      const next = !useStore.getState().jumpOpen;
+      const next = !state.jumpOpen;
       setPaletteOpen(false);
       setJumpOpen(next);
     };
@@ -35,9 +43,10 @@ function runJump(threadId: string) {
 
 function JumpDialog() {
   const model = useStore((state) => state.model);
+  const rows = selectFleetRows(model);
   const items = useMemo(
-    () => jumpItemsFromRows(fleetRows(model), (id) => model.projects[id]?.name ?? ""),
-    [model],
+    () => jumpItemsFromRows(rows, (id) => model.projects[id]?.name ?? ""),
+    [rows, model.projects],
   );
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);

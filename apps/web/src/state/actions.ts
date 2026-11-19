@@ -15,7 +15,11 @@ import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
 import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";
 import { saveTerminalOpen } from "../lib/shell.ts";
-import { fanoutTargetError } from "../components/fleet/helpers.ts";
+import {
+  fanoutTargetError,
+  groupIdFromCreatedEvent,
+  groupIdFromDispatchAck,
+} from "../components/fleet/helpers.ts";
 import { anchorKey } from "../components/review/notes.ts";
 import { PENDING_SNIPPET_LIMIT, type PendingSnippet } from "../components/review/snippets.ts";
 import {
@@ -30,7 +34,7 @@ import {
 import {
   currentNavFromState,
   navTargetExists,
-  receiveEvent,
+  subscribeToEvents,
   useStore,
   type AppState,
   type Dialog,
@@ -43,10 +47,11 @@ type CommandInput = Command extends infer C
     : never
   : never;
 
-export async function dispatch(command: CommandInput) {
-  const full = { ...command, commandId: crypto.randomUUID() } as Command;
+export async function dispatch(command: CommandInput, commandId = crypto.randomUUID()) {
+  const full = { ...command, commandId } as Command;
   try {
-    return await backend().call("dispatch", full);
+    const ack = await backend().call("dispatch", full);
+    return { ...ack, commandId };
   } catch (error) {
     console.error(`AGE: ${command.type} failed`, error);
     useStore.setState({
@@ -489,8 +494,8 @@ export function openFleetThread(threadId: string) {
 
 export function openFanoutDialog(input: {
   projectId: string;
-  prompt: string;
   runtimeMode: RuntimeMode;
+  getPrompt: () => string;
 }) {
   useStore.setState({ fanoutDialog: input, paletteOpen: false, jumpOpen: false });
 }
@@ -499,6 +504,40 @@ export const closeFanoutDialog = () => useStore.setState({ fanoutDialog: null })
 
 export function loadMergePreview(threadId: string): Promise<MergePreview> {
   return backend().call("git.mergePreview", { threadId });
+}
+
+const FANOUT_GROUP_WAIT_MS = 8_000;
+
+function waitForGroupCreated(commandId: string): { promise: Promise<string>; cancel: () => void } {
+  const handle: { done: boolean; unsub: () => void; timer?: ReturnType<typeof setTimeout> } = {
+    done: false,
+    unsub: () => {},
+  };
+  const finish = () => {
+    handle.done = true;
+    clearTimeout(handle.timer);
+    handle.unsub();
+  };
+  const promise = new Promise<string>((resolve, reject) => {
+    handle.timer = setTimeout(() => {
+      if (handle.done) return;
+      finish();
+      reject(new Error("Timed out waiting for the fan-out group."));
+    }, FANOUT_GROUP_WAIT_MS);
+    handle.unsub = subscribeToEvents((event) => {
+      const groupId = groupIdFromCreatedEvent(event, commandId);
+      if (!groupId || handle.done) return;
+      finish();
+      resolve(groupId);
+    });
+  });
+  return {
+    promise,
+    cancel: () => {
+      if (handle.done) return;
+      finish();
+    },
+  };
 }
 
 export async function startFanout(input: {
@@ -512,63 +551,37 @@ export async function startFanout(input: {
     useStore.setState({ notice: error });
     return null;
   }
-  const before = new Set(Object.keys(useStore.getState().model.groups));
-  const ack = await dispatch({ type: "fanout.start", ...input });
-  if (!ack) return null;
-  let groupId = Object.values(useStore.getState().model.groups).find(
-    (group) =>
-      group.kind === "fanout" && !before.has(group.id) && group.projectId === input.projectId,
-  )?.id;
-  if (!groupId && useStore.getState().fixture) {
-    const existing = Object.values(useStore.getState().model.groups)
-      .filter((group) => group.kind === "fanout" && group.projectId === input.projectId)
-      .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-    groupId = existing?.id;
+  const commandId = crypto.randomUUID();
+  const waiting = waitForGroupCreated(commandId);
+  const ack = await dispatch({ type: "fanout.start", ...input }, commandId);
+  if (!ack?.accepted) {
+    waiting.cancel();
+    return null;
   }
-  if (groupId) {
+  const fromAck = groupIdFromDispatchAck(ack);
+  if (fromAck) {
+    waiting.cancel();
+    closeFanoutDialog();
+    openCompare(fromAck);
+    return fromAck;
+  }
+  try {
+    const groupId = await waiting.promise;
     closeFanoutDialog();
     openCompare(groupId);
+    return groupId;
+  } catch (waitError) {
+    useStore.setState({
+      notice: waitError instanceof Error ? waitError.message : "The fan-out group did not appear.",
+    });
+    return null;
   }
-  return groupId ?? null;
 }
 
 export async function pickFanoutWinner(groupId: string, threadId: string) {
-  const ack = await dispatch({ type: "fanout.pick", groupId, threadId });
-  if (ack && useStore.getState().fixture) {
-    const state = useStore.getState();
-    receiveEvent({
-      type: "group.winnerPicked",
-      groupId,
-      threadId,
-      commandId: crypto.randomUUID(),
-      seq: state.model.seq + 1,
-      at: new Date().toISOString(),
-    });
-  }
-  return ack;
+  return dispatch({ type: "fanout.pick", groupId, threadId });
 }
 
-export async function mergeFanoutThread(threadId: string, targetBranch: string) {
-  const ack = await mergeThread(threadId, "squash", "");
-  if (ack && useStore.getState().fixture) {
-    const at = new Date().toISOString();
-    const commandId = crypto.randomUUID();
-    receiveEvent({
-      type: "thread.mergeChanged",
-      threadId,
-      merge: { status: "merging", targetBranch, at },
-      commandId,
-      seq: useStore.getState().model.seq + 1,
-      at,
-    });
-    receiveEvent({
-      type: "thread.mergeChanged",
-      threadId,
-      merge: { status: "merged", targetBranch, commit: "fixture", at },
-      commandId,
-      seq: useStore.getState().model.seq + 1,
-      at,
-    });
-  }
-  return ack;
+export async function mergeFanoutThread(threadId: string) {
+  return mergeThread(threadId, "squash", "");
 }

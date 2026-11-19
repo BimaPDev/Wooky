@@ -1,5 +1,4 @@
 import type { FleetStatus, Project, Thread, ThreadGroup } from "@age/contracts";
-import { fleetRows } from "@age/domain";
 import { memo, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
   isSettledStatus,
@@ -41,6 +40,7 @@ import { ProjectMonogram } from "./ProjectMonogram.tsx";
 import {
   buildSidebarTree,
   promptPreview,
+  selectFleetStatusById,
   summarizeStatuses,
   workerCountLabel,
   type SidebarTreeNode,
@@ -58,10 +58,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const projects = model.projects;
   const threads = model.threads;
   const fleetGroups = model.groups;
-  const statusById = useMemo(
-    () => Object.fromEntries(fleetRows(model).map((row) => [row.threadId, row.status])),
-    [model],
-  );
+  const statusById = selectFleetStatusById(model);
   const selected = useStore((state) => state.selectedThreadId);
   const groupByProject = useStore((state) => state.deviceSettings?.projectGrouping ?? true);
   const status = useStore((state) => state.status);
@@ -314,7 +311,7 @@ function ProjectGroup({
   groups: Record<string, ThreadGroup>;
   selected: string | null;
   grouped: boolean;
-  statusById: Record<string, FleetStatus>;
+  statusById: Readonly<Record<string, FleetStatus>>;
 }) {
   if (threads.length === 0) return null;
   return (
@@ -371,7 +368,7 @@ function ThreadTree({
   selected: string | null;
   grouped: boolean;
   projectName: (projectId: string) => string;
-  statusById: Record<string, FleetStatus>;
+  statusById: Readonly<Record<string, FleetStatus>>;
 }) {
   const nodes = useMemo(
     () => buildSidebarTree(visible, allThreads, groups),
@@ -410,15 +407,16 @@ function TreeNode({
   selected: string | null;
   grouped: boolean;
   projectName: (projectId: string) => string;
-  statusById: Record<string, FleetStatus>;
+  statusById: Readonly<Record<string, FleetStatus>>;
 }) {
-  if (node.kind === "thread") {
+  if (node.kind === "thread" || node.kind === "orphaned") {
     return (
       <ThreadCard
         thread={node.thread}
         projectName={projectName(node.thread.projectId)}
         active={node.thread.id === selected}
         grouped={grouped}
+        badge={node.kind === "orphaned" ? "Orphaned worker" : undefined}
       />
     );
   }
@@ -459,7 +457,7 @@ function CoordinatorNode({
   selected: string | null;
   grouped: boolean;
   projectName: (projectId: string) => string;
-  statusById: Record<string, FleetStatus>;
+  statusById: Readonly<Record<string, FleetStatus>>;
 }) {
   const waiting = workers.filter((worker) => statusById[worker.id] === "waiting").length;
   const defaultOpen = waiting > 0 || workers.some((worker) => statusById[worker.id] === "working");
@@ -527,7 +525,7 @@ function FanoutNode({
   selected: string | null;
   grouped: boolean;
   projectName: (projectId: string) => string;
-  statusById: Record<string, FleetStatus>;
+  statusById: Readonly<Record<string, FleetStatus>>;
 }) {
   const [open, setOpen] = useState(true);
   const summary = summarizeStatuses(threads.map((thread) => statusById[thread.id] ?? "idle"));
@@ -580,11 +578,13 @@ const ThreadCard = memo(function ThreadCard({
   projectName,
   active,
   grouped,
+  badge,
 }: {
   thread: Thread;
   projectName: string;
   active: boolean;
   grouped: boolean;
+  badge?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const splitMenu = useSplitContextMenu(thread.id);
@@ -618,6 +618,7 @@ const ThreadCard = memo(function ThreadCard({
               <span className="thread-time">{relativeTime(thread.updatedAt)}</span>
             </span>
             <span className="thread-meta">
+              {badge ? <span className="fleet-tree-badge">{badge}</span> : null}
               <span
                 className={`provider-badge provider-${thread.provider}`}
                 title={providerLabels[thread.provider]}

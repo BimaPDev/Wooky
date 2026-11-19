@@ -1,8 +1,9 @@
 import type { FileDiff, FleetStatus, MergePreview, Thread } from "@age/contracts";
-import { fleetRows, groupThreads } from "@age/domain";
-import { useEffect, useState } from "react";
+import { groupThreads } from "@age/domain";
+import { useEffect, useRef, useState } from "react";
 import {
   closeCompare,
+  confirm,
   loadDiff,
   loadMergePreview,
   mergeFanoutThread,
@@ -13,16 +14,23 @@ import { useStore } from "../../state/store.ts";
 import { Counts, FileDiffView } from "../DiffView.tsx";
 import { modelLabel, providerLabels } from "../labels.ts";
 import { FleetStatusMark } from "./FleetStatusMark.tsx";
-import { BOARD_STATUS_LABEL, lastAssistantText, promptPreview } from "./helpers.ts";
+import {
+  BOARD_STATUS_LABEL,
+  lastAssistantText,
+  promptPreview,
+  selectFleetStatusById,
+} from "./helpers.ts";
 
 export function CompareView({ groupId }: { groupId: string }) {
   const model = useStore((state) => state.model);
   const group = model.groups[groupId];
   const threads = groupThreads(model, groupId);
+  const statusById = selectFleetStatusById(model);
   const [tabbed, setTabbed] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
   );
   const [tab, setTab] = useState(threads[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
 
   // sync: viewport width switches compare columns to tabs
   useEffect(() => {
@@ -43,6 +51,27 @@ export function CompareView({ groupId }: { groupId: string }) {
 
   const activeId = threads.some((thread) => thread.id === tab) ? tab : (threads[0]?.id ?? "");
   const visible = tabbed ? threads.filter((thread) => thread.id === activeId) : threads;
+  const anyMergeLock = threads.some(
+    (thread) => thread.merge?.status === "merging" || thread.merge?.status === "conflict",
+  );
+  const mergeHappened = threads.some((thread) => thread.merge?.status === "merged");
+
+  const pick = (threadId: string) => {
+    const run = () => {
+      setBusy(true);
+      void pickFanoutWinner(groupId, threadId).finally(() => setBusy(false));
+    };
+    if (group.winnerThreadId && group.winnerThreadId !== threadId && mergeHappened) {
+      confirm({
+        title: "Pick a different winner",
+        body: "A merge already happened. Pick this thread instead?",
+        confirmLabel: "Pick this one instead",
+        onConfirm: run,
+      });
+      return;
+    }
+    run();
+  };
 
   return (
     <section className="fleet-compare" aria-label="Compare agents">
@@ -61,8 +90,10 @@ export function CompareView({ groupId }: { groupId: string }) {
             <button
               key={thread.id}
               type="button"
+              id={`fleet-compare-tab-${thread.id}`}
               role="tab"
               aria-selected={thread.id === activeId}
+              aria-controls={`fleet-compare-panel-${thread.id}`}
               className={thread.id === activeId ? "fleet-compare-tab active" : "fleet-compare-tab"}
               onClick={() => setTab(thread.id)}
             >
@@ -86,8 +117,17 @@ export function CompareView({ groupId }: { groupId: string }) {
             <CompareColumn
               key={thread.id}
               thread={thread}
-              groupId={groupId}
+              status={statusById[thread.id] ?? "idle"}
               winnerId={group.winnerThreadId}
+              tabbed={tabbed}
+              isActive={thread.id === activeId}
+              busy={busy}
+              anyMergeLock={anyMergeLock}
+              onPick={() => pick(thread.id)}
+              onMerge={() => {
+                setBusy(true);
+                void mergeFanoutThread(thread.id).finally(() => setBusy(false));
+              }}
             />
           ))}
         </div>
@@ -98,53 +138,60 @@ export function CompareView({ groupId }: { groupId: string }) {
 
 function CompareColumn({
   thread,
-  groupId,
+  status,
   winnerId,
+  tabbed,
+  isActive,
+  busy,
+  anyMergeLock,
+  onPick,
+  onMerge,
 }: {
   thread: Thread;
-  groupId: string;
+  status: FleetStatus;
   winnerId?: string;
+  tabbed: boolean;
+  isActive: boolean;
+  busy: boolean;
+  anyMergeLock: boolean;
+  onPick: () => void;
+  onMerge: () => void;
 }) {
   const providers = useStore((state) => state.providers);
-  const status = useStore(
-    (state) => fleetRows(state.model).find((row) => row.threadId === thread.id)?.status ?? "idle",
-  );
   const summary = useStore((state) =>
     lastAssistantText(finalMessage(state.model.turns[thread.id])),
   );
   const picked = winnerId === thread.id;
   const version = useStore((state) => state.diffVersion);
+  const previewKey = `${thread.id}:${version}`;
   const diffKey = `${thread.id}:${version}`;
-  const previewKey = `${thread.id}:${version}:${picked ? "1" : "0"}`;
-  const [files, setFiles] = useState<{ key: string; value: FileDiff[] } | null>(null);
-  const [diffError, setDiffError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ key: string; value: MergePreview } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [files, setFiles] = useState<{ key: string; value: FileDiff[] } | null>(null);
+  const [diffError, setDiffError] = useState<string | null>(null);
+  const [wideVisible, setWideVisible] = useState(() => typeof IntersectionObserver !== "function");
+  const [wideExpanded, setWideExpanded] = useState(false);
+  const columnRef = useRef<HTMLElement>(null);
+  const visible = tabbed ? isActive : wideVisible;
+  const expanded = tabbed || wideExpanded;
+  const loadPreview = tabbed ? isActive : visible;
+  const loadDiffs = tabbed ? isActive : visible && expanded;
 
-  // sync: server git.diff for this compare column
+  // sync: wide columns load when they enter the viewport
   useEffect(() => {
-    let cancelled = false;
-    loadDiff(thread.id, null).then(
-      (result) => {
-        if (cancelled) return;
-        setFiles({ key: diffKey, value: result });
-        setDiffError(null);
-      },
-      (error: unknown) => {
-        if (cancelled) return;
-        setFiles(null);
-        setDiffError(error instanceof Error ? error.message : "Could not load changes.");
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [thread.id, diffKey]);
+    if (tabbed) return;
+    const node = columnRef.current;
+    if (!node || typeof IntersectionObserver !== "function") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setWideVisible(true);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [tabbed]);
 
-  // sync: git.mergePreview after this column is picked
+  // sync: merge-preview file list is the first summary for this column
   useEffect(() => {
-    if (!picked) return;
+    if (!loadPreview) return;
     let cancelled = false;
     loadMergePreview(thread.id).then(
       (result) => {
@@ -161,29 +208,60 @@ function CompareColumn({
     return () => {
       cancelled = true;
     };
-  }, [picked, thread.id, previewKey]);
+  }, [loadPreview, thread.id, previewKey]);
 
-  const loadedFiles = files?.key === diffKey ? files.value : null;
+  // sync: full diffs after the column is active, visible, or expanded
+  useEffect(() => {
+    if (!loadDiffs) return;
+    let cancelled = false;
+    loadDiff(thread.id, null).then(
+      (result) => {
+        if (cancelled) return;
+        setFiles({ key: diffKey, value: result });
+        setDiffError(null);
+      },
+      (error: unknown) => {
+        if (cancelled) return;
+        setFiles(null);
+        setDiffError(error instanceof Error ? error.message : "Could not load changes.");
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [loadDiffs, thread.id, diffKey]);
+
   const loadedPreview = preview?.key === previewKey ? preview.value : null;
-  const totals = loadedFiles
-    ? loadedFiles.reduce(
-        (sum, file) => ({
-          additions: sum.additions + file.additions,
-          deletions: sum.deletions + file.deletions,
-        }),
-        { additions: 0, deletions: 0 },
-      )
-    : null;
+  const loadedFiles = files?.key === diffKey ? files.value : null;
+  const summaryFiles = loadedPreview?.files ?? [];
+  const totals = summaryFiles.reduce(
+    (sum, file) => ({
+      additions: sum.additions + file.additions,
+      deletions: sum.deletions + file.deletions,
+    }),
+    { additions: 0, deletions: 0 },
+  );
   const conflicts = loadedPreview?.conflicts ?? [];
   const mergeBlocked = conflicts.length > 0;
   const merge = thread.merge;
+  const threadBusy = thread.status === "running" || thread.status === "waiting";
+  const gated = busy || threadBusy || anyMergeLock;
+  const pickLabel =
+    winnerId && !picked ? "Pick this one instead" : picked ? "Picked" : "Pick this one";
 
   return (
-    <article className={picked ? "fleet-column picked" : "fleet-column"} aria-label={thread.title}>
+    <article
+      ref={columnRef}
+      className={picked ? "fleet-column picked" : "fleet-column"}
+      id={`fleet-compare-panel-${thread.id}`}
+      role={tabbed ? "tabpanel" : undefined}
+      aria-labelledby={tabbed ? `fleet-compare-tab-${thread.id}` : undefined}
+      aria-label={thread.title}
+    >
       <header className="fleet-column-head">
         <span className="fleet-column-status">
           <FleetStatusMark status={status} />
-          <span>{statusLabel(status)}</span>
+          <span>{BOARD_STATUS_LABEL[status]}</span>
         </span>
         <button type="button" className="link-button" onClick={() => selectThread(thread.id)}>
           Open thread
@@ -198,38 +276,47 @@ function CompareColumn({
       <h2 className="fleet-column-title">{thread.title || "Untitled thread"}</h2>
       <p className="fleet-column-summary">{summary}</p>
       <div className="fleet-column-scroll">
-        {diffError ? <p className="empty-state small error">{diffError}</p> : null}
-        {loadedFiles === null && !diffError ? (
-          <p className="empty-state small">Loading changes.</p>
+        {previewError ? <p className="empty-state small error">{previewError}</p> : null}
+        {loadPreview && loadedPreview === null && !previewError ? (
+          <p className="empty-state small">Loading file list.</p>
         ) : null}
-        {loadedFiles && loadedFiles.length === 0 ? (
+        {loadedPreview && summaryFiles.length === 0 ? (
           <p className="empty-state small">No file changes.</p>
         ) : null}
-        {loadedFiles && loadedFiles.length > 0 ? (
-          <>
-            <div className="fleet-column-files">
-              <span>
-                {loadedFiles.length} {loadedFiles.length === 1 ? "file" : "files"}
-              </span>
-              {totals ? <Counts additions={totals.additions} deletions={totals.deletions} /> : null}
-            </div>
-            {loadedFiles.map((file) => (
-              <FileDiffView key={file.path} file={file} defaultOpen={false} />
-            ))}
-          </>
+        {summaryFiles.length > 0 ? (
+          <div className="fleet-column-files">
+            <span>
+              {summaryFiles.length} {summaryFiles.length === 1 ? "file" : "files"}
+            </span>
+            <Counts additions={totals.additions} deletions={totals.deletions} />
+          </div>
         ) : null}
+        {!tabbed && summaryFiles.length > 0 ? (
+          <button
+            type="button"
+            className="link-button fleet-column-expand"
+            aria-expanded={expanded}
+            onClick={() => setWideExpanded((open) => !open)}
+          >
+            {expanded ? "Hide diffs" : "Show diffs"}
+          </button>
+        ) : null}
+        {diffError ? <p className="empty-state small error">{diffError}</p> : null}
+        {loadDiffs && loadedFiles === null && !diffError ? (
+          <p className="empty-state small">Loading changes.</p>
+        ) : null}
+        {loadedFiles?.map((file) => (
+          <FileDiffView key={file.path} file={file} defaultOpen={false} />
+        ))}
       </div>
       <footer className="fleet-column-foot">
         <button
           type="button"
           className={picked ? "button primary" : "button"}
-          disabled={busy}
-          onClick={() => {
-            setBusy(true);
-            void pickFanoutWinner(groupId, thread.id).finally(() => setBusy(false));
-          }}
+          disabled={gated || picked}
+          onClick={onPick}
         >
-          {picked ? "Picked" : "Pick this one"}
+          {pickLabel}
         </button>
         {picked ? (
           <MergePanel
@@ -239,14 +326,8 @@ function CompareColumn({
             mergeBlocked={mergeBlocked}
             conflicts={conflicts}
             merge={merge}
-            busy={busy}
-            onMerge={() => {
-              if (!loadedPreview || mergeBlocked) return;
-              setBusy(true);
-              void mergeFanoutThread(thread.id, loadedPreview.targetBranch).finally(() =>
-                setBusy(false),
-              );
-            }}
+            disabled={gated || mergeBlocked || !loadedPreview}
+            onMerge={onMerge}
           />
         ) : null}
       </footer>
@@ -261,7 +342,7 @@ function MergePanel({
   mergeBlocked,
   conflicts,
   merge,
-  busy,
+  disabled,
   onMerge,
 }: {
   thread: Thread;
@@ -270,7 +351,7 @@ function MergePanel({
   mergeBlocked: boolean;
   conflicts: string[];
   merge: Thread["merge"];
-  busy: boolean;
+  disabled: boolean;
   onMerge: () => void;
 }) {
   const branch = preview?.targetBranch ?? merge?.targetBranch ?? "the project branch";
@@ -295,13 +376,7 @@ function MergePanel({
       <button
         type="button"
         className="button primary"
-        disabled={
-          busy ||
-          mergeBlocked ||
-          !preview ||
-          merge?.status === "merging" ||
-          merge?.status === "merged"
-        }
+        disabled={disabled || merge?.status === "merging" || merge?.status === "merged"}
         onClick={onMerge}
       >
         Merge into {branch}
@@ -320,10 +395,6 @@ function finalMessage(
     if (item?.kind === "message" && item.role === "assistant" && item.text) return item.text;
   }
   return undefined;
-}
-
-function statusLabel(status: FleetStatus): string {
-  return BOARD_STATUS_LABEL[status];
 }
 
 function mergeStatusText(thread: Thread, merge: NonNullable<Thread["merge"]>): string {

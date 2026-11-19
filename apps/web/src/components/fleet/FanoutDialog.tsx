@@ -1,5 +1,5 @@
 import type { ProviderKind, RuntimeMode } from "@age/contracts";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { closeFanoutDialog, startFanout } from "../../state/actions.ts";
 import { NO_DISABLED_PROVIDERS, useStore } from "../../state/store.ts";
 import { isAvailable, runtimeModes } from "../labels.ts";
@@ -20,7 +20,7 @@ export function FanoutDialog() {
 function FanoutDialogBody({
   dialog,
 }: {
-  dialog: { projectId: string; prompt: string; runtimeMode: RuntimeMode };
+  dialog: { projectId: string; runtimeMode: RuntimeMode; getPrompt: () => string };
 }) {
   const providers = useStore((state) => state.providers);
   const disabledProviders = useStore(
@@ -34,6 +34,7 @@ function FanoutDialogBody({
   const [targets, setTargets] = useState<TargetDraft[]>(() => defaultTargets(available));
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(dialog.runtimeMode);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const error = fanoutTargetError(targets);
   const canStart = error === null && !busy;
 
@@ -56,19 +57,29 @@ function FanoutDialogBody({
       <form
         onSubmit={async (event) => {
           event.preventDefault();
-          if (!canStart) return;
+          if (!canStart || submitting.current) return;
+          submitting.current = true;
           setBusy(true);
-          await startFanout({
-            projectId: dialog.projectId,
-            prompt: dialog.prompt,
-            targets,
-            runtimeMode,
-          });
-          setBusy(false);
+          try {
+            const prompt = dialog.getPrompt();
+            if (!prompt) {
+              useStore.setState({ notice: "The prompt is empty." });
+              return;
+            }
+            await startFanout({
+              projectId: dialog.projectId,
+              prompt,
+              targets,
+              runtimeMode,
+            });
+          } finally {
+            submitting.current = false;
+            setBusy(false);
+          }
         }}
       >
         <h2 className="modal-title">Run on several agents</h2>
-        <p className="modal-body">{dialog.prompt}</p>
+        <p className="modal-body">{dialog.getPrompt()}</p>
         <ol className="fleet-fanout-targets">
           {targets.map((target, index) => {
             const provider = available.find((entry) => entry.kind === target.provider);
