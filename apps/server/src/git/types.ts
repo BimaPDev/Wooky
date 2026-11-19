@@ -36,6 +36,7 @@ export type MergeWorktreeResult =
       ok: false;
       kind: "dirty" | "conflict" | "failed";
       message: string;
+      /** The branch HEAD was on. Absent only on a detached HEAD or a malformed request. */
       targetBranch?: string;
       conflicts?: string[];
     };
