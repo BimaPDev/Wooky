@@ -33,11 +33,10 @@ describe("importTheme", () => {
     AppearanceTheme.parse(theme);
   });
 
-  it("drops unsafe CSS from t3code imports", () => {
+  it("rejects unsafe CSS in t3code imports", () => {
     const raw = JSON.parse(orbitFixture) as Record<string, unknown>;
     raw.css = '@import "https://evil.example/a.css"; body { color: red; }';
-    const { theme } = importTheme(JSON.stringify(raw));
-    expect(theme.css).toBe("");
+    expect(() => importTheme(JSON.stringify(raw))).toThrow(/@import/);
   });
 
   it("rejects import text over the RPC size cap", () => {
