@@ -91,6 +91,7 @@ export function pickFallback(input: {
 
   for (const target of ordered) {
     if (sameTarget(target, current)) continue;
+    if (ACCOUNT_SCOPED.has(input.failure.kind) && target.provider === current.provider) continue;
     if (target.provider === "demo" && input.thread.provider !== "demo") continue;
     if (!input.available(target)) continue;
     if (onCooldown(input.readModel, target, input.now)) continue;

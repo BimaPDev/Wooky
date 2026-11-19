@@ -291,15 +291,24 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       const thread = model.threads[event.threadId];
       if (!thread) return model;
       const original = thread.failover?.original ?? event.from;
+      const providerChanged = event.from.provider !== event.to.provider;
+      const prevReset = thread.failover?.resetAt;
+      const nextReset = event.failure.resetAt;
+      const resetAt =
+        prevReset && nextReset
+          ? prevReset > nextReset
+            ? prevReset
+            : nextReset
+          : (nextReset ?? prevReset);
       return patchThread(model, event.threadId, event.at, {
         provider: event.to.provider,
         model: event.to.model,
-        providerSessionId: null,
+        ...(providerChanged ? { providerSessionId: null } : {}),
         failover: {
           original,
           switchedAt: event.at,
           reason: event.failure.kind,
-          ...(event.failure.resetAt ? { resetAt: event.failure.resetAt } : {}),
+          ...(resetAt ? { resetAt } : {}),
           switches: event.switches,
         },
       });

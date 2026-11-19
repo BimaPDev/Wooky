@@ -144,6 +144,19 @@ describe("pickFallback", () => {
     expect(picked?.provider).not.toBe("cursor");
   });
 
+  it("does not pick another model on the same provider for account-scoped failures", () => {
+    const chain: ModelTarget[] = [{ provider: "claude", model: "haiku" }];
+    const picked = pickFallback({
+      readModel: model(),
+      thread: thread({ provider: "claude", model: "sonnet" }),
+      chain,
+      now,
+      available: always,
+      failure: rateLimit,
+    });
+    expect(picked).toBeNull();
+  });
+
   it("prefers other providers first for account-scoped failures", () => {
     const chain: ModelTarget[] = [
       { provider: "claude", model: "haiku" },
@@ -275,8 +288,42 @@ describe("failover reducer events", () => {
     expect(m.threads.t1?.model).toBe("sonnet");
 
     m = applyEvent(m, {
-      type: "provider.cooldownCleared",
+      type: "thread.sessionBound",
       seq: 5,
+      at: now,
+      commandId: null,
+      threadId: "t1",
+      providerSessionId: "sess-1",
+    });
+    m = applyEvent(m, {
+      type: "thread.failedOver",
+      seq: 6,
+      at: now,
+      commandId: "c5",
+      threadId: "t1",
+      from: { provider: "claude", model: "sonnet" },
+      to: { provider: "claude", model: "opus" },
+      failure: { kind: "rate_limit", message: "x", resetAt: "2026-01-01T13:00:00.000Z" },
+      switches: 1,
+    });
+    expect(m.threads.t1?.providerSessionId).toBe("sess-1");
+    m = applyEvent(m, {
+      type: "thread.failedOver",
+      seq: 7,
+      at: now,
+      commandId: "c6",
+      threadId: "t1",
+      from: { provider: "claude", model: "opus" },
+      to: { provider: "cursor", model: "auto" },
+      failure: { kind: "rate_limit", message: "x", resetAt: "2026-01-01T14:00:00.000Z" },
+      switches: 2,
+    });
+    expect(m.threads.t1?.providerSessionId).toBeNull();
+    expect(m.threads.t1?.failover?.resetAt).toBe("2026-01-01T14:00:00.000Z");
+
+    m = applyEvent(m, {
+      type: "provider.cooldownCleared",
+      seq: 8,
       at: now,
       commandId: null,
       key: "claude",

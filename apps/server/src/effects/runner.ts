@@ -28,7 +28,7 @@ import {
 } from "../orchestrator/effects.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";
 import type { TurnInput } from "../providers/types.ts";
-import { maybeFailoverAfterTurn } from "../failover/policy.ts";
+import { maybeFailoverAfterTurn, recoverMissedFailovers } from "../failover/policy.ts";
 import type { EventStore } from "../store/event-store.ts";
 import type { LimitsService } from "../usage/limits.ts";
 
@@ -384,7 +384,9 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       );
       const handoffContext =
         live.providerSessionId === null && earlier.length > 0
-          ? handoffTranscript(withTurns(store.model, threadId, earlier), threadId)
+          ? handoffTranscript(withTurns(store.model, threadId, earlier), threadId, 24_000, {
+              failoverToolOutput: turn.origin?.kind === "failover",
+            })
           : null;
       const resumeAt =
         adapter.supportsResumeAt && !adapter.rewind ? consumeResumeAt(threadId) : null;
@@ -559,10 +561,17 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       }
       flush();
       if (done) {
-        status = done.status;
-        error = done.error;
-        nativeRef = done.nativeRef;
-        failure = done.failure;
+        if (signal.aborted) {
+          status = "interrupted";
+          error = null;
+          nativeRef = done.nativeRef;
+          failure = undefined;
+        } else {
+          status = done.status;
+          error = done.error;
+          nativeRef = done.nativeRef;
+          failure = done.failure;
+        }
       } else if (signal.aborted) {
         status = "interrupted";
       } else {
@@ -571,8 +580,10 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     } catch (cause) {
       bestEffort(flush);
       if (cause instanceof UnreadableStream) error = cause.message;
-      else if (cause instanceof Interrupted || signal.aborted) status = "interrupted";
-      else error = messageOf(cause);
+      else if (cause instanceof Interrupted || signal.aborted) {
+        status = "interrupted";
+        failure = undefined;
+      } else error = messageOf(cause);
     }
 
     let checkpointAfter: string | null = null;
@@ -603,7 +614,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       usage,
       error,
       ...(nativeRef === undefined ? {} : { nativeRef }),
-      ...(failure ? { failure } : {}),
+      ...(failure && status === "failed" ? { failure } : {}),
     };
     try {
       emit([finished]);
@@ -634,11 +645,12 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           model: store.model,
           finished: committed,
           settings: deviceSettings(),
-          listProviders: () => providers.list(),
+          providers,
           dispatch,
           recordCooldown: (events) => append(events),
           limits,
           now: now(),
+          readModel: () => store.model,
         }).catch((cause) => console.error("Failover after turn failed", cause));
       }
     }
@@ -822,6 +834,17 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         const last = store.model.turns[threadId]?.at(-1);
         if (store.model.threads[threadId]?.status === "idle" && last?.status === "completed")
           promoteHead(threadId);
+      }
+      if (deviceSettings && dispatch) {
+        recoverMissedFailovers({
+          store,
+          settings: deviceSettings(),
+          providers,
+          dispatch,
+          recordCooldown: (events) => append(events),
+          limits,
+          now: now(),
+        });
       }
     },
     idle,

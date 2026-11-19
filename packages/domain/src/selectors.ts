@@ -107,15 +107,33 @@ function sharesRoot(thread: Thread): boolean {
   return thread.worktree === null && !thread.isolate;
 }
 
+const TOOL_OUTPUT_MAX = 2_000;
+
+function trimToolOutput(output: string, max = TOOL_OUTPUT_MAX): string {
+  return output.length > max ? `${output.slice(0, max - 1)}…` : output;
+}
+
 /** Plain-text transcript used to hand a thread off to a different provider. */
-export function handoffTranscript(model: ReadModel, threadId: string, maxChars = 24_000): string {
+export function handoffTranscript(
+  model: ReadModel,
+  threadId: string,
+  maxChars = 24_000,
+  options: { failoverToolOutput?: boolean } = {},
+): string {
+  const turns = model.turns[threadId] ?? [];
   const parts: string[] = [];
-  for (const turn of model.turns[threadId] ?? []) {
+  for (const [index, turn] of turns.entries()) {
+    const includeToolOutput =
+      options.failoverToolOutput === true && index === turns.length - 1 && turn.status === "failed";
     parts.push(`User: ${turn.prompt}`);
     for (const item of turn.items) {
       if (item.kind === "message" && item.role === "assistant")
         parts.push(`Assistant: ${item.text}`);
-      if (item.kind === "tool" && item.files?.length) parts.push(`(${item.title})`);
+      if (item.kind === "tool") {
+        if (item.files?.length) parts.push(`(${item.title})`);
+        if (includeToolOutput && item.output)
+          parts.push(`Tool ${item.title}: ${trimToolOutput(item.output)}`);
+      }
       if (item.kind === "plan" && item.status !== "superseded")
         parts.push(`Plan (${item.status}):\n${item.markdown}`);
     }
