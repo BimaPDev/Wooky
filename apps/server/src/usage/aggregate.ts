@@ -30,6 +30,8 @@ export function dedupeRecords(records: readonly HistoryRecord[]): HistoryRecord[
     first.cacheReadTokens = Math.max(first.cacheReadTokens, record.cacheReadTokens);
     first.cacheWriteTokens = Math.max(first.cacheWriteTokens, record.cacheWriteTokens);
     first.outputTokens = Math.max(first.outputTokens, record.outputTokens);
+    if (record.cacheWrite1hTokens !== undefined)
+      first.cacheWrite1hTokens = Math.max(first.cacheWrite1hTokens ?? 0, record.cacheWrite1hTokens);
     if (record.reasoningTokens !== undefined)
       first.reasoningTokens = Math.max(first.reasoningTokens ?? 0, record.reasoningTokens);
     if (record.reportedCostUsd !== undefined)
@@ -172,6 +174,7 @@ export function aggregate(
       cacheWrite,
       output,
       record.reportedCostUsd,
+      tokens(record.cacheWrite1hTokens ?? 0),
     );
     cell.input += input;
     cell.cacheRead += cacheRead;

@@ -67,6 +67,7 @@
   --monogram-18: #fb7185;
   --usage-claude: #d97757;
   --usage-cursor: #8b8b8b;
+  --usage-antigravity: #6b8cae;
 }
 
 :root[data-chat-width="wide"] {

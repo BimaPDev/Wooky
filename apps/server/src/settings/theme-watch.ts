@@ -1,4 +1,4 @@
-import { mkdirSync, watch, type FSWatcher } from "node:fs";
+import { mkdirSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { ThemesPush } from "@age/contracts";
 import type { ThemeStore } from "./themes.ts";
@@ -12,6 +12,24 @@ function themeIdFromPath(themesDir: string, filePath: string): string | null {
   return name.slice(0, -".json".length);
 }
 
+/** Theme id → mtime, so a flush can find changes even when the OS merges or drops events. */
+function snapshotThemes(themesDir: string): Map<string, number> {
+  const snapshot = new Map<string, number>();
+  try {
+    for (const name of readdirSync(themesDir)) {
+      if (!name.endsWith(".json") || IGNORED_NAME_RE.test(name)) continue;
+      try {
+        snapshot.set(name.slice(0, -".json".length), statSync(join(themesDir, name)).mtimeMs);
+      } catch {
+        /* removed between readdir and stat */
+      }
+    }
+  } catch {
+    /* folder missing */
+  }
+  return snapshot;
+}
+
 export function watchThemeFiles(
   themes: ThemeStore,
   broadcast: (message: ThemesPush) => void,
@@ -20,8 +38,13 @@ export function watchThemeFiles(
   let settingsDirty = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
+  let known = snapshotThemes(themes.themesDir);
   const flush = () => {
     timer = null;
+    const next = snapshotThemes(themes.themesDir);
+    for (const [id, mtime] of next) if (known.get(id) !== mtime) changed.add(id);
+    for (const id of known.keys()) if (!next.has(id)) changed.add(id);
+    known = next;
     const changedIds = [...changed];
     changed.clear();
     if (changedIds.length === 0 && !settingsDirty) return;
@@ -45,9 +68,12 @@ export function watchThemeFiles(
     mkdirSync(themes.themesDir, { recursive: true });
     watchers.push(
       watch(themes.themesDir, { persistent: false }, (_event, filename) => {
-        if (!filename || IGNORED_NAME_RE.test(filename)) return;
-        const id = themeIdFromPath(themes.themesDir, join(themes.themesDir, filename));
-        if (id) changed.add(id);
+        // A missing filename still schedules a flush; the mtime diff finds the change.
+        if (filename && IGNORED_NAME_RE.test(filename)) return;
+        if (filename) {
+          const id = themeIdFromPath(themes.themesDir, join(themes.themesDir, filename));
+          if (id) changed.add(id);
+        }
         schedule();
       }),
     );

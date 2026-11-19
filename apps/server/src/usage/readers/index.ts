@@ -1,4 +1,5 @@
 import type { HistoryReader } from "../history-reader.ts";
+import { antigravityHistoryReader } from "./antigravity.ts";
 import { claudeHistoryReader } from "./claude.ts";
 import { codexHistoryReader } from "./codex.ts";
 import { cursorHistoryReader } from "./cursor.ts";
@@ -10,4 +11,5 @@ export const HISTORY_READERS: readonly HistoryReader[] = [
   cursorHistoryReader,
   codexHistoryReader,
   opencodeHistoryReader,
+  antigravityHistoryReader,
 ];

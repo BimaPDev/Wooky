@@ -20,10 +20,10 @@ export const ProviderLimits = z.object({
 export type ProviderLimits = z.infer<typeof ProviderLimits>;
 
 /**
- * Where a history row was read from. Not the same set as ProviderKind: demo has
- * no history files, and an ACP agent is not a history origin.
+ * Where a history row was read from. Not ProviderKind: Antigravity is an origin,
+ * demo has no history files, and an ACP agent is not a history origin.
  */
-export const Origin = z.enum(["claude", "cursor", "codex", "opencode"]);
+export const Origin = z.enum(["claude", "cursor", "codex", "opencode", "antigravity"]);
 export type Origin = z.infer<typeof Origin>;
 
 /** 1 is the past 24 hours (hourly buckets). The others are calendar-day windows. */

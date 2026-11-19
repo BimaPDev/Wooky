@@ -33,6 +33,9 @@ describe("normalizeModelId", () => {
     ["claude-3-7-sonnet-latest", "claude-3-7-sonnet"],
     ["claude-sonnet-4@20250514", "claude-sonnet-4"],
     ["openrouter/anthropic/claude-haiku-4-5", "claude-haiku-4-5"],
+    ["cursor-grok-4.6-high", "grok-4.6"],
+    ["claude-opus-4-8-thinking-high", "claude-opus-4-8"],
+    ["composer-2.5", "composer-2.5"],
   ])("%s -> %s", (raw, expected) => {
     expect(normalizeModelId(raw)).toBe(expected);
   });
@@ -72,6 +75,16 @@ describe("pricing a record", () => {
   it("keeps the whole reported cost as other for an unknown model, and counts it priced", () => {
     const p = price("mystery-1", 1000, 0, 0, 0, 0.3);
     expect(p).toMatchObject({ input: 0, other: 0.3, priced: true });
+  });
+
+  it("prices 1-hour cache writes at 2x input when the split is present", () => {
+    const offline = createPricer(BUNDLED_RATES);
+    const fiveMinute = offline("claude-sonnet-4-5", 0, 0, 1_000_000, 0, undefined, 0);
+    expect(fiveMinute.cacheWrite).toBeCloseTo(3.75, 9);
+    const oneHour = offline("claude-sonnet-4-5", 0, 0, 1_000_000, 0, undefined, 1_000_000);
+    expect(oneHour.cacheWrite).toBeCloseTo(6, 9);
+    const mixed = offline("claude-sonnet-4-5", 0, 0, 1_000_000, 0, undefined, 400_000);
+    expect(mixed.cacheWrite).toBeCloseTo(0.6 * 3.75 + 0.4 * 6, 9);
   });
 
   it("computes cache savings against the input rate and floors them at zero", () => {
@@ -114,6 +127,7 @@ describe("reduceLitellm", () => {
         output_cost_per_token: 15e-6,
         cache_read_input_token_cost: 3e-7,
         cache_creation_input_token_cost: 3.75e-6,
+        cache_creation_input_token_cost_above_1hr: 6e-6,
         litellm_provider: "anthropic",
       },
       "embedding-only": { input_cost_per_token: 1e-7 },
@@ -124,6 +138,7 @@ describe("reduceLitellm", () => {
       output: 15e-6,
       cacheRead: 3e-7,
       cacheWrite: 3.75e-6,
+      cacheWrite1h: 6e-6,
     });
     expect(Object.keys(table)).toEqual(["claude-sonnet-4-5"]);
   });

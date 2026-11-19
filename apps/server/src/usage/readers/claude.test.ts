@@ -18,6 +18,7 @@ const HISTORY_RECORD_KEYS = new Set([
   "inputTokens",
   "cacheReadTokens",
   "cacheWriteTokens",
+  "cacheWrite1hTokens",
   "outputTokens",
   "reasoningTokens",
   "reportedCostUsd",
@@ -208,6 +209,34 @@ describe("claudeHistoryReader", () => {
       outputTokens: 5,
       reportedCostUsd: 0.12,
       dedupeKey: "msg-1:req-1",
+    });
+  });
+
+  it("splits 1-hour cache writes out of cache_creation", async () => {
+    const home = "/home/user";
+    const line = assistantLine({
+      message: {
+        id: "msg-cache",
+        model: "claude-sonnet-4-5",
+        usage: {
+          input_tokens: 8,
+          cache_read_input_tokens: 1,
+          cache_creation_input_tokens: 100,
+          cache_creation: {
+            ephemeral_5m_input_tokens: 40,
+            ephemeral_1h_input_tokens: 60,
+          },
+          output_tokens: 2,
+        },
+      },
+    });
+    const { fs } = claudeTree(home, [{ rel: "proj/a.jsonl", content: line, mtimeMs: FRESH_MTIME }]);
+    const { records } = await claudeHistoryReader.read(
+      ctx(fs, { homeDir: home, sinceMs: WINDOW_SINCE, untilMs: WINDOW_UNTIL }),
+    );
+    expect(records[0]).toMatchObject({
+      cacheWriteTokens: 100,
+      cacheWrite1hTokens: 60,
     });
   });
 
