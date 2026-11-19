@@ -1,4 +1,4 @@
-import type { ProviderEvent, TimelineItem, ToolKind } from "@age/contracts";
+import type { ProviderEvent, TimelineItem, ToolKind } from "@wooky/contracts";
 import { z } from "zod";
 import { mapAcpToolKind } from "./permission.ts";
 import { fitId, previewValue, truncateBytes, truncateTitle } from "./text.ts";

@@ -1,4 +1,4 @@
-import type { TerminalPush } from "@age/contracts";
+import type { TerminalPush } from "@wooky/contracts";
 
 type Listener = (message: TerminalPush) => void;
 

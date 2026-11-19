@@ -1,4 +1,4 @@
-import type { ProviderKind, RuntimeMode } from "@age/contracts";
+import type { ProviderKind, RuntimeMode } from "@wooky/contracts";
 import { useEffect, useId, useMemo, useState } from "react";
 import {
   addProject,

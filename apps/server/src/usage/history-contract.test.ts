@@ -5,7 +5,7 @@ import {
   UsageHistoryResult,
   type UsageHistoryBucket,
   type UsageHistoryResult as UsageHistory,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import {
   ImportTuning,

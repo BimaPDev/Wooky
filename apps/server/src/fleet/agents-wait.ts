@@ -1,5 +1,5 @@
-import type { FleetStatus, ReadModel } from "@age/contracts";
-import { fleetRows } from "@age/domain";
+import type { FleetStatus, ReadModel } from "@wooky/contracts";
+import { fleetRows } from "@wooky/domain";
 import type { EventStore } from "../store/event-store.ts";
 
 const TERMINAL: ReadonlySet<FleetStatus> = new Set(["done", "failed"]);

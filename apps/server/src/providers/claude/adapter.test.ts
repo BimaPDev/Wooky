@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ProviderEvent, UserInputRequest } from "@age/contracts";
+import type { ApprovalRequest, ProviderEvent, UserInputRequest } from "@wooky/contracts";
 import type { AccountInfo, ModelInfo, Options, query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -1,4 +1,4 @@
-import type { TimelineItem, Turn } from "@age/contracts";
+import type { TimelineItem, Turn } from "@wooky/contracts";
 import { memo, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { formatDuration, summarizeTurn } from "../lib/summary.ts";

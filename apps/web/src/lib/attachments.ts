@@ -1,4 +1,4 @@
-import type { Attachment } from "@age/contracts";
+import type { Attachment } from "@wooky/contracts";
 
 /** A file in the composer: still uploading, saved on the server, or refused. */
 export type ComposerAttachment =

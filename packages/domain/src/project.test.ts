@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgeEvent, PendingEvent, Thread } from "@age/contracts";
+import type { AgeEvent, PendingEvent, Thread } from "@wooky/contracts";
 import { applyEvents, emptyReadModel } from "./project.ts";
 import { pendingApprovals } from "./selectors.ts";
 import { plan, question, testLog } from "./test-log.ts";

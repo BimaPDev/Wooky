@@ -1,4 +1,4 @@
-import type { ReviewNote } from "@age/contracts";
+import type { ReviewNote } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { claimSnippets, isStale, snippetOf, SNIPPET_MAX, type PendingSnippet } from "./snippets.ts";
 

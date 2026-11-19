@@ -23,4 +23,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - name: Web build
-        run: pnpm --filter @age/web build
+        run: pnpm --filter @wooky/web build

@@ -1,4 +1,4 @@
-import type { MergePreview, MergeStrategy, Worktree } from "@age/contracts";
+import type { MergePreview, MergeStrategy, Worktree } from "@wooky/contracts";
 import type { GitService, MergeWorktreeResult } from "./types.ts";
 
 /** Stand-in until the real git service is wired: every workspace looks like a non-repo. */

@@ -1,5 +1,5 @@
-import { AGE_WS_PATH } from "@age/contracts";
-import { emptyReadModel } from "@age/domain";
+import { AGE_WS_PATH } from "@wooky/contracts";
+import { emptyReadModel } from "@wooky/domain";
 import { createFixtureBackend } from "../dev/fixture.ts";
 import { handleThemesPush, loadDeviceSettings } from "../state/appearance.ts";
 import { refreshProviders } from "../state/actions.ts";

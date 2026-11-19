@@ -55,7 +55,7 @@ Adapters emit `ProviderEvent`s, which become `turn.*` events. See `docs/architec
 
 ## Boundaries (enforced by `pnpm boundaries`)
 
-- `contracts` imports only `zod`; `domain` imports only `@age/contracts`.
+- `contracts` imports only `zod`; `domain` imports only `@wooky/contracts`.
 - `apps/web` never imports node built-ins or server code.
 - `child_process` only under `apps/server/src/{providers,git,terminal,process}/`.
 - Never kill by pattern (`pkill`, `killall`). Kill only a PID you spawned.

@@ -1,5 +1,5 @@
-import type { ProviderEvent, TimelineItem } from "@age/contracts";
-import { ProviderEvent as ProviderEventSchema } from "@age/contracts";
+import type { ProviderEvent, TimelineItem } from "@wooky/contracts";
+import { ProviderEvent as ProviderEventSchema } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import {
   assistant,

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { AGE_WS_PATH, type AgeEvent, RpcPush, RpcResponse } from "@age/contracts";
+import { AGE_WS_PATH, type AgeEvent, RpcPush, RpcResponse } from "@wooky/contracts";
 import { createFolderPicker } from "../process/folder-picker.ts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer, type ServerOptions } from "../server.ts";

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { PendingEvent } from "@age/contracts";
+import type { PendingEvent } from "@wooky/contracts";
 import type { Effect } from "../orchestrator/effects.ts";
 import { tempDir } from "../testing.ts";
 import { openEventStore } from "./event-store.ts";

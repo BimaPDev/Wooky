@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PendingEvent } from "@age/contracts";
+import type { PendingEvent } from "@wooky/contracts";
 import { openEventStore, type EventStore } from "./store/event-store.ts";
 import { tempDir, waitForEvent } from "./testing.ts";
 

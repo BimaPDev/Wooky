@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { emptyReadModel } from "@age/domain";
-import type { Thread } from "@age/contracts";
+import { emptyReadModel } from "@wooky/domain";
+import type { Thread } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import { createAgentTokenService } from "./agent-token.ts";
 import { isLoopbackAddress, resolveAgentCaller } from "./agent-auth.ts";

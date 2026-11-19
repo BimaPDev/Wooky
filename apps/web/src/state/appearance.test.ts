@@ -1,6 +1,6 @@
 // age-allow-file color: assertions on generated theme CSS compare hex values.
-import { AppearanceTheme, DeviceSettings, type RpcMethod, type ThemesPush } from "@age/contracts";
-import { emptyReadModel } from "@age/domain";
+import { AppearanceTheme, DeviceSettings, type RpcMethod, type ThemesPush } from "@wooky/contracts";
+import { emptyReadModel } from "@wooky/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createRpcClient, type SocketHandlers, type SocketLike } from "../rpc/client.ts";
 import {

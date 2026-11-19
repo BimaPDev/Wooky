@@ -73,7 +73,7 @@ The registry knows the OpenCode and ACP labels and ships no adapter for them yet
 ## Read path
 
 Clients call `snapshot` once, then `subscribe({ fromSeq })`. Every push is applied with
-`@age/domain`'s `applyEvent`, the same reducer the server uses. A reconnect re-subscribes
+`@wooky/domain`'s `applyEvent`, the same reducer the server uses. A reconnect re-subscribes
 from the last applied `seq`; duplicates are ignored by the reducer.
 
 ## Process contract

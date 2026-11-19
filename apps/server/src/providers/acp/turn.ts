@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { ProviderEvent, TurnFailure } from "@age/contracts";
+import type { ProviderEvent, TurnFailure } from "@wooky/contracts";
 import { z } from "zod";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { prefixSessionPrompt } from "../agent-env.ts";

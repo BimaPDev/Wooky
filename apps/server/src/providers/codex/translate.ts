@@ -1,4 +1,4 @@
-import type { ProviderEvent, TimelineItem, ToolKind, TurnFailure } from "@age/contracts";
+import type { ProviderEvent, TimelineItem, ToolKind, TurnFailure } from "@wooky/contracts";
 import { asDoneFailure } from "../failure.ts";
 import { classifyCodexFailure } from "./classify.ts";
 import {

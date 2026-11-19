@@ -1,4 +1,4 @@
-import { FLEET_LIMITS, type ProviderStatus } from "@age/contracts";
+import { FLEET_LIMITS, type ProviderStatus } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { fleetGuide, formatAgents, usableAgents } from "./guide.ts";
 

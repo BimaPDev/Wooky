@@ -5,7 +5,7 @@ one prompt on several agents at once. The user compares their diffs, picks a win
 merges that worktree back into the project branch. Review notes on a diff go back to the
 agent as one prompt.
 
-The shapes live in `@age/contracts`. `@age/domain` folds the events and derives the board.
+The shapes live in `@wooky/contracts`. `@wooky/domain` folds the events and derives the board.
 `decide` currently rejects every fleet command with `not implemented`. The server station
 enforces the rules below; the reducer only records events that were accepted.
 
@@ -35,7 +35,7 @@ without `groups` or `reviewNotes` reads as two empty maps.
 - A worker report summary is at most 8000 characters.
 - `agents.wait` accepts a timeout up to 600000 ms (ten minutes).
 
-`FLEET_LIMITS` in `@age/contracts` is the same set of numbers.
+`FLEET_LIMITS` in `@wooky/contracts` is the same set of numbers.
 
 ## Commands
 

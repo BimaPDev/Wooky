@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ATTACHMENT_MAX_BYTES } from "@age/contracts";
+import { ATTACHMENT_MAX_BYTES } from "@wooky/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAttachmentStore } from "./attachments.ts";
 

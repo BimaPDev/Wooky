@@ -1,4 +1,4 @@
-import type { FleetStatus, Project, Thread, ThreadGroup } from "@age/contracts";
+import type { FleetStatus, Project, Thread, ThreadGroup } from "@wooky/contracts";
 import { memo, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
   isSettledStatus,

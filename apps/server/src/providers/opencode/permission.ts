@@ -1,4 +1,4 @@
-import type { RuntimeMode } from "@age/contracts";
+import type { RuntimeMode } from "@wooky/contracts";
 
 export type OpenCodePermissionAction = "ask" | "allow";
 

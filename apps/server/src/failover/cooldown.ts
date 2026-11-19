@@ -1,5 +1,5 @@
-import type { ModelTarget, ReadModel, TurnFailure, TurnFailureKind } from "@age/contracts";
-import { cooldownUntil } from "@age/domain";
+import type { ModelTarget, ReadModel, TurnFailure, TurnFailureKind } from "@wooky/contracts";
+import { cooldownUntil } from "@wooky/domain";
 
 const ACCOUNT_SCOPED: ReadonlySet<TurnFailureKind> = new Set(["rate_limit", "quota", "overloaded"]);
 

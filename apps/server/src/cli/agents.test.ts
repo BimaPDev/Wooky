@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { DeviceSettings, type ProviderStatus } from "@age/contracts";
+import { DeviceSettings, type ProviderStatus } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import type { CliIo } from "./agents.ts";

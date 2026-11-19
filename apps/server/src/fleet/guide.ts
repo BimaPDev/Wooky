@@ -1,4 +1,4 @@
-import { FLEET_LIMITS, type ProviderKind, type ProviderStatus } from "@age/contracts";
+import { FLEET_LIMITS, type ProviderKind, type ProviderStatus } from "@wooky/contracts";
 
 export interface UsableAgent {
   provider: ProviderKind;

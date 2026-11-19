@@ -51,8 +51,8 @@ const rules = [
   {
     id: "domain-pure",
     applies: (rel) => rel.startsWith(`packages${sep}domain${sep}`),
-    imports: (spec) => spec === "@age/contracts" || spec.startsWith(".") || spec === "vitest",
-    message: "domain is pure: only @age/contracts and local files (no node:*, no I/O)",
+    imports: (spec) => spec === "@wooky/contracts" || spec.startsWith(".") || spec === "vitest",
+    message: "domain is pure: only @wooky/contracts and local files (no node:*, no I/O)",
   },
   {
     id: "web-no-server",
@@ -60,14 +60,14 @@ const rules = [
     imports: (spec) =>
       !spec.startsWith("node:") &&
       !spec.includes("apps/server") &&
-      spec !== "@age/server" &&
+      spec !== "@wooky/server" &&
       !["fs", "child_process", "path", "os"].includes(spec),
     message: "web is a remote control: no node built-ins or server imports",
   },
   {
     id: "server-no-web",
     applies: (rel) => rel.startsWith(`apps${sep}server${sep}`),
-    imports: (spec) => !spec.includes("apps/web") && spec !== "@age/web" && spec !== "react",
+    imports: (spec) => !spec.includes("apps/web") && spec !== "@wooky/web" && spec !== "react",
     message: "server must not import UI code",
   },
 ];

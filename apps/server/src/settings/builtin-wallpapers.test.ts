@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AppearanceTheme } from "@age/contracts";
+import { AppearanceTheme } from "@wooky/contracts";
 import { getBuiltinWallpaperThemes } from "./builtin-wallpapers.ts";
 import { contrastRatio } from "./contrast.ts";
 

@@ -1,6 +1,6 @@
 // age-allow-file color: theme summary fixtures use hex canvas/accent like the server sends.
 import { describe, expect, it } from "vitest";
-import type { AppearanceTheme } from "@age/contracts";
+import type { AppearanceTheme } from "@wooky/contracts";
 import {
   applyPalettePatch,
   applyWallpaperPatch,

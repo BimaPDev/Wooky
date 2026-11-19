@@ -7,7 +7,7 @@ import {
   type UsageHistoryParams,
   type UsageHistoryResult,
   type UsageHistorySource,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { z } from "zod";
 import { CACHE_FILE_NAME } from "./history-cache.ts";
 import type {

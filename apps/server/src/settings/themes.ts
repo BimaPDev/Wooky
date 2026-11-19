@@ -6,7 +6,7 @@ import {
   DeviceSettings,
   type AppearanceTheme as Theme,
   type DeviceSettings as Settings,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import { getBuiltinWallpaperThemes } from "./builtin-wallpapers.ts";
 import { importTheme as parseImport } from "./theme-import.ts";

@@ -1,4 +1,4 @@
-import type { ReviewNote } from "@age/contracts";
+import type { ReviewNote } from "@wooky/contracts";
 import { anchorKey } from "./notes.ts";
 
 export const SNIPPET_MAX = 200;

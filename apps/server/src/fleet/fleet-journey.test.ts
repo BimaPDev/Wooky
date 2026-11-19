@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { childrenOf } from "@age/domain";
+import { childrenOf } from "@wooky/domain";
 import { createEffectRunner } from "../effects/runner.ts";
 import { createGitService } from "../git/service.ts";
 import { cleanupTestRepos, makeRepo } from "../git/test-repo.ts";

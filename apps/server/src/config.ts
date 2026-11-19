@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { AGE_DEFAULT_PORT } from "@age/contracts";
+import { AGE_DEFAULT_PORT } from "@wooky/contracts";
 
 export interface ServerConfig {
   home: string;

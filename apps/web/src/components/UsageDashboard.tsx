@@ -4,7 +4,7 @@ import type {
   UsageHistoryResult,
   UsageHistorySource,
   UsageWindowDays,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RpcCallError } from "../rpc/client.ts";
 import { visibleCostSegments } from "../lib/usage-cost-by-type.ts";

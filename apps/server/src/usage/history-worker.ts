@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { isMainThread, parentPort, workerData } from "node:worker_threads";
-import type { Origin, UsageHistoryBucket, UsageWindowDays } from "@age/contracts";
+import type { Origin, UsageHistoryBucket, UsageWindowDays } from "@wooky/contracts";
 import { aggregate, dedupeRecords } from "./aggregate.ts";
 import {
   type CacheData,

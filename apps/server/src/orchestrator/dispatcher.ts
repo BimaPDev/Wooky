@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { Command, type DeviceSettings } from "@age/contracts";
+import { Command, type DeviceSettings } from "@wooky/contracts";
 import type { EffectRunner } from "../effects/runner.ts";
 import { ServiceError } from "../errors.ts";
 import type { DispatchResult, EventStore } from "../store/event-store.ts";

@@ -4,7 +4,7 @@ import {
   type ThemeColorRoles,
   type ThemeFonts,
   type ThemeShape,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ROLE_TO_VAR,

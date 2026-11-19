@@ -1,4 +1,4 @@
-import type { QuestionAnswers, UserQuestion } from "@age/contracts";
+import type { QuestionAnswers, UserQuestion } from "@wooky/contracts";
 
 export type QuestionDraft = Record<string, { selected: string[]; other: string }>;
 

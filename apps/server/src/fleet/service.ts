@@ -7,8 +7,8 @@ import type {
   RpcParams,
   RpcResult,
   ThreadSpawnParams,
-} from "@age/contracts";
-import { childrenOf, fleetRows } from "@age/domain";
+} from "@wooky/contracts";
+import { childrenOf, fleetRows } from "@wooky/domain";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
 import { ServiceError } from "../errors.ts";
 import type { GitService } from "../git/types.ts";

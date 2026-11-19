@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, stat as statFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { UsageHistoryPricing } from "@age/contracts";
+import type { UsageHistoryPricing } from "@wooky/contracts";
 import { z } from "zod";
 import { parseJsonSafely } from "./safe-input.ts";
 

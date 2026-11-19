@@ -1,7 +1,7 @@
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { ProviderEvent, TimelineItem } from "@age/contracts";
+import type { ProviderEvent, TimelineItem } from "@wooky/contracts";
 import type { ProviderAdapter, RewindInput, TurnInput } from "../types.ts";
 
 const DEMO_FILE = "AGE_DEMO.md";

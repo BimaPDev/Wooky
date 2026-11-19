@@ -1,4 +1,4 @@
-import { childrenOf } from "@age/domain";
+import { childrenOf } from "@wooky/domain";
 import { useMemo } from "react";
 import { selectThread } from "../../state/actions.ts";
 import { useStore } from "../../state/store.ts";

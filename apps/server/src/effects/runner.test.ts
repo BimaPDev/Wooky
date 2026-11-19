@@ -12,7 +12,7 @@ import {
   type RuntimeMode,
   type Thread,
   type TurnFailure,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { createNoopGitService } from "../git/noop.ts";
 import type { GitService } from "../git/types.ts";
 import type { DecideContext } from "../orchestrator/decide.ts";
@@ -21,7 +21,7 @@ import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { createProviderRegistry } from "../providers/registry.ts";
 import type { ProviderAdapter, TurnInput } from "../providers/types.ts";
 import { openEventStore, type EventStore } from "../store/event-store.ts";
-import { childrenOf } from "@age/domain";
+import { childrenOf } from "@wooky/domain";
 import { createFakeGit, tempDir, testContext, waitForEvent } from "../testing.ts";
 import { createEffectRunner, type EffectRunner } from "./runner.ts";
 

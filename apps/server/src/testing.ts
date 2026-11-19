@@ -9,7 +9,7 @@ import {
   type AgeEventType,
   type FileDiff,
   type Worktree,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import type { GitService } from "./git/types.ts";
 import type { DecideContext } from "./orchestrator/decide.ts";
 import type { EventStore } from "./store/event-store.ts";

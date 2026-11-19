@@ -13,7 +13,7 @@ import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import type { FileDiff, Worktree } from "@age/contracts";
+import type { FileDiff, Worktree } from "@wooky/contracts";
 import { commitWorktreeChanges as commitWorktreeImpl } from "./commit-worktree.ts";
 import { createMergeOps } from "./merge-ops.ts";
 import type { GitService } from "./types.ts";

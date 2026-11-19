@@ -1,5 +1,5 @@
-import type { AgeEvent, RpcMethod, RpcParams, RpcResult, Thread } from "@age/contracts";
-import { emptyReadModel } from "@age/domain";
+import type { AgeEvent, RpcMethod, RpcParams, RpcResult, Thread } from "@wooky/contracts";
+import { emptyReadModel } from "@wooky/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setBackend } from "./backend.ts";
 import {

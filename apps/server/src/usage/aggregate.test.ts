@@ -1,4 +1,4 @@
-import type { Origin } from "@age/contracts";
+import type { Origin } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { aggregate, dedupeRecords } from "./aggregate.ts";
 import type { HistoryRecord } from "./history-reader.ts";

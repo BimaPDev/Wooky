@@ -4,7 +4,7 @@ import {
   type RpcMethod,
   type RpcParams,
   type RpcResult,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { WebSocket } from "ws";
 
 class RpcClientError extends Error {

@@ -1,6 +1,6 @@
-import type { CommandOf, PendingEvent, ReadModel, Thread, ThreadGroup } from "@age/contracts";
-import { FLEET_LIMITS } from "@age/contracts";
-import { childrenOf, fleetRows, formatReviewPrompt, reviewNotesFor } from "@age/domain";
+import type { CommandOf, PendingEvent, ReadModel, Thread, ThreadGroup } from "@wooky/contracts";
+import { FLEET_LIMITS } from "@wooky/contracts";
+import { childrenOf, fleetRows, formatReviewPrompt, reviewNotesFor } from "@wooky/domain";
 import { checkpointRef, type Effect } from "./effects.ts";
 import type { DecideContext } from "./decide.ts";
 

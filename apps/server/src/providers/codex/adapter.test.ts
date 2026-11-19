@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type ApprovalRequest, ProviderEvent, ProviderStatus } from "@age/contracts";
+import { type ApprovalRequest, ProviderEvent, ProviderStatus } from "@wooky/contracts";
 import type { TurnInput } from "../types.ts";
 import { createCodexAdapter } from "./adapter.ts";
 

@@ -10,7 +10,7 @@ import {
   type RpcResult,
   type TerminalPush,
   type ThemesPush,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "offline";
 

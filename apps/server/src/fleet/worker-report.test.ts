@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyReadModel } from "@age/domain";
+import { emptyReadModel } from "@wooky/domain";
 import { shouldReportWorker, turnSummary } from "./worker-report.ts";
 
 describe("worker report rules", () => {

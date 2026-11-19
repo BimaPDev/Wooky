@@ -9,8 +9,8 @@ import {
   type ReadModel,
   type Usage,
   type Worktree,
-} from "@age/contracts";
-import { activeTurn, handoffTranscript, latestPlan } from "@age/domain";
+} from "@wooky/contracts";
+import { activeTurn, handoffTranscript, latestPlan } from "@wooky/domain";
 import {
   buildWorkerReportEvents,
   coordinatorFollowUpPrompt,

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ProviderEvent, ProviderSettings, ProviderStatus } from "@age/contracts";
+import type { ProviderEvent, ProviderSettings, ProviderStatus } from "@wooky/contracts";
 import { z } from "zod";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { fleetChildEnv, prefixSessionPrompt } from "../agent-env.ts";

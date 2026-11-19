@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { Project } from "@age/contracts";
+import type { Project } from "@wooky/contracts";
 import { ServiceError } from "./errors.ts";
 import { initRepo } from "./git/init-repo.ts";
 import type { Dispatcher } from "./orchestrator/dispatcher.ts";

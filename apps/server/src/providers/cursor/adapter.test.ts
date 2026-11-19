@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ProviderEvent } from "@age/contracts";
+import type { ProviderEvent } from "@wooky/contracts";
 import { createCursorAdapter, CURSOR_FAKE_AGENT_SCRIPT } from "./adapter.ts";
 // @ts-expect-error test fixture is plain ESM without types
 import { FAKE_CURSOR_AGENT_VERSION } from "./fixtures/fake-cursor-agent.mjs";

@@ -5,7 +5,7 @@ import type {
   UsageCostByType,
   UsageHistoryBucket,
   UsageHistorySource,
-} from "@age/contracts";
+} from "@wooky/contracts";
 
 export type UsageSeriesId = Origin | "demo";
 

@@ -1,4 +1,4 @@
-import type { ProviderKind, ProviderStatus } from "@age/contracts";
+import type { ProviderKind, ProviderStatus } from "@wooky/contracts";
 import { checkBinaryPath, withCustomModels, type ProviderSettingsSource } from "./settings.ts";
 import type { ProviderAdapter } from "./types.ts";
 

@@ -3,7 +3,7 @@
 # and process list say "Wooky" instead of "Electron". The bundle is NOT redistributable:
 # its Resources/app stub imports apps/desktop/dist/main.js from this checkout, which then
 # spawns the server from apps/server/src and serves apps/web/dist, exactly like
-# `pnpm --filter @age/desktop start`.
+# `pnpm --filter @wooky/desktop start`.
 #
 # Usage: apps/desktop/scripts/make-local-app.sh [output-dir]   (default: apps/desktop/out)
 # Env:   WOOKY_AGE_HOME  AGE_HOME baked into the bundle (default: <repo>/.age-dev)
@@ -19,8 +19,8 @@ name="Wooky"
 electron_bin="$(cd "$desktop_dir" && node -p 'require("electron")')"
 electron_app="${electron_bin%/Contents/MacOS/Electron}"
 [ -d "$electron_app" ] || { echo "Electron.app not found at $electron_app" >&2; exit 1; }
-[ -f "$desktop_dir/dist/main.js" ] || { echo "Run: pnpm --filter @age/desktop build" >&2; exit 1; }
-[ -f "$repo_root/apps/web/dist/index.html" ] || { echo "Run: pnpm --filter @age/web build" >&2; exit 1; }
+[ -f "$desktop_dir/dist/main.js" ] || { echo "Run: pnpm --filter @wooky/desktop build" >&2; exit 1; }
+[ -f "$repo_root/apps/web/dist/index.html" ] || { echo "Run: pnpm --filter @wooky/web build" >&2; exit 1; }
 
 app="$out_dir/$name.app"
 pb=/usr/libexec/PlistBuddy

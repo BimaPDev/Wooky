@@ -1,4 +1,4 @@
-import type { WorkspaceEntry } from "@age/contracts";
+import type { WorkspaceEntry } from "@wooky/contracts";
 import { useEffect, useRef, useState } from "react";
 import { RpcCallError } from "../rpc/client.ts";
 import { mentionMenuFooter } from "../lib/composer-mention-menu.ts";

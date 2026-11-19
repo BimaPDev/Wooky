@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProviderEvent } from "@age/contracts";
+import { ProviderEvent } from "@wooky/contracts";
 import { coordinatorInstructions, setAgentRuntime, workerNote } from "../agent-env.ts";
 import type { TurnInput } from "../types.ts";
 import { createCodexAdapter } from "./adapter.ts";

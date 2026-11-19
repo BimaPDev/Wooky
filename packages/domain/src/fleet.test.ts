@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgeEvent, FleetRow, type Thread } from "@age/contracts";
+import { AgeEvent, FleetRow, type Thread } from "@wooky/contracts";
 import { applyEvents, emptyReadModel } from "./project.ts";
 import {
   childrenOf,

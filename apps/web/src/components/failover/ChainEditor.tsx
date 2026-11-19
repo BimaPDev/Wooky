@@ -1,5 +1,5 @@
-import type { ModelTarget, ProviderCooldown, ProviderKind, ProviderStatus } from "@age/contracts";
-import { DEFAULT_MODEL_RANKING } from "@age/domain";
+import type { ModelTarget, ProviderCooldown, ProviderKind, ProviderStatus } from "@wooky/contracts";
+import { DEFAULT_MODEL_RANKING } from "@wooky/domain";
 import { useState } from "react";
 import { IconClose, IconPlus } from "../Icons.tsx";
 import {

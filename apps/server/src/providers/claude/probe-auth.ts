@@ -1,4 +1,4 @@
-import type { EffortLevel } from "@age/contracts";
+import type { EffortLevel } from "@wooky/contracts";
 import type {
   AccountInfo,
   ModelInfo,

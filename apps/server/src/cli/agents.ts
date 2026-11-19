@@ -8,7 +8,7 @@ import {
   type RpcMethod,
   type RpcParams,
   type RpcResult,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { fleetGuide, formatAgents, usableAgents } from "../fleet/guide.ts";
 import { discoverServerUrl } from "../presence.ts";
 import { rpcCall } from "./rpc-client.ts";

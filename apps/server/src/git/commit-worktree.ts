@@ -1,4 +1,4 @@
-import type { Worktree } from "@age/contracts";
+import type { Worktree } from "@wooky/contracts";
 
 type Run = (
   args: string[],

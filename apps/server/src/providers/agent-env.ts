@@ -1,5 +1,5 @@
 import { delimiter, dirname } from "node:path";
-import type { ThreadRole } from "@age/contracts";
+import type { ThreadRole } from "@wooky/contracts";
 
 interface AgentRuntime {
   serverUrl: string;

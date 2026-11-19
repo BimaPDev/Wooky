@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { TerminalPush } from "@age/contracts";
+import type { TerminalPush } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import { defaultCwd, resolveShellCommand, type ShellCommand } from "./shell.ts";
 

@@ -1,5 +1,5 @@
-import type { TimelineItem } from "@age/contracts";
-import { latestPlan } from "@age/domain";
+import type { TimelineItem } from "@wooky/contracts";
+import { latestPlan } from "@wooky/domain";
 import { memo, useState } from "react";
 import { configureThread, startTurn } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";

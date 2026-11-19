@@ -42,15 +42,15 @@ importers:
 
   apps/server:
     dependencies:
-      '@age/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@age/domain':
-        specifier: workspace:*
-        version: link:../../packages/domain
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.326
         version: 0.3.326(@anthropic-ai/sdk@1.9.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)
+      '@wooky/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@wooky/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
@@ -67,10 +67,10 @@ importers:
 
   apps/web:
     dependencies:
-      '@age/contracts':
+      '@wooky/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@age/domain':
+      '@wooky/domain':
         specifier: workspace:*
         version: link:../../packages/domain
       react:
@@ -104,7 +104,7 @@ importers:
 
   packages/domain:
     dependencies:
-      '@age/contracts':
+      '@wooky/contracts':
         specifier: workspace:*
         version: link:../contracts
 

@@ -7,7 +7,7 @@ import type {
   ProviderKind,
   ProviderStatus,
   RuntimeMode,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { isAvailable } from "../components/labels.ts";
 import { defaultModelFor } from "../components/providers/helpers.ts";
 import { defaultEffortFor, modelHasFlag } from "./composer-model.ts";

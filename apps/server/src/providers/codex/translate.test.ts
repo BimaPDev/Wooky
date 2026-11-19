@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProviderEvent } from "@age/contracts";
+import { ProviderEvent } from "@wooky/contracts";
 import { createCodexTranslator } from "./translate.ts";
 
 describe("createCodexTranslator", () => {
@@ -102,7 +102,7 @@ describe("createCodexTranslator", () => {
 
   it("maps commandExecution with title <= 120 chars, output <= 4 KB, and failed on non-zero exit", () => {
     const t = createCodexTranslator();
-    const longCommand = `pnpm --filter @age/server vitest run ${"very-long-argument-segment-".repeat(8)}`;
+    const longCommand = `pnpm --filter @wooky/server vitest run ${"very-long-argument-segment-".repeat(8)}`;
     const hugeOutput = `${"line-of-command-output-0123456789\n".repeat(200)}tail-marker`;
 
     const started = t.translateNotification("item/started", {

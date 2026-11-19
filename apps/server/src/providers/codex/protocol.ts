@@ -25,7 +25,7 @@
  *   on a short-lived app-server session to learn sign-in status.
  */
 import { z } from "zod";
-import type { RuntimeMode } from "@age/contracts";
+import type { RuntimeMode } from "@wooky/contracts";
 
 export const JsonRpcId = z.union([z.number().int(), z.string()]);
 export type JsonRpcId = z.infer<typeof JsonRpcId>;

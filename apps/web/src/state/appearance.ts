@@ -1,4 +1,9 @@
-import type { AppearanceTheme, DeviceSettings, ThemeColorRoles, ThemesPush } from "@age/contracts";
+import type {
+  AppearanceTheme,
+  DeviceSettings,
+  ThemeColorRoles,
+  ThemesPush,
+} from "@wooky/contracts";
 import { backend } from "./backend.ts";
 import { LruCache } from "./lru.ts";
 import { useStore } from "./store.ts";

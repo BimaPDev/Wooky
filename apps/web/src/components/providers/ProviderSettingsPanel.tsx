@@ -1,4 +1,4 @@
-import type { ProviderKind, ProviderSettings, ProviderStatus } from "@age/contracts";
+import type { ProviderKind, ProviderSettings, ProviderStatus } from "@wooky/contracts";
 import { useId, useState } from "react";
 import { IconClose } from "../Icons.tsx";
 import { EnvEditor, ListEditor } from "./Editors.tsx";

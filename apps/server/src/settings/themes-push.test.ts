@@ -2,7 +2,7 @@ import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { AGE_WS_PATH, RpcPush, ThemesPush } from "@age/contracts";
+import { AGE_WS_PATH, RpcPush, ThemesPush } from "@wooky/contracts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer } from "../server.ts";
 import { tempDir } from "../testing.ts";

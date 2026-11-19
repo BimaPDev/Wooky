@@ -1,4 +1,4 @@
-import type { FleetRow } from "@age/contracts";
+import type { FleetRow } from "@wooky/contracts";
 import { memo, useState } from "react";
 import { Counts } from "../DiffView.tsx";
 import { IconSearch } from "../Icons.tsx";

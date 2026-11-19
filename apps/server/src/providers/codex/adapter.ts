@@ -5,7 +5,7 @@ import type {
   ProviderEvent,
   ProviderSettings,
   ProviderStatus,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { fleetChildEnv, prefixSessionPrompt } from "../agent-env.ts";
 import { resolveLaunch, withUserEnv } from "../settings.ts";

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ProviderEvent, TimelineItem } from "@age/contracts";
+import type { ProviderEvent, TimelineItem } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { CursorTranslator } from "./translate.ts";
 

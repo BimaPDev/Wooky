@@ -18,8 +18,8 @@ import {
   type UsageHistoryBucket,
   type UsageHistoryResult,
   type UsageWindowDays,
-} from "@age/contracts";
-import { fleetRows } from "@age/domain";
+} from "@wooky/contracts";
+import { fleetRows } from "@wooky/domain";
 import { receiveEvent, useStore } from "../state/store.ts";
 import {
   looksLikeSvg,

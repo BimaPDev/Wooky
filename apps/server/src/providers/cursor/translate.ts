@@ -1,4 +1,4 @@
-import type { ProviderEvent, ToolKind, TurnFailure, Usage } from "@age/contracts";
+import type { ProviderEvent, ToolKind, TurnFailure, Usage } from "@wooky/contracts";
 import { asDoneFailure } from "../failure.ts";
 import { workspaceRelative } from "../paths.ts";
 import { classifyCursorFailure } from "./classify.ts";

@@ -5,7 +5,7 @@ import type {
   ThemeColorRoles,
   ThemeImportFormat,
   ThemeVariant,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { BASE_PALETTES } from "../../state/theme-data.ts";
 
 export const MAX_THEME_FILE_BYTES = 6 * 1024 * 1024;

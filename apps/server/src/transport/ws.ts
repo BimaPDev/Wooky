@@ -11,7 +11,7 @@ import {
   type RpcResult,
   type ServerMessage,
   type ThemesPush,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
 import type { AttachmentStore } from "../attachments.ts";

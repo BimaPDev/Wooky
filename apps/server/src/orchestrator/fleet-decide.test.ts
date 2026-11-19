@@ -5,8 +5,8 @@ import {
   type PendingEvent,
   type ReadModel,
   type Thread,
-} from "@age/contracts";
-import { applyEvents, emptyReadModel, fleetRows } from "@age/domain";
+} from "@wooky/contracts";
+import { applyEvents, emptyReadModel, fleetRows } from "@wooky/domain";
 import { testContext } from "../testing.ts";
 import { decide } from "./decide.ts";
 

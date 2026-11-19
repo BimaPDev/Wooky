@@ -1,4 +1,4 @@
-import type { AppearanceThemeSummary } from "@age/contracts";
+import type { AppearanceThemeSummary } from "@wooky/contracts";
 import {
   memo,
   useCallback,

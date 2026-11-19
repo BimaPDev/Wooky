@@ -45,7 +45,7 @@ return the thread to `failover.original`.
 ## User chain
 
 `failover.chain` is an ordered list of up to 12 `ModelTarget` values. An empty chain
-means use `DEFAULT_MODEL_RANKING` in `@age/domain`.
+means use `DEFAULT_MODEL_RANKING` in `@wooky/domain`.
 
 ## Adapter classification (later stations)
 

@@ -1,6 +1,6 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { ProviderKind, ProviderSettings, ProviderStatus } from "@age/contracts";
+import type { ProviderKind, ProviderSettings, ProviderStatus } from "@wooky/contracts";
 
 /** Reads the user's settings for one provider at the moment it is needed. */
 export type ProviderSettingsSource = (kind: ProviderKind) => ProviderSettings | undefined;

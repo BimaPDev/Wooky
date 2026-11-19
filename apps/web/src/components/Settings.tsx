@@ -4,7 +4,7 @@ import {
   type ProviderKind,
   type ProviderSettings,
   type ProviderStatus,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { loadDeviceSettings, patchDeviceSettings } from "../state/appearance.ts";
 import {

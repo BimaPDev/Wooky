@@ -4,7 +4,7 @@ import type {
   ModelTarget,
   ProviderKind,
   ProviderStatus,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { isAvailable } from "../components/labels.ts";
 import { pickerModels } from "../components/providers/helpers.ts";
 

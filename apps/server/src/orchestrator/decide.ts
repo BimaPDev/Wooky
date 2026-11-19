@@ -12,7 +12,7 @@ import type {
   ReadModel,
   Thread,
   UserQuestion,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import {
   activeTurn,
   pendingApprovals,
@@ -20,7 +20,7 @@ import {
   resumePoint,
   shouldSwitchBack,
   threadsSharingWorkspace,
-} from "@age/domain";
+} from "@wooky/domain";
 import { cooledDownIfNeeded, expiredCooldownClears } from "../failover/cooldown.ts";
 import {
   decideFanoutPick,

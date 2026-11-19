@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ProviderEvent, ProviderSettings } from "@age/contracts";
+import type { ProviderEvent, ProviderSettings } from "@wooky/contracts";
 import type { Options, query } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClaudeAdapter } from "./claude/adapter.ts";

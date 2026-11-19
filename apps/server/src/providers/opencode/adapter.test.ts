@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DeviceSettings, type ProviderEvent } from "@age/contracts";
+import { DeviceSettings, type ProviderEvent } from "@wooky/contracts";
 import { ACP_FAKE_AGENT_SCRIPT } from "../acp/adapter.ts";
 import type { TurnInput } from "../types.ts";
 import { createOpenCodeAdapter, resetOpenCodeModelsCache } from "./adapter.ts";

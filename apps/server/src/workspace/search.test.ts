@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { emptyReadModel } from "@age/domain";
-import type { ReadModel } from "@age/contracts";
+import { emptyReadModel } from "@wooky/domain";
+import type { ReadModel } from "@wooky/contracts";
 import { createWorkspaceSearch } from "./search.ts";
 
 function modelFor(cwd: string): Pick<ReadModel, "threads" | "projects"> {

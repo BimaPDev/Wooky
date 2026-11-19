@@ -2,7 +2,7 @@ import {
   type AppearanceTheme as Theme,
   type AppearanceThemeSummary,
   type DeviceSettings as DeviceSettingsValue,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import {
   useCallback,
   useEffect,

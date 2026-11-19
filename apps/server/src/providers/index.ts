@@ -1,5 +1,5 @@
 import type { SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
-import type { DeviceSettings } from "@age/contracts";
+import type { DeviceSettings } from "@wooky/contracts";
 import { createAcpAdapter } from "./acp/adapter.ts";
 import { createClaudeAdapter } from "./claude/adapter.ts";
 import { createCodexAdapter } from "./codex/adapter.ts";

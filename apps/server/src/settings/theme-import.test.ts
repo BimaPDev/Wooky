@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { AppearanceTheme } from "@age/contracts";
+import { AppearanceTheme } from "@wooky/contracts";
 import { importTheme, MAX_THEME_IMPORT_TEXT } from "./theme-import.ts";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");

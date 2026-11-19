@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { ATTACHMENT_MAX_BYTES, type Attachment } from "@age/contracts";
+import { ATTACHMENT_MAX_BYTES, type Attachment } from "@wooky/contracts";
 import { ServiceError } from "./errors.ts";
 
 export interface AttachmentStore {

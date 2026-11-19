@@ -1,4 +1,4 @@
-import type { Origin, UsageHistorySource } from "@age/contracts";
+import type { Origin, UsageHistorySource } from "@wooky/contracts";
 
 /**
  * One local history row. `inputTokens` is uncached input only.

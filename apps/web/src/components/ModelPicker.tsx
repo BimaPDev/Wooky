@@ -4,7 +4,7 @@ import type {
   ProviderKind,
   RuntimeMode,
   Thread,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { chipModelName, effortLabel, shownEffort } from "../lib/composer-model.ts";
 import { useStore } from "../state/store.ts";
 import { IconAlert, IconCheckSmall } from "./Icons.tsx";

@@ -6,8 +6,8 @@ import type {
   ProviderStatus,
   ReadModel,
   RuntimeMode,
-} from "@age/contracts";
-import { applyEvent, emptyReadModel } from "@age/domain";
+} from "@wooky/contracts";
+import { applyEvent, emptyReadModel } from "@wooky/domain";
 import { create } from "zustand";
 import type { ConnectionStatus } from "../rpc/client.ts";
 import { pruneNavStack, type NavStack, type NavTarget } from "../lib/nav-history.ts";

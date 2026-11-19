@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DeviceSettings, type ApprovalRequest, type ProviderEvent } from "@age/contracts";
+import { DeviceSettings, type ApprovalRequest, type ProviderEvent } from "@wooky/contracts";
 import { setAgentRuntime } from "../agent-env.ts";
 import { builtinAdapters } from "../index.ts";
 import { createProviderRegistry } from "../registry.ts";

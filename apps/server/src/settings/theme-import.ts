@@ -5,7 +5,7 @@ import {
   type ThemeColorRoles,
   type ThemeImportFormat,
   type ThemeVariant,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { assertSafeSvg, toDataUrl } from "./wallpapers/scenes.ts";
 import { validateThemeContent } from "./theme-validate.ts";
 

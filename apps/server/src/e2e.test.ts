@@ -19,7 +19,7 @@ import {
   type ProviderEvent,
   type ReadModel,
   type TurnFailure,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { createDemoAdapter } from "./providers/demo/adapter.ts";
 import type { ProviderAdapter, TurnInput } from "./providers/types.ts";
 import { startServer, type RunningServer } from "./server.ts";

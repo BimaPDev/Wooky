@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { LimitWindow, ProviderLimits } from "@age/contracts";
+import type { LimitWindow, ProviderLimits } from "@wooky/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { JsonRpcClient } from "./jsonrpc.ts";
 import { InitializeResponseSchema } from "./protocol.ts";

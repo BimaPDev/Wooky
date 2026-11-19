@@ -1,4 +1,4 @@
-import type { ProviderEvent, TimelineItem, TurnFailure, Usage } from "@age/contracts";
+import type { ProviderEvent, TimelineItem, TurnFailure, Usage } from "@wooky/contracts";
 import type {
   SDKAssistantMessage,
   SDKPartialAssistantMessage,

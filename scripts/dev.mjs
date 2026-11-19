@@ -115,7 +115,7 @@ function freePort() {
 }
 
 function startWeb(port) {
-  start("web", ["--filter", "@age/web", "dev"], { ...process.env, AGE_PORT: String(port) });
+  start("web", ["--filter", "@wooky/web", "dev"], { ...process.env, AGE_PORT: String(port) });
 }
 
 async function main() {
@@ -139,7 +139,7 @@ async function main() {
   );
   start(
     "server",
-    ["--filter", "@age/server", "dev", "--port", String(port), "--home", devHome],
+    ["--filter", "@wooky/server", "dev", "--port", String(port), "--home", devHome],
     { ...process.env, AGE_HOME: devHome, AGE_PORT: String(port) },
     (line) => {
       const match = /^AGE_LISTENING (\S+)/.exec(line);

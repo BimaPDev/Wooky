@@ -1,4 +1,4 @@
-import type { AgeEvent, ProviderStatus } from "@age/contracts";
+import type { AgeEvent, ProviderStatus } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import {
   createdThreadId,

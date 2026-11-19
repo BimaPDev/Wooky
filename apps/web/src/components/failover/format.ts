@@ -6,7 +6,7 @@ import type {
   TurnFailure,
   TurnFailureKind,
   TurnOrigin,
-} from "@age/contracts";
+} from "@wooky/contracts";
 import { isAvailable, modelLabel } from "../labels.ts";
 
 export const providerName: Record<ProviderKind, string> = {

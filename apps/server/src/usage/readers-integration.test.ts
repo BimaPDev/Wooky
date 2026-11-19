@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHistoryService, createWorkerHost } from "./history.ts";
 import type { PricingService } from "./pricing.ts";
-import type { Origin } from "@age/contracts";
+import type { Origin } from "@wooky/contracts";
 
 const NOW = Date.UTC(2026, 10, 18, 12, 0, 0);
 const HOUR = 3_600_000;

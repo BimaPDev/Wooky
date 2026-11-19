@@ -1,5 +1,5 @@
-import { PICK_FOLDER_TIMEOUT_MS, type AgeEvent, type ReadModel } from "@age/contracts";
-import { applyEvent, emptyReadModel } from "@age/domain";
+import { PICK_FOLDER_TIMEOUT_MS, type AgeEvent, type ReadModel } from "@wooky/contracts";
+import { applyEvent, emptyReadModel } from "@wooky/domain";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRpcClient, RpcCallError, type SocketHandlers, type SocketLike } from "./client.ts";
 

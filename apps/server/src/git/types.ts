@@ -1,4 +1,4 @@
-import type { DiffStat, FileDiff, MergePreview, MergeStrategy, Worktree } from "@age/contracts";
+import type { DiffStat, FileDiff, MergePreview, MergeStrategy, Worktree } from "@wooky/contracts";
 
 /**
  * Git seam. Checkpoints are commits stored under hidden refs

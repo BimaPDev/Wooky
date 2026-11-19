@@ -1,4 +1,4 @@
-import type { ReadModel, Thread } from "@age/contracts";
+import type { ReadModel, Thread } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import type { AgentTokenService } from "./agent-token.ts";
 

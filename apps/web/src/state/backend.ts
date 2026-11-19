@@ -1,4 +1,4 @@
-import type { RpcMethod, RpcParams, RpcResult } from "@age/contracts";
+import type { RpcMethod, RpcParams, RpcResult } from "@wooky/contracts";
 
 /** Everything the UI may ask of the server. Real socket or fixture, same shape. */
 export interface Backend {

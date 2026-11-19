@@ -1,4 +1,4 @@
-import { FLEET_LIMITS } from "@age/contracts";
+import { FLEET_LIMITS } from "@wooky/contracts";
 import { useRef, useState } from "react";
 import { sendReviewNotes } from "../../state/actions.ts";
 import { useStore } from "../../state/store.ts";

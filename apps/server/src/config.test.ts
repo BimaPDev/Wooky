@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AGE_DEFAULT_PORT } from "@age/contracts";
+import { AGE_DEFAULT_PORT } from "@wooky/contracts";
 import { resolveConfig } from "./config.ts";
 
 describe("resolveConfig", () => {

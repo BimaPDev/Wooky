@@ -6,7 +6,7 @@ import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServiceError } from "../errors.ts";
-import { PICK_FOLDER_TIMEOUT_MS } from "@age/contracts";
+import { PICK_FOLDER_TIMEOUT_MS } from "@wooky/contracts";
 import { createFolderPicker, type PickerSpawn } from "./folder-picker.ts";
 
 function fakeChild(pid = 41) {

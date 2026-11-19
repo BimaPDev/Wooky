@@ -1,7 +1,7 @@
 import { open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { DiffStat, MergePreview, MergeStrategy, Worktree } from "@age/contracts";
+import type { DiffStat, MergePreview, MergeStrategy, Worktree } from "@wooky/contracts";
 import type { MergeWorktreeResult } from "./types.ts";
 
 type Run = (

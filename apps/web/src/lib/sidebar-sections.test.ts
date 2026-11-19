@@ -1,4 +1,4 @@
-import type { Thread } from "@age/contracts";
+import type { Thread } from "@wooky/contracts";
 import { describe, expect, it } from "vitest";
 import { isSettledStatus, isWorkingStatus, partitionSidebarThreads } from "./sidebar-sections.ts";
 

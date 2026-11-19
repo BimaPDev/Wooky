@@ -1,4 +1,4 @@
-import type { ProviderKind } from "@age/contracts";
+import type { ProviderKind } from "@wooky/contracts";
 import type { ReactNode } from "react";
 
 const GLYPHS: Record<ProviderKind, ReactNode> = {

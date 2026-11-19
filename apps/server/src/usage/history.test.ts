@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Origin, UsageHistoryResult } from "@age/contracts";
+import { type Origin, UsageHistoryResult } from "@wooky/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CACHE_FILE_NAME } from "./history-cache.ts";
 import type { HistoryFs, HistoryReader, HistoryRecord } from "./history-reader.ts";

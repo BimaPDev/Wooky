@@ -1,5 +1,5 @@
-import type { ModelTarget, ReadModel, Turn, TurnFailure } from "@age/contracts";
-import { DEFAULT_MODEL_RANKING, emptyReadModel, pickFallback } from "@age/domain";
+import type { ModelTarget, ReadModel, Turn, TurnFailure } from "@wooky/contracts";
+import { DEFAULT_MODEL_RANKING, emptyReadModel, pickFallback } from "@wooky/domain";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { failoverThread } from "../../state/actions.ts";
 import { useStore } from "../../state/store.ts";

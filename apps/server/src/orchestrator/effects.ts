@@ -1,4 +1,4 @@
-import type { MergeStrategy, QuestionAnswers, Worktree } from "@age/contracts";
+import type { MergeStrategy, QuestionAnswers, Worktree } from "@wooky/contracts";
 
 /** Work the orchestrator asks for. Stored with the events that caused it, run by the effect runner. */
 export type Effect =

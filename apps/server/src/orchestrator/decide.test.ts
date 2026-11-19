@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgeEvent, Command, PendingEvent, ReadModel, Thread } from "@age/contracts";
-import { applyEvents, emptyReadModel } from "@age/domain";
+import type { AgeEvent, Command, PendingEvent, ReadModel, Thread } from "@wooky/contracts";
+import { applyEvents, emptyReadModel } from "@wooky/domain";
 import { testContext } from "../testing.ts";
 import { decide, type Decision } from "./decide.ts";
 

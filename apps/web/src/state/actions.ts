@@ -11,8 +11,8 @@ import type {
   QuestionAnswers,
   RuntimeMode,
   TurnFailure,
-} from "@age/contracts";
-import { threadsSharingWorkspace } from "@age/domain";
+} from "@wooky/contracts";
+import { threadsSharingWorkspace } from "@wooky/domain";
 import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
 import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";

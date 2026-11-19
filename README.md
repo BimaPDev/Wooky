@@ -13,19 +13,19 @@ no model or account of its own. See `AGENTS.md` for the rules and `docs/architec
 
 ```sh
 pnpm install
-pnpm --filter @age/web build
-pnpm --filter @age/server start -- --port 4317 --web-dist apps/web/dist
+pnpm --filter @wooky/web build
+pnpm --filter @wooky/server start -- --port 4317 --web-dist apps/web/dist
 # open http://127.0.0.1:4317
 ```
 
 Desktop window (after the server is running):
 
 ```sh
-pnpm --filter @age/desktop build
+pnpm --filter @wooky/desktop build
 # macOS / Linux
-AGE_DESKTOP_URL=http://127.0.0.1:4317 pnpm --filter @age/desktop start
+AGE_DESKTOP_URL=http://127.0.0.1:4317 pnpm --filter @wooky/desktop start
 # Windows PowerShell
-$env:AGE_DESKTOP_URL="http://127.0.0.1:4317"; pnpm --filter @age/desktop start
+$env:AGE_DESKTOP_URL="http://127.0.0.1:4317"; pnpm --filter @wooky/desktop start
 ```
 
 `pnpm dev` (server + hot-reload web UI) uses POSIX process groups and is macOS/Linux only for now.

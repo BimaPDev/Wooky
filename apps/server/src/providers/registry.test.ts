@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderStatus } from "@age/contracts";
+import type { ProviderStatus } from "@wooky/contracts";
 import { createProviderRegistry } from "./registry.ts";
 import type { ProviderAdapter } from "./types.ts";
 

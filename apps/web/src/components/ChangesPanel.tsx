@@ -1,5 +1,5 @@
-import type { FileDiff, ReviewNote } from "@age/contracts";
-import { reviewNotesFor } from "@age/domain";
+import type { FileDiff, ReviewNote } from "@wooky/contracts";
+import { reviewNotesFor } from "@wooky/domain";
 import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { closeChanges, loadDiff, openChanges } from "../state/actions.ts";

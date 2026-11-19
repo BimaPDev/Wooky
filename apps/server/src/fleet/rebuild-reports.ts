@@ -1,4 +1,4 @@
-import type { PendingEvent } from "@age/contracts";
+import type { PendingEvent } from "@wooky/contracts";
 import type { GitService } from "../git/types.ts";
 import type { EventStore } from "../store/event-store.ts";
 import {

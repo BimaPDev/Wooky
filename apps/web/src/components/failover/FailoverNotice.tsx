@@ -1,4 +1,4 @@
-import type { TurnOrigin } from "@age/contracts";
+import type { TurnOrigin } from "@wooky/contracts";
 import { useState } from "react";
 import { useStore } from "../../state/store.ts";
 import { noticeText } from "./format.ts";

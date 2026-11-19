@@ -1,5 +1,5 @@
-import type { AgeEvent, FleetRow, ReadModel, Thread, ThreadGroup, Turn } from "@age/contracts";
-import { emptyReadModel } from "@age/domain";
+import type { AgeEvent, FleetRow, ReadModel, Thread, ThreadGroup, Turn } from "@wooky/contracts";
+import { emptyReadModel } from "@wooky/domain";
 import { describe, expect, it } from "vitest";
 import {
   BOARD_STATUS_LABEL,

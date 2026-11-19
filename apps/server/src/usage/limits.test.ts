@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderLimits } from "@age/contracts";
+import type { ProviderLimits } from "@wooky/contracts";
 import { createLimitsService } from "./limits.ts";
 
 function row(

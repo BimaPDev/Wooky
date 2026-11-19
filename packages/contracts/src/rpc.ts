@@ -227,7 +227,7 @@ export const RpcMethods = {
   },
   /**
    * Every thread the server knows, for the fleet board and `age agents list`.
-   * The same rows are `fleetRows` in `@age/domain`; the RPC exists for the CLI.
+   * The same rows are `fleetRows` in `@wooky/domain`; the RPC exists for the CLI.
    */
   "fleet.overview": {
     params: z.object({}),
