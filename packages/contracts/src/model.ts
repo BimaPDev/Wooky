@@ -17,6 +17,10 @@ export type RuntimeMode = z.infer<typeof RuntimeMode>;
 export const InteractionMode = z.enum(["default", "plan"]);
 export type InteractionMode = z.infer<typeof InteractionMode>;
 
+/** How hard the agent thinks. Only providers that report `efforts` for a model honour it. */
+export const EffortLevel = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type EffortLevel = z.infer<typeof EffortLevel>;
+
 export const Id = z.string().min(1).max(128);
 export const IsoTime = z.string();
 
@@ -134,6 +138,8 @@ export const Project = z.object({
   name: z.string(),
   root: z.string(),
   createdAt: IsoTime,
+  /** The hidden folder behind "No project". The UI shows it as "No project" and lists no row for it. */
+  scratch: z.boolean().optional(),
 });
 export type Project = z.infer<typeof Project>;
 
@@ -168,6 +174,8 @@ export const Thread = z.object({
   providerSessionId: z.string().nullable(),
   /** Absent means "default". */
   interactionMode: InteractionMode.optional(),
+  /** Absent means the model's own default. */
+  effort: EffortLevel.optional(),
   /** Follow-ups waiting for the running turn, oldest first. */
   queue: z.array(QueuedPrompt).default([]),
   /** Absent on logs written before fleet. Treat as solo. */
@@ -351,6 +359,10 @@ export const ProviderStatus = z.object({
       label: z.string(),
       /** Overrides the provider-level `modelsSource` for this id. */
       modelsSource: ModelsSource.optional(),
+      /** Canonical id an alias such as "default" or "opus" resolves to, when the provider says. */
+      resolvedModel: z.string().optional(),
+      /** Effort levels this model accepts. Absent: the model has no effort setting. */
+      efforts: z.array(EffortLevel).optional(),
     }),
   ),
   /**

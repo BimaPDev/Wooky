@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -274,6 +275,28 @@ describe("transport", () => {
     expect(await client.call("fs.pickable", { query: "NOT" })).toMatchObject({
       result: [{ path: join(userHome, "notes") }],
     });
+  });
+
+  it("creates the scratch project once, as a git folder under the state directory", async () => {
+    const { server, home } = await boot();
+    const client = await connect(server);
+    const [first, second] = await Promise.all([
+      client.call("projects.scratch"),
+      client.call("projects.scratch"),
+    ]);
+    expect(first).toMatchObject({ ok: true, result: { projectId: expect.any(String) } });
+    expect(second).toEqual({ ...first, id: second.id });
+    expect(await client.call("projects.scratch")).toMatchObject({
+      result: (first as { result: unknown }).result,
+    });
+    const snapshot = await client.call("snapshot");
+    const projects = Object.values(
+      (snapshot as { result: { projects: Record<string, { root: string; scratch?: boolean }> } })
+        .result.projects,
+    );
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toMatchObject({ root: join(home, "scratch"), scratch: true });
+    expect(existsSync(join(home, "scratch", ".git"))).toBe(true);
   });
 
   it("rejects WebSocket upgrades from foreign origins", async () => {

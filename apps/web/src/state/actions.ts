@@ -1,5 +1,6 @@
 import type {
   Command,
+  EffortLevel,
   FileDiff,
   InteractionMode,
   MergePreview,
@@ -15,6 +16,14 @@ import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
 import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";
 import { saveTerminalOpen } from "../lib/shell.ts";
+import {
+  createdThreadId,
+  defaultDraftProject,
+  draftCommands,
+  resolveDraft,
+  saveDraftPrefs,
+  type NewThreadDraft,
+} from "../lib/new-thread.ts";
 import {
   fanoutTargetError,
   groupIdFromCreatedEvent,
@@ -99,6 +108,7 @@ function applyNavTarget(target: ReturnType<typeof currentNavFromState>) {
   useStore.setState((state) => ({
     navSilent: true,
     selectedThreadId: target.threadId,
+    newThread: target.threadId ? null : state.newThread,
     settingsOpen: false,
     fleetBoardOpen: false,
     compareGroupId: null,
@@ -112,6 +122,7 @@ export const selectThread = (threadId: string | null) => {
   recordNav(next);
   useStore.setState((state) => ({
     selectedThreadId: threadId,
+    newThread: threadId ? null : state.newThread,
     settingsOpen: false,
     fleetBoardOpen: false,
     compareGroupId: null,
@@ -271,6 +282,144 @@ export async function createThread(input: {
   if (created) selectThread(created.id);
 }
 
+// ── The draft "New thread" screen ───────────────────────
+
+const EMPTY_DRAFT: NewThreadDraft = { projectId: null, interactionMode: "default", isolate: false };
+
+/**
+ * Show the draft screen. It opens on `projectId` when given, else on the last-used project, else on
+ * "No project". An open draft keeps what was already changed on it.
+ */
+export function openNewThread(projectId?: string | null) {
+  recordNav({ kind: "thread", threadId: null });
+  useStore.setState((state) => {
+    const requested = projectId === undefined ? undefined : projectId;
+    const base = state.newThread ?? { ...EMPTY_DRAFT };
+    const project =
+      requested !== undefined || state.newThread === null
+        ? defaultDraftProject(state.model.projects, state.draftPrefs.projectId, requested)
+        : base.projectId;
+    return {
+      newThread: { ...base, projectId: project },
+      selectedThreadId: null,
+      settingsOpen: false,
+      fleetBoardOpen: false,
+      compareGroupId: null,
+      jumpOpen: false,
+      paletteOpen: false,
+      dialog: null,
+    };
+  });
+}
+
+/** Change what the draft will start with. Materialises the implicit draft first. */
+export function patchNewThread(patch: Partial<NewThreadDraft>) {
+  useStore.setState((state) => {
+    const base = state.newThread ?? {
+      ...EMPTY_DRAFT,
+      projectId: defaultDraftProject(state.model.projects, state.draftPrefs.projectId),
+    };
+    return { newThread: { ...base, ...patch } };
+  });
+}
+
+/** The id of the hidden "No project" project. The server creates it on first use. */
+export async function ensureScratchProject(): Promise<string | null> {
+  try {
+    return (await backend().call("projects.scratch", {})).projectId;
+  } catch (error) {
+    useStore.setState({
+      notice: error instanceof Error ? error.message : "Could not prepare a scratch folder.",
+    });
+    return null;
+  }
+}
+
+const THREAD_CREATED_WAIT_MS = 8_000;
+
+function waitForThreadCreated(commandId: string): { promise: Promise<string>; cancel: () => void } {
+  const handle: { done: boolean; unsub: () => void; timer?: ReturnType<typeof setTimeout> } = {
+    done: false,
+    unsub: () => {},
+  };
+  const finish = () => {
+    handle.done = true;
+    clearTimeout(handle.timer);
+    handle.unsub();
+  };
+  const promise = new Promise<string>((resolve, reject) => {
+    handle.timer = setTimeout(() => {
+      if (handle.done) return;
+      finish();
+      reject(new Error("The new thread did not appear."));
+    }, THREAD_CREATED_WAIT_MS);
+    handle.unsub = subscribeToEvents((event) => {
+      const threadId = createdThreadId(event, commandId);
+      if (!threadId || handle.done) return;
+      finish();
+      resolve(threadId);
+    });
+  });
+  return {
+    promise,
+    cancel: () => {
+      if (!handle.done) finish();
+    },
+  };
+}
+
+/**
+ * First send from the draft screen. Nothing exists until now: create the thread, open it, then
+ * start its first turn. Returns false when nothing was created.
+ */
+export async function sendNewThread(prompt: string): Promise<boolean> {
+  const state = useStore.getState();
+  const draft = state.newThread ?? {
+    ...EMPTY_DRAFT,
+    projectId: defaultDraftProject(state.model.projects, state.draftPrefs.projectId),
+  };
+  const resolved = resolveDraft(draft, {
+    providers: state.providers,
+    deviceSettings: state.deviceSettings,
+    prefs: state.draftPrefs,
+  });
+  if (!resolved.provider) {
+    useStore.setState({ notice: "No agent is signed in. Connect one in Settings." });
+    return false;
+  }
+  const projectId = resolved.projectId ?? (await ensureScratchProject());
+  if (!projectId) return false;
+  const plan = draftCommands({ ...resolved, provider: resolved.provider }, projectId, prompt);
+  const commandId = crypto.randomUUID();
+  const waiting = waitForThreadCreated(commandId);
+  const ack = await dispatch(plan.create, commandId);
+  if (!ack?.accepted) {
+    waiting.cancel();
+    return false;
+  }
+  let threadId: string;
+  try {
+    threadId = await waiting.promise;
+  } catch (error) {
+    useStore.setState({
+      notice: error instanceof Error ? error.message : "The new thread did not appear.",
+    });
+    return false;
+  }
+  const prefs = {
+    projectId: resolved.projectId,
+    provider: resolved.provider,
+    runtimeMode: resolved.runtimeMode,
+  };
+  saveDraftPrefs(prefs);
+  useStore.setState({ draftPrefs: prefs });
+  selectThread(threadId);
+  for (const command of plan.after(threadId)) {
+    if (!(await dispatch(command))) break;
+  }
+  return true;
+}
+
 export const renameThread = (threadId: string, title: string) =>
   dispatch({ type: "thread.rename", threadId, title });
 
@@ -291,6 +440,7 @@ export const configureThread = (
     model?: string;
     runtimeMode?: RuntimeMode;
     interactionMode?: InteractionMode;
+    effort?: EffortLevel;
   },
 ) => dispatch({ type: "thread.configure", threadId, ...patch });
 

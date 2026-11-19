@@ -104,6 +104,7 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
           runtimeMode: command.runtimeMode ?? thread.runtimeMode,
           handoff: provider !== thread.provider,
           ...(command.interactionMode ? { interactionMode: command.interactionMode } : {}),
+          ...(command.effort ? { effort: command.effort } : {}),
         },
       ]);
     }
@@ -204,7 +205,13 @@ function addProject(
   return accept(command, [
     {
       type: "project.added",
-      project: { id: ctx.newId("project"), name, root, createdAt: ctx.now() },
+      project: {
+        id: ctx.newId("project"),
+        name,
+        root,
+        createdAt: ctx.now(),
+        ...(command.scratch ? { scratch: true } : {}),
+      },
     },
   ]);
 }
@@ -256,6 +263,7 @@ function createThread(
           runtimeMode: command.runtimeMode,
           worktree: null,
           ...(command.isolate ? { isolate: true } : {}),
+          ...(command.effort ? { effort: command.effort } : {}),
           providerSessionId: null,
           queue: [],
           status: "idle",

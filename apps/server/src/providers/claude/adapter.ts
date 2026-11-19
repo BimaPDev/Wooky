@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type {
   ApprovalRequest,
+  EffortLevel,
   ProviderEvent,
   ProviderSettings,
   ProviderStatus,
@@ -39,11 +40,13 @@ const STDERR_TAIL_CHARS = 2_000;
 
 const CAPABILITIES = { rewind: true, questions: true, planMode: true, queue: true };
 
+const BUILT_IN_EFFORTS: EffortLevel[] = ["low", "medium", "high", "max"];
+
 const MODELS = [
   { id: "default", label: "Default" },
-  { id: "fable", label: "Fable" },
-  { id: "opus", label: "Opus" },
-  { id: "sonnet", label: "Sonnet" },
+  { id: "fable", label: "Fable", efforts: BUILT_IN_EFFORTS },
+  { id: "opus", label: "Opus", efforts: BUILT_IN_EFFORTS },
+  { id: "sonnet", label: "Sonnet", efforts: BUILT_IN_EFFORTS },
   { id: "haiku", label: "Haiku" },
 ];
 
@@ -179,6 +182,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         abortController: abort,
         includePartialMessages: true,
         ...(input.model !== "default" ? { model: input.model } : {}),
+        ...(input.effort ? { effort: input.effort } : {}),
         ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
         ...(input.resumeSessionId && input.resumeAt
           ? { resumeSessionAt: input.resumeAt, forkSession: true }

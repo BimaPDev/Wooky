@@ -147,6 +147,17 @@ describe("runTurn options", () => {
     }
   });
 
+  it("passes the effort the user picked and omits it otherwise", async () => {
+    const withEffort = fakeQuery(simple);
+    await collect(
+      createClaudeAdapter({ query: withEffort.fake }).runTurn(turnInput({ effort: "high" })),
+    );
+    expect(withEffort.calls[0]?.options).toMatchObject({ effort: "high" });
+    const without = fakeQuery(simple);
+    await collect(createClaudeAdapter({ query: without.fake }).runTurn(turnInput()));
+    expect(without.calls[0]?.options).not.toHaveProperty("effort");
+  });
+
   it("passes an explicit model and the configured binary", async () => {
     const { fake, calls } = fakeQuery(simple);
     const adapter = createClaudeAdapter({ query: fake, claudeBin: "/opt/claude" });

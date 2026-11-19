@@ -7,9 +7,9 @@ import {
 } from "../lib/sidebar-sections.ts";
 import {
   openCompare,
-  openDialog,
   openFleetBoard,
   openInSplit,
+  openNewThread,
   openSettings,
   pickProjectFolder,
   removeProject,
@@ -106,8 +106,6 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
     };
   }, [projects, threads, needle, settledOpen]);
 
-  const firstProjectId = Object.values(projects)[0]?.id ?? null;
-
   return (
     <nav className="sidebar" data-workspace-area="sidebar" aria-label="Projects and threads">
       <div className={macDesktop ? "sidebar-head desktop-traffic-inset" : "sidebar-head"}>
@@ -157,8 +155,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
           className="icon-button"
           aria-label="New thread"
           title="New thread"
-          disabled={!hasProjects}
-          onClick={() => openDialog({ kind: "newThread", projectId: firstProjectId })}
+          onClick={() => openNewThread()}
         >
           <IconCompose />
         </button>
@@ -285,9 +282,8 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
           type="button"
           className="icon-button sidebar-foot-update"
           aria-label="New thread"
-          title={hasProjects ? "New thread" : "Add a project first"}
-          disabled={!hasProjects}
-          onClick={() => openDialog({ kind: "newThread", projectId: firstProjectId })}
+          title="New thread"
+          onClick={() => openNewThread()}
         >
           <IconCircleArrowUp />
         </button>
@@ -325,19 +321,21 @@ function ProjectGroup({
             className="icon-button"
             aria-label={`New thread in ${project.name}`}
             title="New thread"
-            onClick={() => openDialog({ kind: "newThread", projectId: project.id })}
+            onClick={() => openNewThread(project.scratch ? null : project.id)}
           >
             <IconPlus />
           </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={`Remove ${project.name}`}
-            title="Remove project"
-            onClick={() => removeProject(project.id)}
-          >
-            <IconTrash />
-          </button>
+          {project.scratch ? null : (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Remove ${project.name}`}
+              title="Remove project"
+              onClick={() => removeProject(project.id)}
+            >
+              <IconTrash />
+            </button>
+          )}
         </span>
       </div>
       <ThreadTree

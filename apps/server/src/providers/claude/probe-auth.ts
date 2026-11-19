@@ -1,3 +1,4 @@
+import type { EffortLevel } from "@age/contracts";
 import type {
   AccountInfo,
   ModelInfo,
@@ -28,7 +29,13 @@ function idleStreamingPrompt(signal: AbortSignal): AsyncIterable<SDKUserMessage>
   };
 }
 
-export type ClaudeModelOption = { id: string; label: string };
+export type ClaudeModelOption = {
+  id: string;
+  label: string;
+  /** Canonical model id an alias row resolves to. */
+  resolvedModel?: string;
+  efforts?: EffortLevel[];
+};
 
 export type ClaudeAuthProbeResult = {
   authenticated: boolean | null;
@@ -61,7 +68,14 @@ export function claudeModelOptions(infos: readonly ModelInfo[]): ClaudeModelOpti
     const id = typeof info.value === "string" ? info.value.trim() : "";
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    options.push({ id, label: info.displayName?.trim() || prettifyModelId(id) });
+    const resolvedModel = info.resolvedModel?.trim();
+    const efforts = info.supportsEffort === false ? [] : (info.supportedEffortLevels ?? []);
+    options.push({
+      id,
+      label: info.displayName?.trim() || prettifyModelId(id),
+      ...(resolvedModel ? { resolvedModel } : {}),
+      ...(efforts.length > 0 ? { efforts: [...efforts] } : {}),
+    });
   }
   if (options.length === 0) return [];
   if (!seen.has("default")) options.push({ id: "default", label: "Default" });

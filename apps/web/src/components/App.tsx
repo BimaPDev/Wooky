@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { dismissNotice, pickProjectFolder, setPaletteOpen } from "../state/actions.ts";
+import { dismissNotice, setPaletteOpen } from "../state/actions.ts";
 import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
-import { useStore, type Theme } from "../state/store.ts";
+import { isDraftView, useStore, type Theme } from "../state/store.ts";
 import { syncRootThemeClass } from "../state/theme.ts";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
@@ -10,6 +10,7 @@ import { CoordinatorStrip } from "./fleet/CoordinatorStrip.tsx";
 import { FanoutDialog } from "./fleet/FanoutDialog.tsx";
 import { FleetBoard } from "./fleet/FleetBoard.tsx";
 import { JumpSwitcher } from "./fleet/JumpSwitcher.tsx";
+import { NewThreadView } from "./NewThreadView.tsx";
 import { Dialogs } from "./Dialogs.tsx";
 import { PaneDock } from "./panes/PaneRow.tsx";
 import { splitLayout } from "./panes/layout.ts";
@@ -41,8 +42,7 @@ export function App() {
     thread ? state.model.projects[thread.projectId] : undefined,
   );
   const notice = useStore((state) => state.notice);
-  const pickingFolder = useStore((state) => state.pickingFolder);
-  const hasProjects = useStore((state) => Object.keys(state.model.projects).length !== 0);
+  const draftView = useStore(isDraftView);
   const settingsOpen = useStore((state) => state.settingsOpen);
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const changesOpen = useStore((state) => state.changes.open);
@@ -142,8 +142,7 @@ export function App() {
                   compareGroupId,
                   splitActive,
                   threadId,
-                  hasProjects,
-                  pickingFolder,
+                  draftView,
                 })}
                 {notice ? (
                   <div className="notice-bar" role="alert">
@@ -178,18 +177,17 @@ function mainView({
   compareGroupId,
   splitActive,
   threadId,
-  hasProjects,
-  pickingFolder,
+  draftView,
 }: {
   fleetBoardOpen: boolean;
   compareGroupId: string | null;
   splitActive: boolean;
   threadId: string | null;
-  hasProjects: boolean;
-  pickingFolder: boolean;
+  draftView: boolean;
 }): ReactNode {
   if (fleetBoardOpen) return <FleetBoard />;
   if (compareGroupId) return <CompareView groupId={compareGroupId} />;
+  if (draftView) return <NewThreadView />;
   if (splitActive) return <PaneDock />;
   if (threadId) {
     return (
@@ -200,20 +198,5 @@ function mainView({
       </>
     );
   }
-  if (hasProjects) return <p className="empty-state">Pick a thread or start a new one.</p>;
-  return (
-    <div className="empty-state-hero">
-      <p className="empty-state-heading">No projects yet</p>
-      <p className="empty-state-copy">Add a project folder to browse threads and start work.</p>
-      <button
-        type="button"
-        className="button primary"
-        aria-busy={pickingFolder}
-        disabled={pickingFolder}
-        onClick={() => void pickProjectFolder()}
-      >
-        Add a project folder
-      </button>
-    </div>
-  );
+  return <p className="empty-state">Pick a thread or start a new one.</p>;
 }

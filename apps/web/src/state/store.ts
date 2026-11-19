@@ -11,6 +11,12 @@ import { applyEvent, emptyReadModel } from "@age/domain";
 import { create } from "zustand";
 import type { ConnectionStatus } from "../rpc/client.ts";
 import { pruneNavStack, type NavStack, type NavTarget } from "../lib/nav-history.ts";
+import {
+  defaultDraftProject,
+  loadDraftPrefs,
+  type DraftPrefs,
+  type NewThreadDraft,
+} from "../lib/new-thread.ts";
 import { loadPanes, savePanes, syncPanes, type PaneLayout } from "../components/panes/layout.ts";
 import { claimSnippets, type PendingSnippet } from "../components/review/snippets.ts";
 
@@ -49,6 +55,10 @@ export interface AppState {
   activeAppearance: AppearanceTheme | null;
   previewAppearance: AppearanceTheme | null;
   dialog: Dialog | null;
+  /** The draft "New thread" screen. Null when none was opened; nothing exists on the server. */
+  newThread: NewThreadDraft | null;
+  /** Project, agent and runtime mode of the last thread started from the draft screen. */
+  draftPrefs: DraftPrefs;
   fleetBoardOpen: boolean;
   jumpOpen: boolean;
   compareGroupId: string | null;
@@ -105,6 +115,8 @@ export const useStore = create<AppState>(() => ({
   activeAppearance: null,
   previewAppearance: null,
   dialog: null,
+  newThread: null,
+  draftPrefs: loadDraftPrefs(),
   fleetBoardOpen: false,
   jumpOpen: false,
   compareGroupId: null,
@@ -203,3 +215,21 @@ function newestThreadId(model: ReadModel): string | null {
 
 /** Stable fallback for selectors, so a missing list never yields a new array per read. */
 export const NO_DISABLED_PROVIDERS: readonly ProviderKind[] = [];
+
+/**
+ * Whether the main area shows the draft screen: one was opened, or there is nothing else to show
+ * because no thread exists yet.
+ */
+export const isDraftView = (
+  state: Pick<AppState, "newThread" | "selectedThreadId" | "model">,
+): boolean =>
+  state.newThread !== null ||
+  (state.selectedThreadId === null && Object.keys(state.model.threads).length === 0);
+
+/** The project the draft screen is on: null is "No project". */
+export const draftProjectId = (
+  state: Pick<AppState, "newThread" | "model" | "draftPrefs">,
+): string | null =>
+  state.newThread
+    ? state.newThread.projectId
+    : defaultDraftProject(state.model.projects, state.draftPrefs.projectId);

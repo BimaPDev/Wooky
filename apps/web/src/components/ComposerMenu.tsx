@@ -9,8 +9,10 @@ import {
 } from "../lib/composer-trigger.ts";
 import { backend } from "../state/backend.ts";
 
-export function useComposerMenu(threadId: string, text: string, caret: number) {
-  const trigger = composerTrigger(text, caret);
+/** `threadId` null is the draft screen: there is no workspace to search, so only / commands apply. */
+export function useComposerMenu(threadId: string | null, text: string, caret: number) {
+  const found = composerTrigger(text, caret);
+  const trigger = threadId === null && found?.kind === "mention" ? null : found;
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
   const [entriesQuery, setEntriesQuery] = useState<string | null>(null);
   const [searchUnavailable, setSearchUnavailable] = useState(false);
@@ -21,7 +23,7 @@ export function useComposerMenu(threadId: string, text: string, caret: number) {
 
   // sync: debounced fs.searchEntries RPC for @mentions
   useEffect(() => {
-    if (mentionQuery === null) {
+    if (mentionQuery === null || threadId === null) {
       request.current += 1;
       return;
     }

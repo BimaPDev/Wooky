@@ -910,8 +910,23 @@ export const fixtureProviders: ProviderStatus[] = [
     version: "2.4.1",
     problem: null,
     models: [
-      { id: "claude-opus-5-5", label: "Opus 5.5" },
-      { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
+      {
+        id: "default",
+        label: "Default (recommended)",
+        resolvedModel: "claude-opus-5-5",
+        efforts: ["low", "medium", "high", "max"],
+      },
+      {
+        id: "claude-opus-5-5",
+        label: "Opus 5.5",
+        efforts: ["low", "medium", "high", "max"],
+      },
+      {
+        id: "claude-sonnet-5-5",
+        label: "Sonnet 5.5",
+        efforts: ["low", "medium", "high"],
+      },
+      { id: "claude-haiku-5-5", label: "Haiku 5.5" },
     ],
     capabilities: { planMode: true, questions: true, queue: true, rewind: true },
   },
@@ -1301,6 +1316,45 @@ function applyFixtureCommand(command: Command): void {
     ]);
     return;
   }
+  if (command.type === "thread.create") {
+    injectFixtureEvents([
+      {
+        type: "thread.created",
+        commandId: command.commandId,
+        thread: thread({
+          id: `t-${command.commandId}`,
+          projectId: command.projectId,
+          title: command.title?.trim() || "New thread",
+          provider: command.provider,
+          model: command.model,
+          runtimeMode: command.runtimeMode,
+          ...(command.effort ? { effort: command.effort } : {}),
+          ...(command.isolate ? { isolate: true } : {}),
+          createdAt: at,
+          updatedAt: at,
+        }),
+      },
+    ]);
+    return;
+  }
+  if (command.type === "thread.configure") {
+    const current = fixtureModel.threads[command.threadId];
+    if (!current) return;
+    injectFixtureEvents([
+      {
+        type: "thread.configured",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        provider: command.provider ?? current.provider,
+        model: command.model ?? current.model,
+        runtimeMode: command.runtimeMode ?? current.runtimeMode,
+        handoff: command.provider !== undefined && command.provider !== current.provider,
+        ...(command.interactionMode ? { interactionMode: command.interactionMode } : {}),
+        ...(command.effort ? { effort: command.effort } : {}),
+      },
+    ]);
+    return;
+  }
   if (command.type === "fanout.pick") {
     injectFixtureEvents([
       {
@@ -1356,6 +1410,24 @@ function respond(method: RpcMethod, params: unknown): unknown {
       ].filter((entry) => entry.path.includes((params as RpcParams<"fs.pickable">).query ?? ""));
     case "fs.pickFolder":
       return { path: null, supported: false };
+    case "projects.scratch": {
+      const existing = Object.values(fixtureModel.projects).find((entry) => entry.scratch);
+      if (existing) return { projectId: existing.id };
+      injectFixtureEvents([
+        {
+          type: "project.added",
+          commandId: null,
+          project: {
+            id: "p-scratch",
+            name: "No project",
+            root: "/Users/demo/.age/scratch",
+            createdAt: new Date().toISOString(),
+            scratch: true,
+          },
+        },
+      ]);
+      return { projectId: "p-scratch" };
+    }
     case "dispatch": {
       const command = params as Command;
       console.info("AGE fixture dispatch", params);

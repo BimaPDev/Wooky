@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ModelTarget, TurnFailure, TurnFailureKind, TurnOrigin } from "./failover.ts";
 import {
   DiffStat,
+  EffortLevel,
   FLEET_LIMITS,
   Id,
   InteractionMode,
@@ -51,6 +52,7 @@ export const AgeEvent = z.discriminatedUnion("type", [
     /** True when the provider changed and the next turn must hand off context. */
     handoff: z.boolean(),
     interactionMode: InteractionMode.optional(),
+    effort: EffortLevel.optional(),
   }),
   z.object({
     ...meta,

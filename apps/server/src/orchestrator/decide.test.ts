@@ -225,6 +225,50 @@ describe("decide thread.create", () => {
   });
 });
 
+describe("decide effort and scratch", () => {
+  it("records the effort a thread starts with", () => {
+    const { events } = accepted(
+      run(
+        seed(),
+        command("thread.create", {
+          projectId: "p1",
+          provider: "claude",
+          model: "opus",
+          runtimeMode: "approve",
+          isolate: false,
+          effort: "medium",
+        }),
+      ),
+    );
+    expect(events[0]).toMatchObject({ type: "thread.created", thread: { effort: "medium" } });
+  });
+
+  it("changes effort with configure and keeps it when it is not named", () => {
+    const first = accepted(
+      run(seed(), command("thread.configure", { threadId: "t1", effort: "max" })),
+    );
+    expect(first.events[0]).toMatchObject({ type: "thread.configured", effort: "max" });
+    const model = apply(seed(), first.events);
+    expect(model.threads.t1?.effort).toBe("max");
+    const second = accepted(
+      run(model, command("thread.configure", { threadId: "t1", runtimeMode: "full" })),
+    );
+    expect(apply(model, second.events).threads.t1?.effort).toBe("max");
+  });
+
+  it("flags a scratch project and leaves ordinary projects unflagged", () => {
+    const scratch = accepted(
+      run(
+        emptyReadModel(),
+        command("project.add", { root: "/age/scratch", name: "No project", scratch: true }),
+      ),
+    );
+    expect(scratch.events[0]).toMatchObject({ project: { scratch: true } });
+    const plain = accepted(run(emptyReadModel(), command("project.add", { root: "/work/x" })));
+    expect(plain.events[0]).not.toHaveProperty("project.scratch");
+  });
+});
+
 describe("decide thread.rename / thread.remove", () => {
   it("renames a thread", () => {
     const { events } = accepted(

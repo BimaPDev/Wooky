@@ -410,6 +410,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         resumeSessionId: live.providerSessionId,
         resumeAt,
         interactionMode: turn.interactionMode ?? live.interactionMode ?? "default",
+        ...(live.effort ? { effort: live.effort } : {}),
         handoffContext,
         role: live.role,
         signal,

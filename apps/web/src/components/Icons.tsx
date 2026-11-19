@@ -141,6 +141,11 @@ export const IconSend = () => (
     <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" />
   </Svg>
 );
+export const IconPaperclip = () => (
+  <Svg>
+    <path d="M12.8 7.6l-4.6 4.6a3 3 0 01-4.2-4.2l5-5a2 2 0 012.9 2.9L7.2 11.2a1 1 0 01-1.4-1.4l4.2-4.2" />
+  </Svg>
+);
 export const IconAlert = () => (
   <Svg>
     <path d="M8 2.5L14 13.5H2z" />

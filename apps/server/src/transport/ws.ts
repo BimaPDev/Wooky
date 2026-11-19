@@ -23,6 +23,7 @@ import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
 import { openSignInTerminal } from "../terminal/login.ts";
 import type { TerminalManager } from "../terminal/session.ts";
+import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
@@ -41,6 +42,7 @@ interface Services {
   limits: LimitsService;
   history: HistoryService;
   fleet: FleetService;
+  scratch: ScratchService;
 }
 
 const MAX_AGENT_WAITS_PER_CONNECTION = 8;
@@ -65,7 +67,18 @@ type Handlers = {
 };
 
 function createHandlers(
-  { store, dispatcher, providers, queries, themes, terminals, limits, history, fleet }: Services,
+  {
+    store,
+    dispatcher,
+    providers,
+    queries,
+    themes,
+    terminals,
+    limits,
+    history,
+    fleet,
+    scratch,
+  }: Services,
   notifyThemes: (changedIds: string[]) => void,
   folderPicker: FolderPicker,
   allowRemotePicker: boolean,
@@ -101,6 +114,7 @@ function createHandlers(
       }
     },
     "fs.searchEntries": (params) => queries.searchEntries(params),
+    "projects.scratch": () => scratch.ensure(),
     "settings.get": () => themes.getSettings(),
     "settings.put": ({ settings }) => {
       const next = themes.putSettings(settings);

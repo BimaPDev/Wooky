@@ -683,7 +683,7 @@ function providerSummary(provider: ProviderStatus, enabled: boolean) {
 
 function ProjectsPage() {
   const projects = useStore((state) => state.model.projects);
-  const list = Object.values(projects);
+  const list = Object.values(projects).filter((project) => project.scratch !== true);
   return (
     <SettingsSection title="Projects">
       {list.length === 0 ? (
