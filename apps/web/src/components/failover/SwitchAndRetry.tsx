@@ -13,6 +13,7 @@ import {
   targetLabel,
   targetOf,
 } from "./format.ts";
+import { ProviderMark } from "../ProviderMark.tsx";
 
 /** Offered on a failed last turn that was not switched automatically. */
 export function SwitchAndRetry({ turn, failure }: { turn: Turn; failure: TurnFailure }) {
@@ -177,7 +178,7 @@ function RetryMenu({
               disabled={busy}
               onClick={() => onPick(target)}
             >
-              <span className={`provider-mark provider-${target.provider}`} aria-hidden="true" />
+              <ProviderMark kind={target.provider} />
               <span className="retry-item-copy">
                 <span className="retry-item-title">{targetLabel(providers, target)}</span>
                 {cooldown ? (

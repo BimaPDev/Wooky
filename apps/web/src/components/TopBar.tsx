@@ -27,6 +27,7 @@ import {
 import { InlineRename } from "./InlineRename.tsx";
 import { modelLabel, providerLabels, runtimeLabel } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
+import { ProviderMark } from "./ProviderMark.tsx";
 
 export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
   const thread = useStore((state) =>
@@ -233,7 +234,7 @@ function DetailsPopover({ thread, onClose }: { thread: Thread; onClose: () => vo
   return (
     <div
       ref={ref}
-      className="popover details-popover below"
+      className="popover details-popover below end"
       role="dialog"
       aria-label="Thread details"
     >
@@ -254,7 +255,7 @@ function DetailsPopover({ thread, onClose }: { thread: Thread; onClose: () => vo
           ) : null}
         </div>
         <div className="popover-row static">
-          <span className={`provider-mark provider-${thread.provider}`} aria-hidden="true" />
+          <ProviderMark kind={thread.provider} />
           <span className="popover-label">
             {providerLabels[thread.provider]} ·{" "}
             {modelLabel(providers, thread.provider, thread.model)}

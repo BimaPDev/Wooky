@@ -20,6 +20,7 @@ import {
   promptPreview,
   selectFleetStatusById,
 } from "./helpers.ts";
+import { ProviderMark } from "../ProviderMark.tsx";
 
 export function CompareView({ groupId }: { groupId: string }) {
   const model = useStore((state) => state.model);
@@ -268,7 +269,7 @@ function CompareColumn({
         </button>
       </header>
       <p className="fleet-column-identity">
-        <span className={`provider-mark provider-${thread.provider}`} aria-hidden="true" />
+        <ProviderMark kind={thread.provider} />
         <span>
           {providerLabels[thread.provider]} · {modelLabel(providers, thread.provider, thread.model)}
         </span>

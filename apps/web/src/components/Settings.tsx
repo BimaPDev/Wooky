@@ -36,6 +36,7 @@ import { agentFromPreset, LIMITS, updateProviderSettings } from "./providers/hel
 import { ProviderSettingsPanel } from "./providers/ProviderSettingsPanel.tsx";
 import { useSettingsDraft } from "./providers/useSettingsDraft.ts";
 import { UsageDashboard } from "./UsageDashboard.tsx";
+import { ProviderMark } from "./ProviderMark.tsx";
 
 const NAV: { id: SettingsPage; label: string; group: string | null; icon: () => ReactNode }[] = [
   { id: "general", label: "General", group: null, icon: IconSliders },
@@ -648,14 +649,6 @@ function ProviderDetail({
         onChange={onSettingsChange}
       />
     </div>
-  );
-}
-
-function ProviderMark({ kind }: { kind: ProviderKind }) {
-  return (
-    <span className={`provider-mark provider-${kind}`} aria-hidden>
-      {kind.slice(0, 1).toUpperCase()}
-    </span>
   );
 }
 

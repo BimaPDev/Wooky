@@ -10,6 +10,7 @@ import {
   sameTarget,
   targetLabel,
 } from "./format.ts";
+import { ProviderMark } from "../ProviderMark.tsx";
 
 const MAX_CHAIN = 12;
 
@@ -66,7 +67,7 @@ function TargetRow({
       <span className="failover-rank" aria-hidden="true">
         {index + 1}
       </span>
-      <span className={`provider-mark provider-${target.provider}`} aria-hidden="true" />
+      <ProviderMark kind={target.provider} />
       <span className="failover-row-copy">
         <span className="failover-row-title">{label}</span>
         {cooldown ? (
@@ -156,7 +157,7 @@ export function ChainEditor({
               <span className="failover-rank" aria-hidden="true">
                 {index + 1}
               </span>
-              <span className={`provider-mark provider-${target.provider}`} aria-hidden="true" />
+              <ProviderMark kind={target.provider} />
               <span className="failover-row-copy">
                 <span className="failover-row-title">{targetLabel(providers, target)}</span>
               </span>

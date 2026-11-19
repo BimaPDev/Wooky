@@ -12,6 +12,7 @@ import { NO_DISABLED_PROVIDERS, useStore, type Dialog } from "../state/store.ts"
 import { isAvailable, runtimeModes } from "./labels.ts";
 import { Modal } from "./Modal.tsx";
 import { defaultModelFor, pickerModels } from "./providers/helpers.ts";
+import { ProviderMark } from "./ProviderMark.tsx";
 
 export function Dialogs() {
   const dialog = useStore((state) => state.dialog);
@@ -210,7 +211,7 @@ function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null
                     setModel(null);
                   }}
                 />
-                <span className={`provider-mark provider-${entry.kind}`} aria-hidden="true" />
+                <ProviderMark kind={entry.kind} />
                 <span className="option-label">{entry.label}</span>
                 {entry.version ? <span className="option-meta mono">{entry.version}</span> : null}
                 {entry.problem ? <span className="option-note">{entry.problem}</span> : null}
