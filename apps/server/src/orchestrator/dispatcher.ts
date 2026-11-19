@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { Command } from "@age/contracts";
+import { Command, type DeviceSettings } from "@age/contracts";
 import type { EffectRunner } from "../effects/runner.ts";
 import { ServiceError } from "../errors.ts";
 import type { DispatchResult, EventStore } from "../store/event-store.ts";
@@ -16,6 +16,7 @@ export function createDispatcher(deps: {
   store: EventStore;
   runner: EffectRunner;
   ctx: DecideContext;
+  deviceSettings?: () => DeviceSettings;
 }): Dispatcher {
   const { store, runner, ctx } = deps;
   let closed = false;
@@ -35,7 +36,11 @@ export function createDispatcher(deps: {
       if (command.type === "project.add" && !isDirectory(command.root))
         throw new ServiceError("bad_request", `${command.root} is not a directory.`);
 
-      const decision = decide(store.model, command, ctx);
+      const settings = deps.deviceSettings?.();
+      const decision = decide(store.model, command, {
+        ...ctx,
+        ...(settings ? { failoverSettings: settings.failover } : {}),
+      });
       if (!decision.ok) throw new ServiceError(decision.code, decision.message);
       const committed = store.commit({
         commandId: command.commandId,

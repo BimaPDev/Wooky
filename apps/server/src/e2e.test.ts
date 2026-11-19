@@ -9,15 +9,19 @@ import { afterAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import {
   AGE_WS_PATH,
+  FailoverSettings,
   RpcPush,
   RpcResponse,
   type AgeEvent,
   type AgeEventOf,
   type AgeEventType,
   type FileDiff,
+  type ProviderEvent,
   type ReadModel,
+  type TurnFailure,
 } from "@age/contracts";
 import { createDemoAdapter } from "./providers/demo/adapter.ts";
+import type { ProviderAdapter, TurnInput } from "./providers/types.ts";
 import { startServer, type RunningServer } from "./server.ts";
 import { tempDir } from "./testing.ts";
 
@@ -51,15 +55,37 @@ async function makeRepo(): Promise<string> {
   return root;
 }
 
-async function boot(home: string): Promise<RunningServer> {
+async function boot(home: string, adapters?: ProviderAdapter[]): Promise<RunningServer> {
   const server = await startServer({
     home,
     port: 0,
     host: "127.0.0.1",
-    adapters: [createDemoAdapter({ stepMs: 0 })],
+    adapters: adapters ?? [createDemoAdapter({ stepMs: 0 })],
   });
   cleanup.push(() => server.close());
   return server;
+}
+
+const rateLimitFailure: TurnFailure = { kind: "rate_limit", message: "slow down" };
+
+function failoverAdapter(
+  kind: "claude" | "codex",
+  run: (input: TurnInput) => AsyncIterable<ProviderEvent>,
+  models: { id: string; label: string }[],
+): ProviderAdapter {
+  return {
+    kind,
+    probe: async () => ({
+      kind,
+      label: kind,
+      installed: true,
+      authenticated: true,
+      version: null,
+      models,
+      problem: null,
+    }),
+    runTurn: run,
+  };
 }
 
 async function connect(server: RunningServer) {
@@ -71,17 +97,19 @@ async function connect(server: RunningServer) {
   socket.on("message", (data) => {
     const message: unknown = JSON.parse(String(data));
     const push = RpcPush.safeParse(message);
-    if (push.success && push.data.push === "event") {
-      const event = push.data.event;
-      pushes.push(event);
-      for (const waiter of waiters.splice(0)) {
-        if (waiter.match(event)) waiter.resolve(event);
-        else waiters.push(waiter);
+    if (push.success) {
+      if (push.data.push === "event") {
+        const event = push.data.event;
+        pushes.push(event);
+        for (const waiter of waiters.splice(0)) {
+          if (waiter.match(event)) waiter.resolve(event);
+          else waiters.push(waiter);
+        }
       }
       return;
     }
-    const response = RpcResponse.parse(message);
-    pending.get(response.id)?.(response);
+    const response = RpcResponse.safeParse(message);
+    if (response.success) pending.get(response.data.id)?.(response.data);
   });
   await new Promise((resolve, reject) => socket.once("open", resolve).once("error", reject));
 
@@ -323,6 +351,70 @@ describe("end-to-end: plan, queue, question, conversation-only revert", () => {
       ?.find((turn) => turn.id === implementDone.turnId)
       ?.items.find((item) => item.kind === "message");
     expect(answer).toMatchObject({ text: expect.stringContaining("Yes") });
+  });
+});
+
+describe("end-to-end: failover after a rate-limited turn", () => {
+  it("switches models and retries with the same prompt", async () => {
+    const root = await tempDir("e2e-failover-root");
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    const home = await tempDir("e2e-failover-home");
+    cleanup.push(() => rm(home, { recursive: true, force: true }));
+
+    const server = await boot(home, [
+      failoverAdapter(
+        "claude",
+        async function* () {
+          yield { type: "done", status: "failed", error: "rate", failure: rateLimitFailure };
+        },
+        [{ id: "sonnet", label: "Sonnet" }],
+      ),
+      failoverAdapter(
+        "codex",
+        async function* (input) {
+          yield { type: "session", sessionId: `codex-${input.turnId}` };
+          yield { type: "done", status: "completed", error: null };
+        },
+        [{ id: "gpt-6.1-sol", label: "Sol" }],
+      ),
+    ]);
+    const client = await connect(server);
+    await client.call("subscribe", { fromSeq: 0 });
+    await client.call("settings.put", {
+      settings: {
+        failover: FailoverSettings.parse({
+          chain: [{ provider: "codex", model: "gpt-6.1-sol" }],
+        }),
+      },
+    });
+
+    await client.dispatch({ type: "project.add", root });
+    const projectId = (await client.next("project.added")).project.id;
+    await client.dispatch({
+      type: "thread.create",
+      projectId,
+      provider: "claude",
+      model: "sonnet",
+      runtimeMode: "full",
+      isolate: false,
+    });
+    const threadId = (await client.next("thread.created")).thread.id;
+    const prompt = "Ship failover end-to-end";
+    const first = client.next("turn.finished", (event) => event.threadId === threadId);
+    await client.dispatch({ type: "turn.start", threadId, prompt });
+    const failed = await first;
+    expect(failed.failure).toEqual(rateLimitFailure);
+
+    const retry = await client.next(
+      "turn.finished",
+      (event) => event.threadId === threadId && event.turnId !== failed.turnId,
+    );
+    expect(retry.status).toBe("completed");
+
+    const snapshot = await client.call<ReadModel>("snapshot");
+    expect(snapshot.threads[threadId]?.provider).toBe("codex");
+    expect(snapshot.turns[threadId]?.map((turn) => turn.prompt)).toEqual([prompt, prompt]);
+    expect(snapshot.cooldowns.claude?.reason).toBe("rate_limit");
   });
 });
 

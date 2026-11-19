@@ -10,6 +10,8 @@ export interface ServerConfig {
   webDist: string | null;
   /** Extra hostnames browsers may connect from (LAN/remote use). Local names are always allowed. */
   allowedHosts: string[];
+  /** When set, a non-loopback client may open the folder chooser on this machine. */
+  allowRemotePicker: boolean;
 }
 
 export const USAGE = `Usage: age [options]
@@ -19,6 +21,8 @@ export const USAGE = `Usage: age [options]
   --home <dir>      State directory. Env AGE_HOME. Default ~/.age.
   --web-dist <dir>  Built web UI to serve. Env AGE_WEB_DIST.
   --allow-host <h>  Also accept browsers from this hostname (repeatable). Env AGE_ALLOWED_HOSTS (comma-separated).
+  --allow-remote-picker
+                    Let a non-loopback client open the folder chooser. Env AGE_ALLOW_REMOTE_PICKER=1.
   --help            Show this help.`;
 
 /** Flags win over environment variables, which win over defaults. */
@@ -36,6 +40,7 @@ export function resolveConfig(
       home: { type: "string" },
       "web-dist": { type: "string" },
       "allow-host": { type: "string", multiple: true },
+      "allow-remote-picker": { type: "boolean" },
       help: { type: "boolean" },
     },
   });
@@ -49,6 +54,8 @@ export function resolveConfig(
     allowedHosts: [...(values["allow-host"] ?? []), ...(env.AGE_ALLOWED_HOSTS ?? "").split(",")]
       .map((h) => h.trim().toLowerCase())
       .filter(Boolean),
+    allowRemotePicker:
+      values["allow-remote-picker"] === true || env.AGE_ALLOW_REMOTE_PICKER === "1",
   };
 }
 

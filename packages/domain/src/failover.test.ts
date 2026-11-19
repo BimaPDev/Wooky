@@ -284,6 +284,54 @@ describe("failover reducer events", () => {
     expect(m.cooldowns.claude).toBeUndefined();
   });
 
+  it("keeps the failure on the turn and resets the switch budget after a completed turn", () => {
+    let m = applyEvent(base(), {
+      type: "thread.failedOver",
+      seq: 2,
+      at: now,
+      commandId: "c2",
+      threadId: "t1",
+      from: { provider: "claude", model: "sonnet" },
+      to: { provider: "cursor", model: "auto" },
+      failure: rateLimit,
+      switches: 2,
+    });
+    const started = (seq: number, turnId: string) =>
+      ({
+        type: "turn.started",
+        seq,
+        at: now,
+        commandId: `s${seq}`,
+        threadId: "t1",
+        turnId,
+        prompt: "do it",
+        provider: "cursor",
+        model: "auto",
+        checkpointBefore: null,
+      }) satisfies Parameters<typeof applyEvent>[1];
+    const finished = (seq: number, turnId: string, status: "completed" | "failed") =>
+      ({
+        type: "turn.finished",
+        seq,
+        at: now,
+        commandId: null,
+        threadId: "t1",
+        turnId,
+        status,
+        checkpointAfter: null,
+        changedFiles: [],
+        usage: null,
+        error: status === "failed" ? "limit" : null,
+        ...(status === "failed" ? { failure: rateLimit } : {}),
+      }) satisfies Parameters<typeof applyEvent>[1];
+    m = applyEvent(applyEvent(m, started(3, "u1")), finished(4, "u1", "failed"));
+    expect(m.turns.t1?.at(-1)?.failure).toEqual(rateLimit);
+    expect(m.threads.t1?.failover?.switches).toBe(2);
+    m = applyEvent(applyEvent(m, started(5, "u2")), finished(6, "u2", "completed"));
+    expect(m.threads.t1?.failover?.switches).toBe(0);
+    expect(m.threads.t1?.failover?.original).toEqual({ provider: "claude", model: "sonnet" });
+  });
+
   it("covers every default ranking id", () => {
     expect(DEFAULT_MODEL_RANKING.length).toBeGreaterThan(5);
   });

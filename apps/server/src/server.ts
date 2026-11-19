@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
-import type { Command, ProviderCapabilities, ProviderKind } from "@age/contracts";
+import {
+  FailoverSettings,
+  type Command,
+  type ProviderCapabilities,
+  type ProviderKind,
+} from "@age/contracts";
 import { createEffectRunner } from "./effects/runner.ts";
 import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
@@ -11,6 +16,7 @@ import { createDispatcher } from "./orchestrator/dispatcher.ts";
 import { builtinAdapters } from "./providers/index.ts";
 import { createProviderRegistry } from "./providers/registry.ts";
 import type { ProviderAdapter } from "./providers/types.ts";
+import type { FolderPicker } from "./process/folder-picker.ts";
 import { createQueries } from "./queries.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
@@ -30,6 +36,10 @@ export interface ServerOptions {
   git?: GitService;
   /** Directory whose children `fs.pickable` suggests. Defaults to the OS home. */
   userHome?: string;
+  /** When set, a non-loopback client may open the folder chooser. */
+  allowRemotePicker?: boolean;
+  /** Test seam. Production builds one from the operating system. */
+  folderPicker?: FolderPicker;
 }
 
 export interface RunningServer {
@@ -64,28 +74,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return statuses;
     },
   };
+  const knownProviders = new Set(adapters.map((adapter) => adapter.kind));
   const ctx: DecideContext = {
     now: () => new Date().toISOString(),
     newId: (prefix) => `${prefix}_${randomUUID()}`,
     capabilities: (kind) => capabilities.get(kind),
+    hasProvider: (kind) => knownProviders.has(kind),
+    failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
   const git = options.git ?? createGitService();
   let dispatchCommand: (command: Command) => void = () => {};
+  const themes = createThemeStore(options.home);
   const runner = createEffectRunner({
     store,
     providers,
     git,
     newId: ctx.newId,
     dispatch: (command) => dispatchCommand(command),
+    deviceSettings: () => themes.getSettings(),
+    limits,
+    now: ctx.now,
   });
-  const dispatcher = createDispatcher({ store, runner, ctx });
+  const dispatcher = createDispatcher({
+    store,
+    runner,
+    ctx,
+    deviceSettings: () => themes.getSettings(),
+  });
   dispatchCommand = (command) => {
     dispatcher.dispatch(command);
   };
   runner.recover();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
-  const themes = createThemeStore(options.home);
   const terminals = createTerminalManager();
   const history = createHistoryService({
     home: options.home,
@@ -98,6 +119,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     http,
     { store, dispatcher, providers, queries, themes, terminals, limits, history },
     new Set(options.allowedHosts ?? []),
+    {
+      allowRemotePicker: options.allowRemotePicker === true,
+      ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
+    },
   );
   try {
     await new Promise<void>((resolve, reject) => {

@@ -51,6 +51,8 @@ export interface AppState {
   diffVersion: number;
   /** Last rejected command or failed request, in one sentence. */
   notice: string | null;
+  /** True while the operating-system folder chooser is open. */
+  pickingFolder: boolean;
   nav: NavStack;
   /** When true, navigation actions must not push onto nav.past. */
   navSilent: boolean;
@@ -88,6 +90,7 @@ export const useStore = create<AppState>(() => ({
   theme: null,
   diffVersion: 0,
   notice: null,
+  pickingFolder: false,
   nav: { past: [], future: [] },
   navSilent: false,
 }));

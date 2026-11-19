@@ -15,6 +15,7 @@ import {
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
+import { createFolderPicker, type FolderPicker } from "../process/folder-picker.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";
 import type { Queries } from "../queries.ts";
 import { watchThemeFiles } from "../settings/theme-watch.ts";
@@ -27,6 +28,7 @@ import type { LimitsService } from "../usage/limits.ts";
 
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 
 interface Services {
   store: EventStore;
@@ -40,6 +42,7 @@ interface Services {
 }
 
 interface Connection {
+  readonly remoteAddress: string | undefined;
   send(message: ServerMessage): void;
   /** Replaces this connection's event subscription. */
   follow(fromSeq: number): number;
@@ -56,6 +59,8 @@ type Handlers = {
 function createHandlers(
   { store, dispatcher, providers, queries, themes, terminals, limits, history }: Services,
   notifyThemes: (changedIds: string[]) => void,
+  folderPicker: FolderPicker,
+  allowRemotePicker: boolean,
 ): Handlers {
   return {
     dispatch: (command) => dispatcher.dispatch(command),
@@ -75,6 +80,18 @@ function createHandlers(
     },
     "git.diff": ({ threadId, turnId }) => queries.diff(threadId, turnId),
     "fs.pickable": ({ query }) => queries.pickable(query),
+    "fs.pickFolder": async ({ title }, conn) => {
+      if (!folderPickerAllowed(conn.remoteAddress, allowRemotePicker)) {
+        return { path: null, supported: false };
+      }
+      try {
+        return await folderPicker.pick(conn, { title });
+      } catch (error) {
+        if (error instanceof ServiceError) throw error;
+        console.error("Folder chooser failed", error);
+        throw new ServiceError("unavailable", "Could not open the folder chooser.");
+      }
+    },
     "fs.searchEntries": (params) => queries.searchEntries(params),
     "settings.get": () => themes.getSettings(),
     "settings.put": ({ settings }) => {
@@ -131,6 +148,7 @@ export function attachWebSocket(
   server: Server,
   services: Services,
   allowedHosts: ReadonlySet<string> = new Set(),
+  options: { allowRemotePicker?: boolean; folderPicker?: FolderPicker } = {},
 ): () => void {
   const connections = new Set<Connection>();
 
@@ -146,7 +164,13 @@ export function attachWebSocket(
     });
   };
 
-  const handlers = createHandlers(services, notifyThemes);
+  const folderPicker = options.folderPicker ?? createFolderPicker();
+  const handlers = createHandlers(
+    services,
+    notifyThemes,
+    folderPicker,
+    options.allowRemotePicker === true,
+  );
   const closeThemeWatch = watchThemeFiles(services.themes, broadcastThemes);
   // Theme files may carry an inline background image (capped at 6 MB in the contract).
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
@@ -156,15 +180,16 @@ export function attachWebSocket(
     if (pathname !== AGE_WS_PATH) return refuse(socket, "404 Not Found");
     if (!originAllowed(req.headers.origin, req.headers.host, allowedHosts))
       return refuse(socket, "403 Forbidden");
-    wss.handleUpgrade(req, socket, head, (ws) => serve(ws));
+    wss.handleUpgrade(req, socket, head, (ws) => serve(ws, req));
   });
 
-  function serve(ws: WebSocket) {
+  function serve(ws: WebSocket, req: IncomingMessage) {
     let unsubscribe: (() => void) | null = null;
     let lastSeq = 0;
     const ownedTerminals = new Set<string>();
 
     const conn: Connection = {
+      remoteAddress: req.socket.remoteAddress,
       send(message) {
         if (ws.readyState !== WebSocket.OPEN) return;
         ws.send(JSON.stringify(message));
@@ -207,6 +232,7 @@ export function attachWebSocket(
     });
     ws.on("close", () => {
       connections.delete(conn);
+      folderPicker.cancel(conn);
       unsubscribe?.();
       for (const sessionId of ownedTerminals) services.terminals.close(sessionId);
       ownedTerminals.clear();
@@ -216,6 +242,7 @@ export function attachWebSocket(
 
   return () => {
     closeThemeWatch();
+    folderPicker.close();
     for (const client of wss.clients) client.close(1001, "Server is shutting down");
     wss.close();
     services.terminals.closeAll();
@@ -230,6 +257,15 @@ function call(handlers: Handlers, method: string, params: unknown, conn: Connect
   if (!parsed.success) throw new ServiceError("bad_request", parsed.error.message);
   const handler = handlers[name] as (params: unknown, conn: Connection) => unknown;
   return handler(parsed.data, conn);
+}
+
+/** A remote peer may open the dialog only when the operator opted in. */
+export function folderPickerAllowed(
+  remoteAddress: string | undefined,
+  allowRemotePicker: boolean,
+): boolean {
+  if (allowRemotePicker) return true;
+  return remoteAddress !== undefined && LOOPBACK_ADDRESSES.has(remoteAddress.toLowerCase());
 }
 
 /**

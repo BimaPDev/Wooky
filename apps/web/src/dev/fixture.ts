@@ -897,6 +897,8 @@ function respond(method: RpcMethod, params: unknown): unknown {
         { path: "/Users/demo/code/site", isGitRepo: true },
         { path: "/Users/demo/Downloads", isGitRepo: false },
       ].filter((entry) => entry.path.includes((params as RpcParams<"fs.pickable">).query ?? ""));
+    case "fs.pickFolder":
+      return { path: null, supported: false };
     case "dispatch":
       console.info("AGE fixture dispatch", params);
       return { accepted: true, duplicate: false, seq: fixtureModel.seq };

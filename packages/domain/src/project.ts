@@ -186,6 +186,7 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         changedFiles: event.changedFiles,
         usage: event.usage,
         error: event.error,
+        ...(event.failure === undefined ? {} : { failure: event.failure }),
         ...(event.nativeRef === undefined ? {} : { nativeRef: event.nativeRef }),
         // Approvals and questions left open when a turn ends can never be answered.
         items: turn.items.map((item) =>
@@ -196,8 +197,15 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
             : item,
         ),
       }));
+      const failover = finished.threads[event.threadId]?.failover;
+      // The switch limit is per prompt: a completed turn starts a fresh budget.
+      const resetSwitches =
+        event.status === "completed" && failover && failover.switches > 0
+          ? { failover: { ...failover, switches: 0 } }
+          : {};
       return patchThread(finished, event.threadId, event.at, {
         status: event.status === "failed" ? "error" : "idle",
+        ...resetSwitches,
       });
     }
 

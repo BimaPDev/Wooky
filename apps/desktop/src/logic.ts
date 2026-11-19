@@ -213,6 +213,27 @@ export function errorPage(title: string, detail: string, stderrTail: string): st
   return page(`<h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p>${tail}`);
 }
 
+/** One dialog at a time. A second call shares the promise already in flight. */
+export function createSingleFlight() {
+  let pending: Promise<unknown> | null = null;
+  return function run<T>(start: () => Promise<T>): Promise<T> {
+    if (pending) return pending as Promise<T>;
+    const task = start().finally(() => {
+      if (pending === task) pending = null;
+    });
+    pending = task;
+    return task;
+  };
+}
+
+/** The sheet's parent, or null when that window is already gone. */
+export function usableWindow<T extends { isDestroyed(): boolean }>(
+  win: T | null | undefined,
+): T | null {
+  if (!win || win.isDestroyed()) return null;
+  return win;
+}
+
 export function dataPageUrl(html: string): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
