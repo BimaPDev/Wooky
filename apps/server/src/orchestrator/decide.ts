@@ -4,6 +4,7 @@ import type {
   CommandOf,
   FailoverSettings,
   ModelTarget,
+  TurnOrigin,
   PendingEvent,
   ProviderCapabilities,
   ProviderKind,
@@ -343,7 +344,13 @@ function threadFailover(
     model: command.to.model,
     ...(handoff ? { providerSessionId: null } : {}),
   };
-  const started = beginTurn(model, nextThread, command.retryPrompt, ctx);
+  const started = beginTurn(model, nextThread, command.retryPrompt, ctx, undefined, {
+    kind: "failover",
+    from,
+    to: command.to,
+    failure: command.failure,
+    switches: (thread.failover?.switches ?? 0) + 1,
+  });
   if (!started.ok) return started;
   return accept(command, [...events, ...started.events], started.effects);
 }
@@ -372,7 +379,11 @@ function switchBackThenStart(
     providerSessionId: original.provider !== thread.provider ? null : thread.providerSessionId,
     failover: undefined,
   };
-  const started = beginTurn(model, restored, prompt, ctx);
+  const started = beginTurn(model, restored, prompt, ctx, undefined, {
+    kind: "restore",
+    from: { provider: thread.provider, model: thread.model },
+    to: original,
+  });
   if (!started.ok) return started;
   return { ok: true, events: [...events, ...started.events], effects: started.effects };
 }
@@ -404,6 +415,7 @@ function beginTurn(
   prompt: string,
   ctx: DecideContext,
   fromQueueId?: string,
+  origin?: TurnOrigin,
 ): { ok: true; events: Draft[]; effects: Effect[] } | Rejection {
   if ((thread.interactionMode ?? "default") === "plan" && !supportsPlan(ctx, thread.provider))
     return reject("bad_request", "This provider does not support plan mode.");
@@ -424,6 +436,7 @@ function beginTurn(
     checkpointBefore: checkpointRef(thread.id, turnId, "before"),
     interactionMode: thread.interactionMode ?? "default",
     ...(fromQueueId ? { fromQueueId } : {}),
+    ...(origin ? { origin } : {}),
   });
   return { ok: true, events, effects: [{ kind: "turn.run", threadId: thread.id, turnId }] };
 }

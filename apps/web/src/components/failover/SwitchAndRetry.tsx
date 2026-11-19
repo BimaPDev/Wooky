@@ -1,6 +1,6 @@
 import type { ModelTarget, ReadModel, Turn, TurnFailure } from "@age/contracts";
 import { DEFAULT_MODEL_RANKING, emptyReadModel, pickFallback } from "@age/domain";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { failoverThread } from "../../state/actions.ts";
 import { useStore } from "../../state/store.ts";
 import { isAvailable } from "../labels.ts";
@@ -18,6 +18,8 @@ import {
 export function SwitchAndRetry({ turn, failure }: { turn: Turn; failure: TurnFailure }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
+  const menuId = useId();
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
 
@@ -36,10 +38,18 @@ export function SwitchAndRetry({ turn, failure }: { turn: Turn; failure: TurnFai
     if (restoreFocus) trigger.current?.focus();
   };
 
+  // Stays busy after an accepted switch: the thread leaves idle and this turn stops being last,
+  // which unmounts the button. Only a failed dispatch re-enables it.
   const pick = (target: ModelTarget) => {
+    if (submitting.current) return;
+    submitting.current = true;
     close(false);
     setBusy(true);
-    void failoverThread(turn.threadId, target, failure, turn.prompt).finally(() => setBusy(false));
+    void failoverThread(turn.threadId, target, failure, turn.prompt).then((ack) => {
+      if (ack?.accepted) return;
+      submitting.current = false;
+      setBusy(false);
+    });
   };
 
   return (
@@ -50,12 +60,22 @@ export function SwitchAndRetry({ turn, failure }: { turn: Turn; failure: TurnFai
         className="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         disabled={busy}
         onClick={() => setOpen(!open)}
       >
         Switch and retry
       </button>
-      {open ? <RetryMenu turn={turn} failure={failure} onPick={pick} onClose={close} /> : null}
+      {open ? (
+        <RetryMenu
+          id={menuId}
+          turn={turn}
+          failure={failure}
+          busy={busy}
+          onPick={pick}
+          onClose={close}
+        />
+      ) : null}
     </div>
   );
 }
@@ -63,13 +83,17 @@ export function SwitchAndRetry({ turn, failure }: { turn: Turn; failure: TurnFai
 const EMPTY: Readonly<Record<string, never>> = {};
 
 function RetryMenu({
+  id,
   turn,
   failure,
+  busy,
   onPick,
   onClose,
 }: {
+  id: string;
   turn: Turn;
   failure: TurnFailure;
+  busy: boolean;
   onPick: (target: ModelTarget) => void;
   onClose: (restoreFocus: boolean) => void;
 }) {
@@ -112,7 +136,7 @@ function RetryMenu({
   ];
 
   const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
+    if (event.key === "Escape" || event.key === "Tab") {
       event.preventDefault();
       onClose(true);
       return;
@@ -127,11 +151,11 @@ function RetryMenu({
     else if (event.key === "ArrowUp") move(at - 1);
     else if (event.key === "Home") move(0);
     else if (event.key === "End") move(items.length - 1);
-    else if (event.key === "Tab") onClose(false);
   };
 
   return (
     <div
+      id={id}
       className="retry-menu"
       role="menu"
       aria-label="Switch to"
@@ -150,6 +174,7 @@ function RetryMenu({
               type="button"
               role="menuitem"
               className="retry-item"
+              disabled={busy}
               onClick={() => onPick(target)}
             >
               <span className={`provider-mark provider-${target.provider}`} aria-hidden="true" />

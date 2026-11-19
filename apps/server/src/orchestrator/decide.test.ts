@@ -966,11 +966,21 @@ describe("decide thread.failover", () => {
       switches: 1,
       from: { provider: "claude", model: "sonnet" },
     });
+    expect(decision.events.find((event) => event.type === "turn.started")).toMatchObject({
+      origin: {
+        kind: "failover",
+        from: { provider: "claude", model: "sonnet" },
+        to: { provider: "codex", model: "gpt-6.1-sol" },
+        failure,
+        switches: 1,
+      },
+    });
     expect(decision.effects).toEqual([{ kind: "turn.run", threadId: "t1", turnId: "turn-1" }]);
     const events = decision.events as PendingEvent[];
     const next = apply(model, events);
     expect(next.threads.t1?.provider).toBe("codex");
     expect(next.turns.t1?.at(-1)?.prompt).toBe("Ship it");
+    expect(next.turns.t1?.at(-1)?.origin?.kind).toBe("failover");
   });
 
   it("keeps failover.original across chained switches", () => {
@@ -1065,5 +1075,25 @@ describe("decide turn.start switch-back", () => {
       model: "sonnet",
       handoff: true,
     });
+    expect(decision.events.find((event) => event.type === "turn.started")).toMatchObject({
+      origin: {
+        kind: "restore",
+        from: { provider: "cursor", model: "auto" },
+        to: { provider: "claude", model: "sonnet" },
+      },
+    });
+  });
+
+  it("sets no origin on an ordinary turn", () => {
+    const decision = accepted(
+      decide(
+        apply(seed(thread({ provider: "claude", model: "sonnet" })), []),
+        command("turn.start", { threadId: "t1", prompt: "x" }),
+        testContext(),
+      ),
+    );
+    const started = decision.events.find((event) => event.type === "turn.started");
+    expect(started).toBeDefined();
+    expect(started).not.toHaveProperty("origin");
   });
 });
