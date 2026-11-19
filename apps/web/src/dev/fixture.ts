@@ -17,6 +17,12 @@ import {
   type UsageHistoryResult,
   type UsageWindowDays,
 } from "@age/contracts";
+import {
+  looksLikeSvg,
+  looksLikeT3code,
+  themeFromT3code,
+  wallpaperThemeFromSvg,
+} from "../components/theme-studio/helpers.ts";
 import type { Backend } from "../state/backend.ts";
 import { RpcCallError } from "../rpc/client.ts";
 
@@ -840,22 +846,35 @@ function respond(method: RpcMethod, params: unknown): unknown {
       return { deleted: true };
     }
     case "themes.import": {
-      const { text, activate } = params as RpcParams<"themes.import">;
-      let raw: unknown;
-      try {
-        raw = JSON.parse(text);
-      } catch {
-        throw new Error("That file is not valid JSON.");
-      }
-      if (!raw || typeof raw !== "object") throw new Error("That file is not an AGE theme.");
-      const parsed = AppearanceTheme.safeParse({ ...raw, builtin: false });
-      if (!parsed.success) {
-        const issue = parsed.error.issues[0];
-        throw new Error(
-          issue ? `${issue.path.join(".") || "theme"}: ${issue.message}` : "Invalid theme.",
+      const { text, filename, activate } = params as RpcParams<"themes.import">;
+      let theme: AppearanceThemeValue;
+      let format: "age" | "t3code" | "svg";
+      if (looksLikeSvg(text, filename)) {
+        theme = AppearanceTheme.parse(wallpaperThemeFromSvg(text, filename));
+        format = "svg";
+      } else {
+        let raw: unknown;
+        try {
+          raw = JSON.parse(text);
+        } catch {
+          throw new Error("That file is not valid JSON.");
+        }
+        const parsed = AppearanceTheme.safeParse(
+          raw && typeof raw === "object" ? { ...raw, builtin: false } : raw,
         );
+        if (parsed.success) {
+          theme = parsed.data;
+          format = "age";
+        } else if (looksLikeT3code(raw)) {
+          theme = AppearanceTheme.parse(themeFromT3code(raw));
+          format = "t3code";
+        } else {
+          const issue = parsed.error.issues[0];
+          throw new Error(
+            issue ? `${issue.path.join(".") || "theme"}: ${issue.message}` : "Invalid theme.",
+          );
+        }
       }
-      let theme = parsed.data;
       if (fixtureThemes.some((entry) => entry.id === theme.id && entry.builtin)) {
         theme = { ...theme, id: `${theme.id}-imported` };
       }
@@ -863,7 +882,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
       if (index >= 0) fixtureThemes[index] = theme;
       else fixtureThemes.push(theme);
       if (activate) fixtureSettings = { ...fixtureSettings, activeThemeId: theme.id };
-      return { theme, format: "age" as const };
+      return { theme, format };
     }
     case "themes.activate": {
       const id = (params as RpcParams<"themes.activate">).id;

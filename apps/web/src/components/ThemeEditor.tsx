@@ -16,10 +16,14 @@ import {
 import { BLACK } from "../state/theme-data.ts";
 import { IconClose, IconCopy, IconTrash } from "./Icons.tsx";
 import {
+  applyPalettePatch,
+  clampThemeName,
+  downloadJson,
   exportFilename,
   paletteView,
   previewTheme,
   seedVariant,
+  THEME_NAME_MAX,
   uniqueThemeId,
   wallpaperFileToDataUrl,
 } from "./theme-studio/helpers.ts";
@@ -151,6 +155,7 @@ export function ThemeEditor({
   const otherMode = theme.appearance === "dark" ? "light" : "dark";
   const hasOther = Boolean(theme.variants?.[otherMode]);
   const view = paletteView(theme, editMode);
+  const savingLock = useRef(false);
 
   // sync: live-preview the draft in the document stylesheet; restore the saved theme on close
   useEffect(() => {
@@ -171,22 +176,7 @@ export function ThemeEditor({
     colors?: ThemeColorRoles;
     background?: ThemeBackground;
   }) => {
-    if (editMode === theme.appearance) {
-      patch(next);
-      return;
-    }
-    const current = paletteView(theme, editMode);
-    patch({
-      variants: {
-        ...theme.variants,
-        [editMode]: {
-          canvas: next.canvas ?? current.canvas,
-          accent: next.accent ?? current.accent,
-          colors: next.colors ?? current.colors,
-          background: next.background !== undefined ? next.background : current.background,
-        },
-      },
-    });
+    setTheme((current) => applyPalettePatch(current, editMode, next));
   };
   const patchBackground = (next: Partial<ThemeBackground>) =>
     patchPalette({ background: clean({ ...view.background, ...next }) });
@@ -196,27 +186,29 @@ export function ThemeEditor({
   };
 
   const save = async () => {
+    if (savingLock.current) return;
+    savingLock.current = true;
     setError(null);
+    const name = clampThemeName(theme.name);
     const draft = fork
-      ? { ...theme, id: uniqueThemeId(theme.name), builtin: false }
-      : { ...theme, builtin: false };
+      ? { ...theme, id: uniqueThemeId(name), name, builtin: false }
+      : { ...theme, name, builtin: false };
     const parsed = AppearanceTheme.safeParse(draft);
     if (!parsed.success) {
+      savingLock.current = false;
       const issue = parsed.error.issues[0];
       setError(issue ? `${issue.path.join(".") || "theme"}: ${issue.message}` : "Invalid theme.");
       return;
     }
-    await onSave(parsed.data);
+    try {
+      await onSave(parsed.data);
+    } finally {
+      savingLock.current = false;
+    }
   };
 
   const exportJson = () => {
-    const blob = new Blob([`${JSON.stringify(theme, null, 2)}\n`], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = exportFilename(theme.id);
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadJson(exportFilename(theme.id), `${JSON.stringify(theme, null, 2)}\n`);
   };
 
   return (
@@ -226,7 +218,8 @@ export function ThemeEditor({
           className="theme-studio-name"
           value={theme.name}
           aria-label="Theme name"
-          onChange={(event) => patch({ name: event.target.value })}
+          maxLength={THEME_NAME_MAX}
+          onChange={(event) => patch({ name: event.target.value.slice(0, THEME_NAME_MAX) })}
         />
         <Segmented
           label="Base appearance"
@@ -276,7 +269,10 @@ export function ThemeEditor({
           type="button"
           className="button primary"
           disabled={busy || !theme.name.trim()}
-          onClick={() => void save()}
+          onClick={() => {
+            if (savingLock.current) return;
+            void save();
+          }}
         >
           {fork ? "Save as new theme" : "Save"}
         </button>
@@ -430,6 +426,7 @@ export function ThemeEditor({
           <BackgroundTab
             background={view.background ?? {}}
             onChange={patchBackground}
+            onClear={() => patchPalette({ background: undefined })}
             onError={setError}
           />
         ) : null}
@@ -469,7 +466,11 @@ export function ThemeEditor({
           </div>
         ) : null}
       </div>
-      {error ? <p className="empty-state error small">{error}</p> : null}
+      {error ? (
+        <p className="empty-state error small" role="alert">
+          {error}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -477,10 +478,12 @@ export function ThemeEditor({
 function BackgroundTab({
   background,
   onChange,
+  onClear,
   onError,
 }: {
   background: ThemeBackground;
   onChange: (next: Partial<ThemeBackground>) => void;
+  onClear: () => void;
   onError: (message: string | null) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -510,11 +513,7 @@ function BackgroundTab({
             {bg.image ? "Replace image" : "Use my own wallpaper"}
           </button>
           {bg.image ? (
-            <button
-              type="button"
-              className="button"
-              onClick={() => onChange({ image: undefined, animated: undefined })}
-            >
+            <button type="button" className="button" onClick={onClear}>
               <IconClose />
               Remove
             </button>
@@ -746,6 +745,7 @@ export function Slider({
   step,
   format,
   onChange,
+  onCommit,
 }: {
   label: string;
   value: number;
@@ -754,6 +754,7 @@ export function Slider({
   step: number;
   format: (n: number) => string;
   onChange: (n: number) => void;
+  onCommit?: (n: number) => void;
 }) {
   const ratio = (value - min) / (max - min);
   return (
@@ -769,6 +770,8 @@ export function Slider({
         value={value}
         style={{ "--settings-slider-progress": `${ratio * 100}%` } as CSSProperties}
         onChange={(event) => onChange(Number(event.currentTarget.value))}
+        onPointerUp={(event) => onCommit?.(Number(event.currentTarget.value))}
+        onKeyUp={(event) => onCommit?.(Number(event.currentTarget.value))}
       />
     </div>
   );

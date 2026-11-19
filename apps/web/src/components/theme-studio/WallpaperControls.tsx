@@ -1,9 +1,23 @@
 import type { AppearanceTheme, ThemeBackground } from "@age/contracts";
 import { useEffect, useRef, useState } from "react";
-import { getTheme, saveTheme } from "../../state/appearance.ts";
+import {
+  getTheme,
+  previewThemeLocally,
+  restoreSavedTheme,
+  saveTheme,
+} from "../../state/appearance.ts";
+import { useStore } from "../../state/store.ts";
 import { Slider } from "../ThemeEditor.tsx";
-import { forkAsYours, wallpaperFileToDataUrl, wallpaperOf } from "./helpers.ts";
+import {
+  applyWallpaperPatch,
+  effectiveColorMode,
+  forkAsYours,
+  previewTheme,
+  wallpaperFileToDataUrl,
+  wallpaperWriteTarget,
+} from "./helpers.ts";
 import { activateListedTheme } from "./rpc.ts";
+import { invalidateThemeThumbnail } from "./thumbnails.ts";
 
 export function WallpaperControls({
   themeId,
@@ -18,15 +32,32 @@ export function WallpaperControls({
   onError: (message: string | null) => void;
   onCatalogChanged: () => Promise<void>;
 }) {
+  const colorMode = useStore((state) => state.deviceSettings?.colorMode ?? "system");
+  const mode = effectiveColorMode(colorMode);
   const [theme, setTheme] = useState<AppearanceTheme | null>(null);
+  const [draftBg, setDraftBg] = useState<ThemeBackground>({});
   const input = useRef<HTMLInputElement>(null);
+  const activeIdRef = useRef(themeId);
+  const mountedRef = useRef(true);
+  const draftThemeRef = useRef<AppearanceTheme | null>(null);
+  const debounceRef = useRef(0);
+  const pendingRef = useRef<AppearanceTheme | null>(null);
+  const savingRef = useRef(false);
+
+  // sync: drop in-flight wallpaper saves after the loaded theme changes
+  useEffect(() => {
+    activeIdRef.current = themeId;
+  }, [themeId]);
 
   // sync: load the active theme so wallpaper sliders can edit it
   useEffect(() => {
     let cancelled = false;
     void getTheme(themeId).then(
       (loaded) => {
-        if (!cancelled) setTheme(loaded);
+        if (cancelled) return;
+        draftThemeRef.current = loaded;
+        setTheme(loaded);
+        setDraftBg(layerFor(loaded, mode));
       },
       (err: unknown) => {
         if (!cancelled)
@@ -36,40 +67,106 @@ export function WallpaperControls({
     return () => {
       cancelled = true;
     };
-  }, [themeId, onError]);
+  }, [themeId, mode, onError]);
 
-  if (!theme || !wallpaperOf(theme).image) return null;
-  const bg = wallpaperOf(theme);
+  // sync: restore the saved appearance after a live wallpaper preview
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      restoreSavedTheme();
+    };
+  }, []);
 
-  const persist = async (next: Partial<ThemeBackground>) => {
-    onBusy(true);
-    onError(null);
+  if (!theme || !layerFor(theme, mode).image) return null;
+  const bg = draftBg;
+
+  const preview = (nextBg: ThemeBackground) => {
+    const base = draftThemeRef.current ?? theme;
+    previewThemeLocally(previewTheme(applyWallpaperPatch(base, mode, nextBg), mode));
+  };
+
+  const queueSave = (nextTheme: AppearanceTheme) => {
+    const draft = nextTheme.builtin ? forkAsYours(nextTheme) : nextTheme;
+    draftThemeRef.current = draft;
+    pendingRef.current = draft;
+    void flushSaves();
+  };
+
+  const flushSaves = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    const startedId = themeId;
     try {
-      const layer = { ...bg, ...next };
-      const background = Object.fromEntries(
-        Object.entries(layer).filter(([, value]) => value !== undefined),
-      ) as ThemeBackground;
-      let draft: AppearanceTheme = { ...theme, background };
-      if (draft.builtin) draft = forkAsYours(draft);
-      const saved = await saveTheme(draft);
-      if (theme.builtin || saved.id !== theme.id)
-        await activateListedTheme(saved.id, saved.appearance);
-      setTheme(saved);
-      await onCatalogChanged();
+      while (pendingRef.current) {
+        const next = pendingRef.current;
+        pendingRef.current = null;
+        const saved = await saveTheme(next);
+        invalidateThemeThumbnail(startedId);
+        invalidateThemeThumbnail(saved.id);
+        await onCatalogChanged();
+        if (isStaleSave(mountedRef.current, activeIdRef.current, startedId, saved.id)) return;
+        if (next.id !== startedId || saved.id !== startedId)
+          await activateListedTheme(saved.id, saved.appearance);
+        if (isStaleSave(mountedRef.current, activeIdRef.current, startedId, saved.id)) return;
+        setTheme(saved);
+        draftThemeRef.current = saved;
+        if (debounceRef.current === 0 && !pendingRef.current) {
+          setDraftBg(layerFor(saved, mode));
+          restoreSavedTheme();
+        }
+      }
     } catch (err) {
       onError(err instanceof Error ? err.message : "Could not update wallpaper.");
     } finally {
-      onBusy(false);
+      savingRef.current = false;
+      if (
+        pendingRef.current &&
+        !isStaleSave(mountedRef.current, activeIdRef.current, startedId, startedId)
+      )
+        void flushSaves();
     }
+  };
+
+  const persistDraft = (nextBg: ThemeBackground) => {
+    onError(null);
+    const base = draftThemeRef.current ?? theme;
+    queueSave(applyWallpaperPatch(base, mode, nextBg));
+  };
+
+  const schedulePersist = (nextBg: ThemeBackground) => {
+    setDraftBg(nextBg);
+    preview(nextBg);
+    window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      debounceRef.current = 0;
+      persistDraft(nextBg);
+    }, 250);
+  };
+
+  const commit = (nextBg: ThemeBackground) => {
+    setDraftBg(nextBg);
+    preview(nextBg);
+    window.clearTimeout(debounceRef.current);
+    debounceRef.current = 0;
+    persistDraft(nextBg);
   };
 
   const pick = async (file: File) => {
     onError(null);
+    onBusy(true);
     try {
       const wallpaper = await wallpaperFileToDataUrl(file);
-      await persist(wallpaper);
+      const nextBg = { ...bg, ...wallpaper };
+      setDraftBg(nextBg);
+      preview(nextBg);
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = 0;
+      persistDraft(nextBg);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Could not read that image.");
+    } finally {
+      onBusy(false);
     }
   };
 
@@ -126,7 +223,7 @@ export function WallpaperControls({
                     className={current === value ? "segmented-item active" : "segmented-item"}
                     aria-pressed={current === value}
                     disabled={busy}
-                    onClick={() => void persist({ fit: value === "cover" ? undefined : value })}
+                    onClick={() => commit({ ...bg, fit: value === "cover" ? undefined : value })}
                   >
                     {label}
                   </button>
@@ -143,8 +240,8 @@ export function WallpaperControls({
           max={90}
           step={5}
           format={(n) => `${n}%`}
-          disabled={busy}
-          onChange={(dim) => void persist({ dim })}
+          onDraft={(dim) => schedulePersist({ ...bg, dim })}
+          onCommit={(dim) => commit({ ...bg, dim })}
         />
         <WallpaperSlider
           title="Blur"
@@ -154,8 +251,8 @@ export function WallpaperControls({
           max={40}
           step={1}
           format={(n) => `${n}px`}
-          disabled={busy}
-          onChange={(blur) => void persist({ blur: blur || undefined })}
+          onDraft={(blur) => schedulePersist({ ...bg, blur: blur || undefined })}
+          onCommit={(blur) => commit({ ...bg, blur: blur || undefined })}
         />
         <WallpaperSlider
           title="Panel blur"
@@ -165,8 +262,8 @@ export function WallpaperControls({
           max={40}
           step={1}
           format={(n) => `${n}px`}
-          disabled={busy}
-          onChange={(panelBlur) => void persist({ panelBlur: panelBlur || undefined })}
+          onDraft={(panelBlur) => schedulePersist({ ...bg, panelBlur: panelBlur || undefined })}
+          onCommit={(panelBlur) => commit({ ...bg, panelBlur: panelBlur || undefined })}
         />
         <WallpaperSlider
           title="Surface opacity"
@@ -176,12 +273,29 @@ export function WallpaperControls({
           max={100}
           step={2}
           format={(n) => `${n}%`}
-          disabled={busy}
-          onChange={(surfaceOpacity) => void persist({ surfaceOpacity })}
+          onDraft={(surfaceOpacity) => schedulePersist({ ...bg, surfaceOpacity })}
+          onCommit={(surfaceOpacity) => commit({ ...bg, surfaceOpacity })}
         />
       </div>
     </section>
   );
+}
+
+function isStaleSave(
+  mounted: boolean,
+  currentId: string,
+  startedId: string,
+  savedId: string,
+): boolean {
+  if (!mounted) return true;
+  return currentId !== startedId && currentId !== savedId;
+}
+
+function layerFor(theme: AppearanceTheme, mode: "dark" | "light"): ThemeBackground {
+  if (wallpaperWriteTarget(theme, mode) === "variant") {
+    return theme.variants?.[mode]?.background ?? {};
+  }
+  return theme.background ?? {};
 }
 
 function WallpaperSlider({
@@ -192,8 +306,8 @@ function WallpaperSlider({
   max,
   step,
   format,
-  disabled,
-  onChange,
+  onDraft,
+  onCommit,
 }: {
   title: string;
   description: string;
@@ -202,8 +316,8 @@ function WallpaperSlider({
   max: number;
   step: number;
   format: (n: number) => string;
-  disabled: boolean;
-  onChange: (n: number) => void;
+  onDraft: (n: number) => void;
+  onCommit: (n: number) => void;
 }) {
   return (
     <div className="setting-row">
@@ -212,17 +326,16 @@ function WallpaperSlider({
         <p className="setting-desc">{description}</p>
       </div>
       <div className="setting-control">
-        <fieldset disabled={disabled} className="theme-wallpaper-slider">
-          <Slider
-            label={title}
-            value={value}
-            min={min}
-            max={max}
-            step={step}
-            format={format}
-            onChange={onChange}
-          />
-        </fieldset>
+        <Slider
+          label={title}
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          format={format}
+          onChange={onDraft}
+          onCommit={onCommit}
+        />
       </div>
     </div>
   );

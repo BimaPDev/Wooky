@@ -27,8 +27,17 @@ import { Modal } from "./Modal.tsx";
 import { ThemeEditor } from "./ThemeEditor.tsx";
 import { ThemeGallery } from "./theme-studio/ThemeGallery.tsx";
 import { WallpaperControls } from "./theme-studio/WallpaperControls.tsx";
-import { importedStatusText, readFileAsText, themeFileTooLarge } from "./theme-studio/helpers.ts";
+import {
+  clampThemeName,
+  importedStatusText,
+  readFileAsText,
+  themeFileTooLarge,
+  uniqueThemeId,
+} from "./theme-studio/helpers.ts";
 import { activateListedTheme, importThemeText } from "./theme-studio/rpc.ts";
+import { invalidateThemeThumbnail } from "./theme-studio/thumbnails.ts";
+
+const EMPTY_THEMES: AppearanceThemeSummary[] = [];
 
 type ColorMode = DeviceSettingsValue["colorMode"];
 type PreviewColors = {
@@ -67,6 +76,8 @@ export function AppearanceSettings() {
   const [dragging, setDragging] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
+  const importLock = useRef(false);
+  const themes = catalog?.themes ?? EMPTY_THEMES;
 
   const refresh = useCallback(async () => {
     const listed = await listThemes();
@@ -94,10 +105,11 @@ export function AppearanceSettings() {
     setError(null);
     try {
       const seed = await getTheme(active);
+      const name = clampThemeName(seed.builtin ? "My theme" : `${seed.name} copy`);
       setEditing({
         ...seed,
-        id: `theme-${Date.now().toString(36)}`,
-        name: seed.builtin ? "My theme" : `${seed.name} copy`,
+        id: uniqueThemeId(name),
+        name,
         builtin: false,
       });
     } catch (err) {
@@ -136,10 +148,11 @@ export function AppearanceSettings() {
     setError(null);
     try {
       const source = await getTheme(id);
+      const name = clampThemeName(`${source.name} copy`);
       setEditing({
         ...source,
-        id: `${source.id}-copy`,
-        name: `${source.name} copy`,
+        id: uniqueThemeId(name),
+        name,
         builtin: false,
       });
     } catch (err) {
@@ -154,6 +167,8 @@ export function AppearanceSettings() {
     setError(null);
     try {
       const saved = await saveTheme(theme);
+      invalidateThemeThumbnail(theme.id);
+      invalidateThemeThumbnail(saved.id);
       setEditing(null);
       await activateListedTheme(saved.id, saved.appearance);
       await refresh();
@@ -169,6 +184,7 @@ export function AppearanceSettings() {
     setBusy(true);
     try {
       await deleteTheme(editing.id);
+      invalidateThemeThumbnail(editing.id);
       setEditing(null);
       await refresh();
     } catch (err) {
@@ -180,21 +196,25 @@ export function AppearanceSettings() {
 
   const importText = useCallback(
     async (text: string, filename?: string) => {
+      if (importLock.current) return;
       if (themeFileTooLarge(new TextEncoder().encode(text).byteLength)) {
         setStatus(null);
         setError("That file is larger than 6 MB.");
         return;
       }
+      importLock.current = true;
       setBusy(true);
       setError(null);
       try {
         const result = await importThemeText(text, filename);
+        invalidateThemeThumbnail(result.theme.id);
         setStatus(importedStatusText(result.theme.name, result.format));
         await refresh();
       } catch (err) {
         setStatus(null);
         setError(err instanceof Error ? err.message : "Could not import theme.");
       } finally {
+        importLock.current = false;
         setBusy(false);
       }
     },
@@ -203,6 +223,7 @@ export function AppearanceSettings() {
 
   const importFile = useCallback(
     async (file: File) => {
+      if (importLock.current) return;
       if (themeFileTooLarge(file.size)) {
         setStatus(null);
         setError("That file is larger than 6 MB.");
@@ -225,6 +246,7 @@ export function AppearanceSettings() {
         setError(null);
         try {
           await deleteTheme(id);
+          invalidateThemeThumbnail(id);
           await refresh();
         } catch (err) {
           setError(err instanceof Error ? err.message : "Could not delete theme.");
@@ -271,12 +293,18 @@ export function AppearanceSettings() {
             <button
               type="button"
               className="ghost-button"
+              disabled={busy}
               onClick={() => importRef.current?.click()}
             >
               <IconPlus />
               Import theme
             </button>
-            <button type="button" className="ghost-button" onClick={() => setPasteOpen(true)}>
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={busy}
+              onClick={() => setPasteOpen(true)}
+            >
               Paste JSON
             </button>
             <input
@@ -303,8 +331,8 @@ export function AppearanceSettings() {
           </p>
         ) : null}
         <ThemeGallery
-          themes={catalog?.themes ?? []}
-          busy={busy}
+          themes={themes}
+          dropEnabled={!busy}
           dragging={dragging}
           onDragging={setDragging}
           onActivate={applyTheme}
@@ -467,7 +495,11 @@ export function AppearanceSettings() {
         </div>
       </section>
 
-      {error ? <p className="empty-state error small">{error}</p> : null}
+      {error ? (
+        <p className="empty-state error small" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -498,6 +530,7 @@ function PasteThemeDialog({
           value={text}
           aria-label="Theme JSON"
           placeholder='{ "id": "paper", "name": "Paper", ... }'
+          disabled={busy}
           onChange={(event) => setText(event.target.value)}
         />
         <div className="theme-paste-actions">
