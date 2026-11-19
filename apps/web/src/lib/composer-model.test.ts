@@ -5,6 +5,7 @@ import {
   defaultEffortFor,
   effortLabel,
   effortsFor,
+  pickerProviders,
   shortModelName,
   shownEffort,
 } from "./composer-model.ts";
@@ -80,5 +81,68 @@ describe("effort", () => {
   it("labels the levels", () => {
     expect(effortLabel("xhigh")).toBe("Extra high");
     expect(effortLabel("medium")).toBe("Medium");
+  });
+});
+
+const status = (
+  kind: ProviderStatus["kind"],
+  fields: Partial<ProviderStatus> = {},
+): ProviderStatus => ({
+  kind,
+  label: kind,
+  installed: true,
+  authenticated: true,
+  version: null,
+  problem: null,
+  models: [{ id: "m", label: "M" }],
+  ...fields,
+});
+
+const kinds = (list: ProviderStatus[]) => list.map((entry) => entry.kind);
+
+describe("pickerProviders", () => {
+  const none = new Set<ProviderStatus["kind"]>();
+
+  it("keeps only providers that are installed, not signed out, enabled and listing models", () => {
+    const list = [
+      status("claude"),
+      status("codex", { installed: false, problem: "Codex CLI was not found on PATH" }),
+      status("cursor", { authenticated: false }),
+      status("opencode", { authenticated: null }),
+      status("acp", { models: [] }),
+    ];
+    expect(
+      kinds(pickerProviders(list, none, null, { showDemo: false, current: "claude" })),
+    ).toEqual(["claude", "opencode"]);
+    expect(
+      kinds(
+        pickerProviders(list, new Set(["opencode"]), null, { showDemo: false, current: "claude" }),
+      ),
+    ).toEqual(["claude"]);
+  });
+
+  it("hides Demo unless it is asked for or nothing else is usable", () => {
+    const list = [status("claude"), status("demo")];
+    expect(
+      kinds(pickerProviders(list, none, null, { showDemo: false, current: "claude" })),
+    ).toEqual(["claude"]);
+    expect(kinds(pickerProviders(list, none, null, { showDemo: true, current: "claude" }))).toEqual(
+      ["claude", "demo"],
+    );
+    expect(
+      kinds(
+        pickerProviders([status("claude", { authenticated: false }), status("demo")], none, null, {
+          showDemo: false,
+          current: "claude",
+        }),
+      ),
+    ).toEqual(["claude", "demo"]);
+  });
+
+  it("never hides the provider the thread is on", () => {
+    const list = [status("claude"), status("codex", { installed: false })];
+    expect(kinds(pickerProviders(list, none, null, { showDemo: false, current: "codex" }))).toEqual(
+      ["claude", "codex"],
+    );
   });
 });

@@ -1290,16 +1290,18 @@ button.chip:active {
   gap: 2px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--line);
-  overflow-x: auto;
+  flex-wrap: wrap;
 }
 
 .model-tab {
-  display: inline-grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
   border: 0;
   border-radius: 9px;
+  font-size: var(--text-sm);
   background: transparent;
   color: var(--text-3);
   flex: none;
@@ -1310,8 +1312,7 @@ button.chip:active {
 }
 
 .model-tab.active {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--bg-3) 78%, transparent);
   color: var(--text);
 }
 
@@ -1324,6 +1325,7 @@ button.chip:active {
 .model-list {
   flex: 1 1 auto;
   min-height: 96px;
+  max-height: 208px;
   overflow: auto;
   padding: 6px;
   display: flex;
@@ -6845,24 +6847,6 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   transform: translateX(12px);
 }
 
-.picker-action {
-  height: 30px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-2);
-  font-size: var(--text-sm);
-}
-
-.picker-action:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.picker-action:disabled {
-  opacity: 0.45;
-}
-
 .topbar-draft-title {
   color: var(--text);
   font-weight: 500;
@@ -6883,7 +6867,7 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   align-items: center;
   width: 100%;
   gap: var(--space-4);
-  margin-bottom: 8vh;
+  margin-bottom: 18vh;
 }
 
 .draft-heading {
@@ -6940,4 +6924,46 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   .composer-model-chip {
     transition: none;
   }
+}
+
+/* Menus and popovers stay readable over the page and over wallpapers. */
+.popover,
+html[data-wallpaper] .popover,
+.composer-menu,
+html[data-wallpaper] .composer-menu {
+  background: var(--bg-2);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.picker-switches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.picker-bottom {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+}
+
+.picker-quiet {
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.picker-quiet:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.picker-quiet:disabled {
+  opacity: 0.45;
 }
