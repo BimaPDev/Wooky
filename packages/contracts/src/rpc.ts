@@ -3,6 +3,7 @@ import {
   AppearanceTheme,
   AppearanceThemeSummary,
   DeviceSettings,
+  DeviceSettingsPatch,
   ThemeImportFormat,
 } from "./appearance.ts";
 import { ProviderCooldown } from "./failover.ts";
@@ -129,7 +130,7 @@ export const RpcMethods = {
   },
   "settings.get": { params: z.object({}), result: DeviceSettings },
   "settings.put": {
-    params: z.object({ settings: DeviceSettings.partial() }),
+    params: z.object({ settings: DeviceSettingsPatch }),
     result: DeviceSettings,
   },
   "themes.list": {

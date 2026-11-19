@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { AppearanceTheme, DeviceSettings, ThemeImage, ThemeImportFormat } from "./appearance.ts";
+import {
+  AppearanceTheme,
+  DeviceSettings,
+  DeviceSettingsPatch,
+  ThemeImage,
+  ThemeImportFormat,
+} from "./appearance.ts";
 import { RpcMethods, ThemesPush } from "./rpc.ts";
 
 const base = {
@@ -119,5 +125,21 @@ describe("theme rpc", () => {
     expect(
       ThemesPush.parse({ push: "themes", activeThemeId: "paper", changedIds: ["paper"] }),
     ).toEqual({ push: "themes", activeThemeId: "paper", changedIds: ["paper"] });
+  });
+});
+
+describe("DeviceSettingsPatch", () => {
+  it("keeps only the keys that were sent", () => {
+    expect(DeviceSettingsPatch.parse({ chatWidth: "wide" })).toEqual({ chatWidth: "wide" });
+  });
+
+  it("rejects an invalid value", () => {
+    expect(DeviceSettingsPatch.safeParse({ chatWidth: "huge" }).success).toBe(false);
+  });
+
+  it("drops unknown keys", () => {
+    expect(DeviceSettingsPatch.parse({ nope: 1, confirmDelete: false })).toEqual({
+      confirmDelete: false,
+    });
   });
 });

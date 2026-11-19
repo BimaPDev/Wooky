@@ -206,3 +206,21 @@ export const DeviceSettings = z.object({
   failover: FailoverSettings,
 });
 export type DeviceSettings = z.infer<typeof DeviceSettings>;
+
+/**
+ * A settings.put patch. `.partial()` alone would fill every missing key with its
+ * default, so one partial save would reset all other settings. Keep only sent keys.
+ */
+export const DeviceSettingsPatch = z
+  .record(z.string(), z.unknown())
+  .transform((raw, ctx): Partial<DeviceSettings> => {
+    const parsed = DeviceSettings.partial().safeParse(raw);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({ code: "custom", path: issue.path, message: issue.message, input: raw });
+      }
+      return z.NEVER;
+    }
+    const kept = Object.entries(parsed.data).filter(([key]) => Object.hasOwn(raw, key));
+    return Object.fromEntries(kept) as Partial<DeviceSettings>;
+  });

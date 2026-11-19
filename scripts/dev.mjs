@@ -139,7 +139,7 @@ async function main() {
   );
   start(
     "server",
-    ["--filter", "@age/server", "dev", "--", "--port", String(port), "--home", devHome],
+    ["--filter", "@age/server", "dev", "--port", String(port), "--home", devHome],
     { ...process.env, AGE_HOME: devHome, AGE_PORT: String(port) },
     (line) => {
       const match = /^AGE_LISTENING (\S+)/.exec(line);
