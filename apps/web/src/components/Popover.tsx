@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { chooseSide } from "./overlay-place.ts";
 
 const PopoverCloseContext = createContext<() => void>(() => {});
 
@@ -94,17 +95,8 @@ export function PopoverChip({
     const anchor = trigger.current;
     if (!open || !el || !anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const above = rect.top;
-    const below = window.innerHeight - rect.bottom;
-    const preferred = placement === "above" ? above : below;
-    const other = placement === "above" ? below : above;
-    const next: Placement =
-      preferred < minRoom && other > preferred
-        ? placement === "above"
-          ? "below"
-          : "above"
-        : placement;
-    const room = next === "above" ? above : below;
+    const next = chooseSide(rect, window.innerHeight, placement, minRoom);
+    const room = next === "above" ? rect.top : window.innerHeight - rect.bottom;
     el.style.setProperty("--popover-room", `${Math.max(240, Math.floor(room - 56))}px`);
     setSide(next);
   }, [open, placement, minRoom]);

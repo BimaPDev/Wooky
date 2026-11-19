@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "happy-dom": "^21.0.4",
     "knip": "^6.45.1",
     "oxlint": "^1.94.0",
     "prettier": "^3.10.1",

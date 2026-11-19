@@ -21,6 +21,7 @@ import { backend } from "../state/backend.ts";
 import { closeSettings } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { IconCheck, IconChevron, IconClose, IconInfo, IconRefresh } from "./Icons.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import { Modal } from "./Modal.tsx";
 
 type Metric = "cost" | "tokens" | "limits";
@@ -261,31 +262,33 @@ export function UsageDashboard() {
               }))}
               onChange={(value) => setMetric(value as Metric)}
             />
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Refresh"
-              title="Refresh"
-              onClick={() => {
-                setNowMs(Date.now());
-                if (metric === "limits") {
-                  setLimitsReq((prev) => ({ nonce: prev.nonce + 1, refresh: true }));
-                } else {
-                  setHistoryReq((prev) => ({ nonce: prev.nonce + 1, refresh: true }));
-                }
-              }}
-            >
-              <IconRefresh />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Close usage"
-              title="Close (Esc)"
-              onClick={closeSettings}
-            >
-              <IconClose />
-            </button>
+            <Tooltip label="Refresh">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Refresh"
+                onClick={() => {
+                  setNowMs(Date.now());
+                  if (metric === "limits") {
+                    setLimitsReq((prev) => ({ nonce: prev.nonce + 1, refresh: true }));
+                  } else {
+                    setHistoryReq((prev) => ({ nonce: prev.nonce + 1, refresh: true }));
+                  }
+                }}
+              >
+                <IconRefresh />
+              </button>
+            </Tooltip>
+            <Tooltip label="Close" shortcut="Esc">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Close usage"
+                onClick={closeSettings}
+              >
+                <IconClose />
+              </button>
+            </Tooltip>
           </div>
         </header>
 

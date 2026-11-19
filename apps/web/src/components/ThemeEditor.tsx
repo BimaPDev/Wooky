@@ -15,6 +15,7 @@ import {
 } from "../state/appearance.ts";
 import { BLACK } from "../state/theme-data.ts";
 import { IconClose, IconCopy, IconTrash } from "./Icons.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import {
   applyPalettePatch,
   clampThemeName,
@@ -640,15 +641,16 @@ function ColorField({
         }}
       />
       {onReset ? (
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={`Reset ${label}`}
-          title="Back to auto"
-          onClick={onReset}
-        >
-          <IconClose />
-        </button>
+        <Tooltip label="Back to auto">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Reset ${label}`}
+            onClick={onReset}
+          >
+            <IconClose />
+          </button>
+        </Tooltip>
       ) : (
         <span className="color-field-pad" />
       )}

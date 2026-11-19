@@ -2,6 +2,7 @@ import { FLEET_LIMITS, type ReviewNote } from "@wooky/contracts";
 import { useState } from "react";
 import { addReviewNote, removeReviewNote } from "../../state/actions.ts";
 import { IconTrash } from "../Icons.tsx";
+import { Tooltip } from "../Tooltip.tsx";
 import { noteLabel, type NoteAnchor } from "./notes.ts";
 import { snippetOf } from "./snippets.ts";
 
@@ -86,15 +87,16 @@ export function ReviewNoteItem({
     <div className={stale ? "review-note stale" : "review-note"}>
       <div className="review-note-head">
         <span className="mono review-note-anchor">{label}</span>
-        <button
-          type="button"
-          className="icon-button review-note-remove"
-          aria-label={`Remove review note on ${label}`}
-          title="Remove note"
-          onClick={() => void removeReviewNote(threadId, note.id)}
-        >
-          <IconTrash />
-        </button>
+        <Tooltip label="Remove note">
+          <button
+            type="button"
+            className="icon-button review-note-remove"
+            aria-label={`Remove review note on ${label}`}
+            onClick={() => void removeReviewNote(threadId, note.id)}
+          >
+            <IconTrash />
+          </button>
+        </Tooltip>
       </div>
       <p className="review-note-body">{note.body}</p>
       {stale ? <p className="review-note-stale">Line changed since this note</p> : null}

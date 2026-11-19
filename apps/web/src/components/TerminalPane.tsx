@@ -4,6 +4,7 @@ import { backend } from "../state/backend.ts";
 import { useStore } from "../state/store.ts";
 import { subscribeTerminal } from "../state/terminal.ts";
 import { IconClose } from "./Icons.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 
 /** Ending comes from `terminal.open`. Older servers omit it; those shells want LF. */
 export function terminalLine(text: string, lineEnding: "\n" | "\r\n" = "\n"): string {
@@ -150,15 +151,16 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
               Restart
             </button>
           ) : null}
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Close terminal"
-            title="Close"
-            onClick={toggleTerminal}
-          >
-            <IconClose />
-          </button>
+          <Tooltip label="Close">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Close terminal"
+              onClick={toggleTerminal}
+            >
+              <IconClose />
+            </button>
+          </Tooltip>
         </div>
       </header>
       <div

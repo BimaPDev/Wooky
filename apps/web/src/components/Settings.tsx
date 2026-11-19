@@ -15,6 +15,7 @@ import {
 } from "../state/actions.ts";
 import { useStore, type SettingsPage } from "../state/store.ts";
 import { AppearanceSettings } from "./AppearanceSettings.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import { FailoverSettings } from "./FailoverSettings.tsx";
 import {
   IconBot,
@@ -128,15 +129,16 @@ export function Settings() {
                   Restore device defaults
                 </button>
               ) : null}
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Close settings"
-                title="Close (Esc)"
-                onClick={closeSettings}
-              >
-                <IconClose />
-              </button>
+              <Tooltip label="Close" shortcut="Esc">
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Close settings"
+                  onClick={closeSettings}
+                >
+                  <IconClose />
+                </button>
+              </Tooltip>
             </div>
           </header>
           <div className="settings-scroll" data-settings-page-scroll="">

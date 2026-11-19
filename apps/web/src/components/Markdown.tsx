@@ -1,6 +1,7 @@
 import { memo, useState, type ReactNode } from "react";
 import { parseMarkdown, type Block, type Inline } from "../lib/markdown.ts";
 import { IconCheck, IconCopy } from "./Icons.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return <div className="md chat-markdown">{parseMarkdown(text).map(renderBlock)}</div>;
@@ -60,15 +61,17 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
     <div className="code-block chat-markdown-codeblock">
       <div className="code-head">
         <span>{lang || "text"}</span>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={copied ? "Copied" : "Copy code"}
-          onClick={copy}
-          onBlur={() => setCopied(false)}
-        >
-          {copied ? <IconCheck /> : <IconCopy />}
-        </button>
+        <Tooltip label={copied ? "Copied" : "Copy code"}>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={copied ? "Copied" : "Copy code"}
+            onClick={copy}
+            onBlur={() => setCopied(false)}
+          >
+            {copied ? <IconCheck /> : <IconCopy />}
+          </button>
+        </Tooltip>
       </div>
       <pre>
         <code>{text}</code>

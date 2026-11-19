@@ -1,6 +1,7 @@
 import type { ProviderKind, ProviderSettings, ProviderStatus } from "@wooky/contracts";
 import { useId, useState } from "react";
 import { IconClose } from "../Icons.tsx";
+import { Tooltip } from "../Tooltip.tsx";
 import { EnvEditor, ListEditor } from "./Editors.tsx";
 import { checkNewModelId, emptyProviderSettings, groupModels, LIMITS } from "./helpers.ts";
 
@@ -196,14 +197,16 @@ function ModelsField({
                   <span className="provider-chip-note">Default</span>
                 ) : null}
                 {group.source === "custom" ? (
-                  <button
-                    type="button"
-                    className="provider-chip-remove"
-                    aria-label={`Remove ${model.id}`}
-                    onClick={() => remove(model.id)}
-                  >
-                    <IconClose />
-                  </button>
+                  <Tooltip label="Remove">
+                    <button
+                      type="button"
+                      className="provider-chip-remove"
+                      aria-label={`Remove ${model.id}`}
+                      onClick={() => remove(model.id)}
+                    >
+                      <IconClose />
+                    </button>
+                  </Tooltip>
                 ) : null}
               </li>
             ))}

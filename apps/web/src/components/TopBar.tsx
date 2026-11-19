@@ -27,6 +27,7 @@ import {
 import { InlineRename } from "./InlineRename.tsx";
 import { modelLabel, providerLabels, runtimeLabel } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import { ProviderMark } from "./ProviderMark.tsx";
 
 export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
@@ -57,36 +58,39 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
     <header className="topbar" data-chat-header="">
       <div className={leadClass}>
         {!sidebarOpen ? (
+          <Tooltip label="Show sidebar">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Show sidebar"
+              onClick={toggleSidebar}
+            >
+              <IconSidebar />
+            </button>
+          </Tooltip>
+        ) : null}
+        <Tooltip label="Back">
           <button
             type="button"
             className="icon-button"
-            aria-label="Show sidebar"
-            title="Show sidebar"
-            onClick={toggleSidebar}
+            aria-label="Back"
+            disabled={!canBack}
+            onClick={navHistoryBack}
           >
-            <IconSidebar />
+            <IconChevronLeft />
           </button>
-        ) : null}
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Back"
-          title="Back"
-          disabled={!canBack}
-          onClick={navHistoryBack}
-        >
-          <IconChevronLeft />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Forward"
-          title="Forward"
-          disabled={!canForward}
-          onClick={navHistoryForward}
-        >
-          <IconChevronRight />
-        </button>
+        </Tooltip>
+        <Tooltip label="Forward">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Forward"
+            disabled={!canForward}
+            onClick={navHistoryForward}
+          >
+            <IconChevronRight />
+          </button>
+        </Tooltip>
       </div>
       <div className="topbar-title">
         {thread && project ? (
@@ -137,42 +141,45 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
       <div className="topbar-actions">
         {thread ? (
           <div className="popover-anchor">
-            <button
-              type="button"
-              className={detailsOpen ? "icon-button pressed" : "icon-button"}
-              aria-label="Thread details"
-              aria-expanded={detailsOpen}
-              title="Details"
-              onClick={() => setDetailsOpen(!detailsOpen)}
-            >
-              <IconDetails />
-            </button>
+            <Tooltip label="Details">
+              <button
+                type="button"
+                className={detailsOpen ? "icon-button pressed" : "icon-button"}
+                aria-label="Thread details"
+                aria-expanded={detailsOpen}
+                onClick={() => setDetailsOpen(!detailsOpen)}
+              >
+                <IconDetails />
+              </button>
+            </Tooltip>
             {detailsOpen ? (
               <DetailsPopover thread={thread} onClose={() => setDetailsOpen(false)} />
             ) : null}
           </div>
         ) : null}
-        <button
-          type="button"
-          className={terminalOpen ? "icon-button pressed" : "icon-button"}
-          aria-label="Toggle terminal panel"
-          aria-pressed={terminalOpen}
-          title="Terminal"
-          onClick={toggleTerminal}
-        >
-          <IconPanelBottom />
-        </button>
-        <button
-          type="button"
-          className={changesOpen ? "icon-button pressed" : "icon-button"}
-          aria-label="Toggle changes panel"
-          aria-pressed={changesOpen}
-          title="Changes"
-          disabled={!thread}
-          onClick={toggleChanges}
-        >
-          <IconPanelRight />
-        </button>
+        <Tooltip label="Terminal">
+          <button
+            type="button"
+            className={terminalOpen ? "icon-button pressed" : "icon-button"}
+            aria-label="Toggle terminal panel"
+            aria-pressed={terminalOpen}
+            onClick={toggleTerminal}
+          >
+            <IconPanelBottom />
+          </button>
+        </Tooltip>
+        <Tooltip label="Changes">
+          <button
+            type="button"
+            className={changesOpen ? "icon-button pressed" : "icon-button"}
+            aria-label="Toggle changes panel"
+            aria-pressed={changesOpen}
+            disabled={!thread}
+            onClick={toggleChanges}
+          >
+            <IconPanelRight />
+          </button>
+        </Tooltip>
       </div>
     </header>
   );
@@ -243,15 +250,16 @@ function DetailsPopover({ thread, onClose }: { thread: Thread; onClose: () => vo
           <IconFolder />
           <span className="popover-label mono">{project?.root ?? "Unknown project"}</span>
           {project ? (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Copy project path"
-              title="Copy path"
-              onClick={() => void navigator.clipboard.writeText(project.root)}
-            >
-              <IconCopy />
-            </button>
+            <Tooltip label="Copy path">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Copy project path"
+                onClick={() => void navigator.clipboard.writeText(project.root)}
+              >
+                <IconCopy />
+              </button>
+            </Tooltip>
           ) : null}
         </div>
         <div className="popover-row static">

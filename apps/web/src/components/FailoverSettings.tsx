@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { loadDeviceSettings, patchDeviceSettings } from "../state/appearance.ts";
 import { useStore } from "../state/store.ts";
 import { ChainEditor } from "./failover/ChainEditor.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import { useMinuteClock } from "./failover/clock.ts";
 import { createSaver } from "./failover/saver.ts";
 import { activeCooldowns, cooldownRowText, relativeLabel } from "./failover/format.ts";
@@ -135,25 +136,29 @@ export function FailoverSettings() {
             description="Stop switching after this many fallback attempts for one prompt."
           >
             <div className="failover-stepper" role="group" aria-label="Max switches per prompt">
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Decrease max switches"
-                disabled={off || settings.maxSwitchesPerPrompt <= 1}
-                onClick={() => save({ maxSwitchesPerPrompt: settings.maxSwitchesPerPrompt - 1 })}
-              >
-                −
-              </button>
+              <Tooltip label="Decrease max switches">
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Decrease max switches"
+                  disabled={off || settings.maxSwitchesPerPrompt <= 1}
+                  onClick={() => save({ maxSwitchesPerPrompt: settings.maxSwitchesPerPrompt - 1 })}
+                >
+                  −
+                </button>
+              </Tooltip>
               <output aria-live="polite">{settings.maxSwitchesPerPrompt}</output>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Increase max switches"
-                disabled={off || settings.maxSwitchesPerPrompt >= 6}
-                onClick={() => save({ maxSwitchesPerPrompt: settings.maxSwitchesPerPrompt + 1 })}
-              >
-                +
-              </button>
+              <Tooltip label="Increase max switches">
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Increase max switches"
+                  disabled={off || settings.maxSwitchesPerPrompt >= 6}
+                  onClick={() => save({ maxSwitchesPerPrompt: settings.maxSwitchesPerPrompt + 1 })}
+                >
+                  +
+                </button>
+              </Tooltip>
             </div>
           </Row>
           <Row
