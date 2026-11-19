@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { IconClose, IconPlus } from "../Icons.tsx";
+import { Tooltip } from "../Tooltip.tsx";
 import {
   envKeyProblem,
   envToRows,
@@ -84,14 +85,16 @@ export function ListEditor({
               commit(rows.map((r) => (r.id === row.id ? { ...r, value: event.target.value } : r)))
             }
           />
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={`Remove ${itemLabel.toLowerCase()} ${index + 1}`}
-            onClick={() => commit(removeRow(rows, row.id))}
-          >
-            <IconClose />
-          </button>
+          <Tooltip label="Remove">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Remove ${itemLabel.toLowerCase()} ${index + 1}`}
+              onClick={() => commit(removeRow(rows, row.id))}
+            >
+              <IconClose />
+            </button>
+          </Tooltip>
         </div>
       ))}
       <div>
@@ -164,14 +167,16 @@ export function EnvEditor({
                 commit(rows.map((r) => (r.id === row.id ? { ...r, value: event.target.value } : r)))
               }
             />
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={`Remove variable ${index + 1}`}
-              onClick={() => commit(removeRow(rows, row.id))}
-            >
-              <IconClose />
-            </button>
+            <Tooltip label="Remove">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Remove variable ${index + 1}`}
+                onClick={() => commit(removeRow(rows, row.id))}
+              >
+                <IconClose />
+              </button>
+            </Tooltip>
             {problem ? (
               <p className="editor-problem" role="alert">
                 {problem}

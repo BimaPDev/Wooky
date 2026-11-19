@@ -13,6 +13,7 @@ import { getTheme } from "../../state/appearance.ts";
 import { useStore } from "../../state/store.ts";
 import { PREVIEW_RING } from "../../state/theme-data.ts";
 import { IconCheck, IconCopy, IconMoon, IconPaint, IconSun, IconTrash } from "../Icons.tsx";
+import { Tooltip } from "../Tooltip.tsx";
 import { dropHasFiles, groupThemes, isThemeDropFile, themeBadges, wallpaperOf } from "./helpers.ts";
 import { cachedWallpaperThumb } from "./thumbnails.ts";
 
@@ -226,34 +227,37 @@ const ThemeCard = memo(function ThemeCard({
         ) : null}
       </button>
       <div className="theme-library-card-actions">
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={theme.builtin ? `View ${theme.name}` : `Edit ${theme.name}`}
-          title={theme.builtin ? "View" : "Edit"}
-          onClick={() => onEdit(theme.id)}
-        >
-          <IconPaint />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={`Duplicate ${theme.name}`}
-          title="Duplicate"
-          onClick={() => onDuplicate(theme.id)}
-        >
-          <IconCopy />
-        </button>
-        {!theme.builtin ? (
+        <Tooltip label={theme.builtin ? "View" : "Edit"}>
           <button
             type="button"
             className="icon-button"
-            aria-label={`Delete ${theme.name}`}
-            title="Delete"
-            onClick={() => onDelete(theme.id)}
+            aria-label={theme.builtin ? `View ${theme.name}` : `Edit ${theme.name}`}
+            onClick={() => onEdit(theme.id)}
           >
-            <IconTrash />
+            <IconPaint />
           </button>
+        </Tooltip>
+        <Tooltip label="Duplicate">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Duplicate ${theme.name}`}
+            onClick={() => onDuplicate(theme.id)}
+          >
+            <IconCopy />
+          </button>
+        </Tooltip>
+        {!theme.builtin ? (
+          <Tooltip label="Delete">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Delete ${theme.name}`}
+              onClick={() => onDelete(theme.id)}
+            >
+              <IconTrash />
+            </button>
+          </Tooltip>
         ) : null}
         {selected ? (
           <span className="theme-active-pill" title="Active">

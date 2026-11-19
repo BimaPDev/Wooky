@@ -4,6 +4,7 @@ import { closePaneThread, focusPaneThread, setPaneWeights } from "../../state/ac
 import { useStore } from "../../state/store.ts";
 import { Composer } from "../Composer.tsx";
 import { IconClose } from "../Icons.tsx";
+import { Tooltip } from "../Tooltip.tsx";
 import { modelLabel, providerLabels } from "../labels.ts";
 import { ThreadView } from "../ThreadView.tsx";
 import { shouldFollowDrag } from "./guards.ts";
@@ -189,15 +190,16 @@ const PaneView = memo(function PaneView({
         <span className="pane-model">
           {providerLabels[thread.provider]} · {modelLabel(providers, thread.provider, thread.model)}
         </span>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={`Close pane: ${title}`}
-          title="Close pane"
-          onClick={() => closePaneThread(threadId)}
-        >
-          <IconClose />
-        </button>
+        <Tooltip label="Close pane">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Close pane: ${title}`}
+            onClick={() => closePaneThread(threadId)}
+          >
+            <IconClose />
+          </button>
+        </Tooltip>
       </header>
       <ThreadView threadId={threadId} />
       <Composer threadId={threadId} />

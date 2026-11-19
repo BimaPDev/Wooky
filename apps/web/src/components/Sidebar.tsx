@@ -37,6 +37,7 @@ import {
 import { InlineRename } from "./InlineRename.tsx";
 import { providerLabels } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import {
   buildSidebarTree,
   promptPreview,
@@ -109,15 +110,16 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   return (
     <nav className="sidebar" data-workspace-area="sidebar" aria-label="Projects and threads">
       <div className={macDesktop ? "sidebar-head desktop-traffic-inset" : "sidebar-head"}>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Hide sidebar"
-          title="Hide sidebar"
-          onClick={toggleSidebar}
-        >
-          <IconSidebar />
-        </button>
+        <Tooltip label="Hide sidebar">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Hide sidebar"
+            onClick={toggleSidebar}
+          >
+            <IconSidebar />
+          </button>
+        </Tooltip>
         <span className="brand">Wooky</span>
       </div>
       <div className="sidebar-tools">
@@ -130,35 +132,38 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Add project"
-          title="Add project"
-          aria-busy={pickingFolder}
-          disabled={pickingFolder}
-          onClick={() => void pickProjectFolder()}
-        >
-          <IconFolderPlus />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Open agent board"
-          title="Agent board"
-          onClick={openFleetBoard}
-        >
-          <IconBot />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="New thread"
-          title="New thread"
-          onClick={() => openNewThread()}
-        >
-          <IconCompose />
-        </button>
+        <Tooltip label="Add project">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Add project"
+            aria-busy={pickingFolder}
+            disabled={pickingFolder}
+            onClick={() => void pickProjectFolder()}
+          >
+            <IconFolderPlus />
+          </button>
+        </Tooltip>
+        <Tooltip label="Agent board">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Open agent board"
+            onClick={openFleetBoard}
+          >
+            <IconBot />
+          </button>
+        </Tooltip>
+        <Tooltip label="New thread">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="New thread"
+            onClick={() => openNewThread()}
+          >
+            <IconCompose />
+          </button>
+        </Tooltip>
       </div>
       <div className="sidebar-scroll">
         {hasProjects &&
@@ -247,46 +252,50 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
       ) : null}
       <div className="sidebar-foot">
         <div className="sidebar-foot-utils" role="toolbar" aria-label="Workspace">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => openSettings("general")}
-          >
-            <IconSettings />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Projects"
-            title="Projects"
-            onClick={() => openSettings("projects")}
-          >
-            <IconPullRequest />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Usage"
-            title="Usage"
-            onClick={() => openSettings("usage")}
-          >
-            <IconChart />
-          </button>
+          <Tooltip label="Settings">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Settings"
+              onClick={() => openSettings("general")}
+            >
+              <IconSettings />
+            </button>
+          </Tooltip>
+          <Tooltip label="Projects">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Projects"
+              onClick={() => openSettings("projects")}
+            >
+              <IconPullRequest />
+            </button>
+          </Tooltip>
+          <Tooltip label="Usage">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Usage"
+              onClick={() => openSettings("usage")}
+            >
+              <IconChart />
+            </button>
+          </Tooltip>
         </div>
         <span className="sr-only" role="status">
           {fixture ? "Fixture data, no server" : statusText[status]}
         </span>
-        <button
-          type="button"
-          className="icon-button sidebar-foot-update"
-          aria-label="New thread"
-          title="New thread"
-          onClick={() => openNewThread()}
-        >
-          <IconCircleArrowUp />
-        </button>
+        <Tooltip label="New thread" className="sidebar-foot-update">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="New thread"
+            onClick={() => openNewThread()}
+          >
+            <IconCircleArrowUp />
+          </button>
+        </Tooltip>
       </div>
     </nav>
   );
@@ -316,25 +325,27 @@ function ProjectGroup({
         <ProjectMonogram name={project.name} />
         <span className="project-name">{project.name}</span>
         <span className="row-actions">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={`New thread in ${project.name}`}
-            title="New thread"
-            onClick={() => openNewThread(project.scratch ? null : project.id)}
-          >
-            <IconPlus />
-          </button>
-          {project.scratch ? null : (
+          <Tooltip label="New thread">
             <button
               type="button"
               className="icon-button"
-              aria-label={`Remove ${project.name}`}
-              title="Remove project"
-              onClick={() => removeProject(project.id)}
+              aria-label={`New thread in ${project.name}`}
+              onClick={() => openNewThread(project.scratch ? null : project.id)}
             >
-              <IconTrash />
+              <IconPlus />
             </button>
+          </Tooltip>
+          {project.scratch ? null : (
+            <Tooltip label="Remove project">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Remove ${project.name}`}
+                onClick={() => removeProject(project.id)}
+              >
+                <IconTrash />
+              </button>
+            </Tooltip>
           )}
         </span>
       </div>
@@ -467,15 +478,17 @@ function CoordinatorNode({
         className={thread.id === selected ? "thread-row active" : "thread-row"}
         onContextMenu={splitMenu.onContextMenu}
       >
-        <button
-          type="button"
-          className="icon-button fleet-tree-toggle"
-          aria-expanded={open}
-          aria-label={open ? "Collapse workers" : "Expand workers"}
-          onClick={() => setOpen(!open)}
-        >
-          <IconChevron open={open} />
-        </button>
+        <Tooltip label={open ? "Collapse workers" : "Expand workers"}>
+          <button
+            type="button"
+            className="icon-button fleet-tree-toggle"
+            aria-expanded={open}
+            aria-label={open ? "Collapse workers" : "Expand workers"}
+            onClick={() => setOpen(!open)}
+          >
+            <IconChevron open={open} />
+          </button>
+        </Tooltip>
         <button
           type="button"
           className="thread-button"
@@ -531,15 +544,17 @@ function FanoutNode({
   return (
     <li className="fleet-tree-item">
       <div className="thread-row">
-        <button
-          type="button"
-          className="icon-button fleet-tree-toggle"
-          aria-expanded={open}
-          aria-label={open ? "Collapse group" : "Expand group"}
-          onClick={() => setOpen(!open)}
-        >
-          <IconChevron open={open} />
-        </button>
+        <Tooltip label={open ? "Collapse group" : "Expand group"}>
+          <button
+            type="button"
+            className="icon-button fleet-tree-toggle"
+            aria-expanded={open}
+            aria-label={open ? "Collapse group" : "Expand group"}
+            onClick={() => setOpen(!open)}
+          >
+            <IconChevron open={open} />
+          </button>
+        </Tooltip>
         <button
           type="button"
           className="thread-button"
@@ -627,24 +642,26 @@ const ThreadCard = memo(function ThreadCard({
             </span>
           </button>
           <span className="row-actions">
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={`Rename ${thread.title}`}
-              title="Rename"
-              onClick={() => setEditing(true)}
-            >
-              <IconEdit />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={`Remove ${thread.title}`}
-              title="Remove thread"
-              onClick={() => removeThread(thread.id)}
-            >
-              <IconTrash />
-            </button>
+            <Tooltip label="Rename">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Rename ${thread.title}`}
+                onClick={() => setEditing(true)}
+              >
+                <IconEdit />
+              </button>
+            </Tooltip>
+            <Tooltip label="Remove thread">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Remove ${thread.title}`}
+                onClick={() => removeThread(thread.id)}
+              >
+                <IconTrash />
+              </button>
+            </Tooltip>
           </span>
         </>
       )}

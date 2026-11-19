@@ -11,6 +11,7 @@ import {
   targetLabel,
 } from "./format.ts";
 import { ProviderMark } from "../ProviderMark.tsx";
+import { Tooltip } from "../Tooltip.tsx";
 
 const MAX_CHAIN = 12;
 
@@ -75,36 +76,39 @@ function TargetRow({
         ) : null}
       </span>
       <span className="failover-row-actions">
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={`Move ${label} up`}
-          title="Move up"
-          aria-disabled={disabled || index === 0}
-          onClick={() => move(-1)}
-        >
-          <Arrow />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={`Move ${label} down`}
-          title="Move down"
-          aria-disabled={disabled || last}
-          onClick={() => move(1)}
-        >
-          <Arrow down />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={`Remove ${label}`}
-          title="Remove"
-          disabled={disabled}
-          onClick={() => onChange(removeItem(chain, index))}
-        >
-          <IconClose />
-        </button>
+        <Tooltip label="Move up">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Move ${label} up`}
+            aria-disabled={disabled || index === 0}
+            onClick={() => move(-1)}
+          >
+            <Arrow />
+          </button>
+        </Tooltip>
+        <Tooltip label="Move down">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Move ${label} down`}
+            aria-disabled={disabled || last}
+            onClick={() => move(1)}
+          >
+            <Arrow down />
+          </button>
+        </Tooltip>
+        <Tooltip label="Remove">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Remove ${label}`}
+            disabled={disabled}
+            onClick={() => onChange(removeItem(chain, index))}
+          >
+            <IconClose />
+          </button>
+        </Tooltip>
       </span>
     </li>
   );

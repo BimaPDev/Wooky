@@ -27,6 +27,7 @@ import {
 import { useStore } from "../state/store.ts";
 import { ComposerMenuPanel, useComposerMenu } from "./ComposerMenu.tsx";
 import { IconClose, IconMic, IconPaperclip, IconSend, IconStop } from "./Icons.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import {
   ModelChip,
   RuntimeIndicator,
@@ -331,14 +332,16 @@ export function ComposerForm({
                         ? item.error
                         : formatBytes(item.attachment.size)}
                   </span>
-                  <button
-                    type="button"
-                    className="attachment-chip-remove"
-                    aria-label={`Remove ${item.name}`}
-                    onClick={() => detach(item)}
-                  >
-                    <IconClose />
-                  </button>
+                  <Tooltip label="Remove">
+                    <button
+                      type="button"
+                      className="attachment-chip-remove"
+                      aria-label={`Remove ${item.name}`}
+                      onClick={() => detach(item)}
+                    >
+                      <IconClose />
+                    </button>
+                  </Tooltip>
                 </li>
               ))}
             </ul>
@@ -416,15 +419,16 @@ export function ComposerForm({
           />
           <div className="composer-toolbar">
             <div className="composer-toolbar-start">
-              <button
-                type="button"
-                className="composer-icon-btn"
-                aria-label="Attach files"
-                title="Attach files"
-                onClick={() => fileInput.current?.click()}
-              >
-                <IconPaperclip />
-              </button>
+              <Tooltip label="Attach files">
+                <button
+                  type="button"
+                  className="composer-icon-btn"
+                  aria-label="Attach files"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <IconPaperclip />
+                </button>
+              </Tooltip>
               <input
                 ref={fileInput}
                 type="file"
@@ -447,28 +451,33 @@ export function ComposerForm({
                 open={modelPickerOpen}
                 onOpenChange={setModelPickerOpen}
               />
-              <button
-                type="button"
-                className="composer-icon-btn"
-                aria-label="Voice input"
-                title="Voice input is not available yet"
-                disabled
-              >
-                <IconMic />
-              </button>
-              {running ? (
-                <button type="submit" className="send-button stop" aria-label="Stop the agent">
-                  <IconStop />
-                </button>
-              ) : (
+              <Tooltip label="Voice input is not available yet">
                 <button
-                  type="submit"
-                  className="send-button"
-                  aria-label={queueSend ? "Queue message" : "Send"}
-                  disabled={!canSend || sending || (busy && !queueSend)}
+                  type="button"
+                  className="composer-icon-btn"
+                  aria-label="Voice input"
+                  disabled
                 >
-                  <IconSend />
+                  <IconMic />
                 </button>
+              </Tooltip>
+              {running ? (
+                <Tooltip label="Stop the agent">
+                  <button type="submit" className="send-button stop" aria-label="Stop the agent">
+                    <IconStop />
+                  </button>
+                </Tooltip>
+              ) : (
+                <Tooltip label={queueSend ? "Queue message" : "Send"}>
+                  <button
+                    type="submit"
+                    className="send-button"
+                    aria-label={queueSend ? "Queue message" : "Send"}
+                    disabled={!canSend || sending || (busy && !queueSend)}
+                  >
+                    <IconSend />
+                  </button>
+                </Tooltip>
               )}
             </div>
           </div>

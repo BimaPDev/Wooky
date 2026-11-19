@@ -37,6 +37,7 @@ import {
 import { useMinuteClock } from "./failover/clock.ts";
 import { cooldownFor, limitedUntilLabel } from "./failover/format.ts";
 import { isAvailable, runtimeModes, shortcut } from "./labels.ts";
+import { Tooltip } from "./Tooltip.tsx";
 import { moveFocus, Segmented, Switch } from "./Popover.tsx";
 import { ProviderMark } from "./ProviderMark.tsx";
 import type { PickerPatch, PickerTarget } from "./ModelPicker.tsx";
@@ -321,21 +322,22 @@ export function ModelPanel({
                   ) : null}
                   {index < 9 ? <kbd className="pk-kbd">{shortcut(String(index + 1))}</kbd> : null}
                 </button>
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className={starred ? "pk-star on" : "pk-star"}
-                  aria-pressed={starred}
-                  aria-label={`${starred ? "Remove" : "Add"} ${row.label} ${starred ? "from" : "to"} favorites`}
-                  title={starred ? "Remove from favorites" : "Add to favorites"}
-                  onClick={() =>
-                    void setFavoriteModels(
-                      toggleFavoriteModel(favorites, { provider: row.provider, model: row.id }),
-                    )
-                  }
-                >
-                  <IconStar filled={starred} />
-                </button>
+                <Tooltip label={starred ? "Remove from favorites" : "Add to favorites"}>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className={starred ? "pk-star on" : "pk-star"}
+                    aria-pressed={starred}
+                    aria-label={`${starred ? "Remove" : "Add"} ${row.label} ${starred ? "from" : "to"} favorites`}
+                    onClick={() =>
+                      void setFavoriteModels(
+                        toggleFavoriteModel(favorites, { provider: row.provider, model: row.id }),
+                      )
+                    }
+                  >
+                    <IconStar filled={starred} />
+                  </button>
+                </Tooltip>
               </div>
             );
           })

@@ -2,6 +2,7 @@ import type { FileDiff, ReviewNote } from "@wooky/contracts";
 import { Fragment, memo, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { parseUnifiedDiff } from "../lib/diff.ts";
 import { IconChevron } from "./Icons.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import {
   anchorForLine,
   anchorKey,
@@ -145,16 +146,17 @@ export const DiffLines = memo(function DiffLines({
                     {review ? (
                       <td className="diff-gutter">
                         {anchor ? (
-                          <button
-                            type="button"
-                            tabIndex={-1}
-                            className="diff-gutter-button"
-                            aria-label={`Add review note on ${noteLabel(anchor)}`}
-                            title="Add review note"
-                            onClick={() => openAt(row)}
-                          >
-                            +
-                          </button>
+                          <Tooltip label="Add review note">
+                            <button
+                              type="button"
+                              tabIndex={-1}
+                              className="diff-gutter-button"
+                              aria-label={`Add review note on ${noteLabel(anchor)}`}
+                              onClick={() => openAt(row)}
+                            >
+                              +
+                            </button>
+                          </Tooltip>
                         ) : null}
                       </td>
                     ) : null}

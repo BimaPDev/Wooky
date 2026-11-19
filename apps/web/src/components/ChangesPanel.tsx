@@ -6,6 +6,7 @@ import { closeChanges, loadDiff, openChanges } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { Counts, FileDiffView, fileAnchor } from "./DiffView.tsx";
 import { IconClose } from "./Icons.tsx";
+import { Tooltip } from "./Tooltip.tsx";
 import { MergeControl } from "./review/MergeControl.tsx";
 import { groupNotesByPath } from "./review/notes.ts";
 import { ReviewBar } from "./review/ReviewBar.tsx";
@@ -76,14 +77,16 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
             Whole thread
           </button>
         ) : null}
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Close changes"
-          onClick={closeChanges}
-        >
-          <IconClose />
-        </button>
+        <Tooltip label="Close changes">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Close changes"
+            onClick={closeChanges}
+          >
+            <IconClose />
+          </button>
+        </Tooltip>
       </header>
       <div className="panel-scroll">
         {current.state === "loading" ? <p className="empty-state small">Loading changes.</p> : null}
