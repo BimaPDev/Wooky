@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
-import type { Command, ProviderCapabilities, ProviderKind } from "@age/contracts";
+import {
+  FailoverSettings,
+  type Command,
+  type ProviderCapabilities,
+  type ProviderKind,
+} from "@age/contracts";
 import { createEffectRunner } from "./effects/runner.ts";
 import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
@@ -64,28 +69,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return statuses;
     },
   };
+  const knownProviders = new Set(adapters.map((adapter) => adapter.kind));
   const ctx: DecideContext = {
     now: () => new Date().toISOString(),
     newId: (prefix) => `${prefix}_${randomUUID()}`,
     capabilities: (kind) => capabilities.get(kind),
+    hasProvider: (kind) => knownProviders.has(kind),
+    failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
   const git = options.git ?? createGitService();
   let dispatchCommand: (command: Command) => void = () => {};
+  const themes = createThemeStore(options.home);
   const runner = createEffectRunner({
     store,
     providers,
     git,
     newId: ctx.newId,
     dispatch: (command) => dispatchCommand(command),
+    deviceSettings: () => themes.getSettings(),
+    limits,
+    now: ctx.now,
   });
-  const dispatcher = createDispatcher({ store, runner, ctx });
+  const dispatcher = createDispatcher({
+    store,
+    runner,
+    ctx,
+    deviceSettings: () => themes.getSettings(),
+  });
   dispatchCommand = (command) => {
     dispatcher.dispatch(command);
   };
   runner.recover();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
-  const themes = createThemeStore(options.home);
   const terminals = createTerminalManager();
   const history = createHistoryService({
     home: options.home,

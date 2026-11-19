@@ -878,3 +878,192 @@ describe("decide turn.revert restoreFiles", () => {
     ).toMatchObject({ kind: "checkpoint.restore", cwd: "/wt/t1" });
   });
 });
+
+describe("decide thread.failover", () => {
+  const failure = { kind: "rate_limit" as const, message: "slow down" };
+
+  it("rejects missing thread, busy thread, same target, and unknown provider", () => {
+    expect(
+      run(
+        seed(),
+        command("thread.failover", {
+          threadId: "missing",
+          to: { provider: "codex", model: "gpt-6.1-sol" },
+          failure,
+          retryPrompt: "again",
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: "not_found" });
+
+    expect(
+      run(
+        running({ provider: "claude", model: "sonnet" }),
+        command("thread.failover", {
+          threadId: "t1",
+          to: { provider: "codex", model: "gpt-6.1-sol" },
+          failure,
+          retryPrompt: "again",
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: "conflict" });
+
+    expect(
+      run(
+        seed({ provider: "claude", model: "sonnet" }),
+        command("thread.failover", {
+          threadId: "t1",
+          to: { provider: "claude", model: "sonnet" },
+          failure,
+          retryPrompt: "again",
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: "bad_request" });
+
+    const ctx = testContext();
+    ctx.hasProvider = () => false;
+    expect(
+      decide(
+        seed(),
+        command("thread.failover", {
+          threadId: "t1",
+          to: { provider: "codex", model: "gpt-6.1-sol" },
+          failure,
+          retryPrompt: "again",
+        }),
+        ctx,
+      ),
+    ).toMatchObject({ ok: false, code: "bad_request" });
+  });
+
+  it("cools down, reconfigures, records failedOver, and starts a retry turn", () => {
+    const model = seed({ provider: "claude", model: "sonnet" });
+    const decision = accepted(
+      run(
+        model,
+        command("thread.failover", {
+          threadId: "t1",
+          to: { provider: "codex", model: "gpt-6.1-sol" },
+          failure,
+          retryPrompt: "Ship it",
+        }),
+      ),
+    );
+    expect(decision.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "provider.cooledDown",
+        "thread.configured",
+        "thread.failedOver",
+        "turn.started",
+      ]),
+    );
+    expect(decision.events.find((event) => event.type === "thread.configured")).toMatchObject({
+      type: "thread.configured",
+      provider: "codex",
+      model: "gpt-6.1-sol",
+      handoff: true,
+    });
+    expect(decision.events.find((event) => event.type === "thread.failedOver")).toMatchObject({
+      switches: 1,
+      from: { provider: "claude", model: "sonnet" },
+    });
+    expect(decision.effects).toEqual([{ kind: "turn.run", threadId: "t1", turnId: "turn-1" }]);
+    const events = decision.events as PendingEvent[];
+    const next = apply(model, events);
+    expect(next.threads.t1?.provider).toBe("codex");
+    expect(next.turns.t1?.at(-1)?.prompt).toBe("Ship it");
+  });
+
+  it("keeps failover.original across chained switches", () => {
+    const afterFirst = apply(seed({ provider: "claude", model: "sonnet" }), [
+      {
+        type: "thread.failedOver",
+        commandId: "c0",
+        threadId: "t1",
+        from: { provider: "claude", model: "sonnet" },
+        to: { provider: "codex", model: "gpt-6.1-sol" },
+        failure,
+        switches: 1,
+      },
+    ]);
+    const switched = apply(afterFirst, [
+      {
+        type: "thread.configured",
+        commandId: "c0",
+        threadId: "t1",
+        provider: "codex",
+        model: "gpt-6.1-sol",
+        runtimeMode: "approve",
+        handoff: true,
+      },
+    ]);
+    const decision = accepted(
+      run(
+        switched,
+        command("thread.failover", {
+          threadId: "t1",
+          to: { provider: "cursor", model: "auto" },
+          failure,
+          retryPrompt: "retry",
+        }),
+      ),
+    );
+    const failedOver = decision.events.find((event) => event.type === "thread.failedOver");
+    expect(failedOver).toMatchObject({
+      switches: 2,
+      from: { provider: "codex", model: "gpt-6.1-sol" },
+    });
+    const next = apply(switched, decision.events as PendingEvent[]);
+    expect(next.threads.t1?.failover?.original).toEqual({ provider: "claude", model: "sonnet" });
+  });
+
+  it("clears expired cooldowns lazily on failover", () => {
+    const cooled = apply(seed(), [
+      {
+        type: "provider.cooledDown",
+        commandId: null,
+        key: "claude",
+        until: "2025-12-31T00:00:00.000Z",
+        reason: "rate_limit",
+      },
+    ]);
+    const decision = accepted(
+      run(
+        cooled,
+        command("thread.failover", {
+          threadId: "t1",
+          to: { provider: "codex", model: "gpt-6.1-sol" },
+          failure,
+          retryPrompt: "again",
+        }),
+      ),
+    );
+    expect(decision.events.some((event) => event.type === "provider.cooldownCleared")).toBe(true);
+  });
+});
+
+describe("decide turn.start switch-back", () => {
+  it("restores the original model before starting when cooldowns have lifted", () => {
+    const failoverThread = thread({
+      provider: "cursor",
+      model: "auto",
+      failover: {
+        original: { provider: "claude", model: "sonnet" },
+        switchedAt: at,
+        reason: "rate_limit",
+        switches: 1,
+      },
+    });
+    const model = apply(seed(failoverThread), []);
+    const decision = accepted(
+      decide(model, command("turn.start", { threadId: "t1", prompt: "x" }), testContext()),
+    );
+    expect(decision.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["thread.configured", "thread.failoverRestored", "turn.started"]),
+    );
+    expect(decision.events[0]).toMatchObject({
+      provider: "claude",
+      model: "sonnet",
+      handoff: true,
+    });
+  });
+});

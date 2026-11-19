@@ -2,13 +2,16 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type {
-  AgeEvent,
-  Command,
-  ProviderEvent,
-  ProviderKind,
-  RuntimeMode,
-  Thread,
+import {
+  DeviceSettings,
+  FailoverSettings,
+  type AgeEvent,
+  type Command,
+  type ProviderEvent,
+  type ProviderKind,
+  type RuntimeMode,
+  type Thread,
+  type TurnFailure,
 } from "@age/contracts";
 import { createNoopGitService } from "../git/noop.ts";
 import type { GitService } from "../git/types.ts";
@@ -29,12 +32,21 @@ afterEach(async () => {
 function scripted(
   kind: ProviderKind,
   run: (input: TurnInput) => AsyncIterable<ProviderEvent>,
+  models: { id: string; label: string }[] = [
+    { id: kind === "claude" ? "sonnet" : kind, label: kind },
+  ],
 ): ProviderAdapter {
   return {
     kind,
-    probe: async () => {
-      throw new Error("not probed in tests");
-    },
+    probe: async () => ({
+      kind,
+      label: kind,
+      installed: true,
+      authenticated: true,
+      version: null,
+      models,
+      problem: null,
+    }),
     runTurn: run,
   };
 }
@@ -45,11 +57,15 @@ async function harness(
     git?: GitService;
     wrapStore?: (store: EventStore) => EventStore;
     capabilities?: DecideContext["capabilities"];
+    deviceSettings?: DeviceSettings;
   } = {},
 ) {
   const home = await tempDir("runner");
   const root = await tempDir("project");
-  const ctx = testContext(options.capabilities);
+  const settings = options.deviceSettings ?? DeviceSettings.parse({});
+  const ctx = testContext(options.capabilities, settings.failover);
+  ctx.hasProvider = (kind) =>
+    (options.adapters ?? [createDemoAdapter({ stepMs: 0 })]).some((a) => a.kind === kind);
   const fake = createFakeGit();
   const opened = openEventStore(home, ctx.now);
   const store = options.wrapStore?.(opened) ?? opened;
@@ -61,8 +77,15 @@ async function harness(
     git: options.git ?? fake.git,
     newId: ctx.newId,
     dispatch: (command) => send(command),
+    deviceSettings: () => settings,
+    now: ctx.now,
   });
-  const dispatcher = createDispatcher({ store, runner, ctx });
+  const dispatcher = createDispatcher({
+    store,
+    runner,
+    ctx,
+    deviceSettings: () => settings,
+  });
   send = (command) => dispatcher.dispatch(command);
   cleanups.push(async () => {
     await runner.shutdown();
@@ -1435,5 +1458,161 @@ describe("effect runner rewind, questions, queue and plans", () => {
     expect(plan()).toMatchObject({ id: "plan-1", status: "accepted" });
     await finishedFor(h.store, started.turnId);
     expect(modes).toEqual(["plan", "default"]);
+  });
+});
+
+describe("failover effect runner", () => {
+  const rateLimit: TurnFailure = { kind: "rate_limit", message: "slow down" };
+
+  function claudeCodexHarness(
+    settings: DeviceSettings,
+    primary: (input: TurnInput) => AsyncIterable<ProviderEvent>,
+    fallback: (input: TurnInput) => AsyncIterable<ProviderEvent>,
+  ) {
+    return harness({
+      deviceSettings: settings,
+      adapters: [
+        scripted("claude", primary, [{ id: "sonnet", label: "Sonnet" }]),
+        scripted("codex", fallback, [{ id: "gpt-6.1-sol", label: "Sol" }]),
+      ],
+    });
+  }
+
+  async function createClaudeThread(h: Awaited<ReturnType<typeof harness>>) {
+    const projectId = Object.keys(h.store.model.projects)[0] ?? "";
+    h.dispatch({
+      type: "thread.create",
+      projectId,
+      provider: "claude",
+      model: "sonnet",
+      runtimeMode: "full",
+      isolate: false,
+    });
+    const created = h.store.eventsAfter(0).find((event) => event.type === "thread.created");
+    if (created?.type !== "thread.created") throw new Error("thread not created");
+    return created.thread.id;
+  }
+
+  it("failsover to the next available model and retries with the same prompt", async () => {
+    const prompts: string[] = [];
+    const h = await claudeCodexHarness(
+      DeviceSettings.parse({
+        failover: FailoverSettings.parse({
+          chain: [{ provider: "codex", model: "gpt-6.1-sol" }],
+        }),
+      }),
+      async function* (input) {
+        prompts.push(input.prompt);
+        yield { type: "done", status: "failed", error: "rate", failure: rateLimit };
+      },
+      async function* (input) {
+        prompts.push(input.prompt);
+        yield { type: "done", status: "completed", error: null };
+      },
+    );
+    const threadId = await createClaudeThread(h);
+    const prompt = "Ship the failover path";
+    const { turnId } = h.startTurn(threadId, prompt);
+    await finishedFor(h.store, turnId);
+    await h.runner.idle();
+    const retry = h.store.model.turns[threadId]?.at(-1);
+    expect(retry?.provider).toBe("codex");
+    expect(retry?.prompt).toBe(prompt);
+    expect(prompts).toEqual([prompt, prompt]);
+    expect(h.store.model.cooldowns.claude?.reason).toBe("rate_limit");
+    expect(h.store.model.threads[threadId]?.failover?.switches).toBe(1);
+  });
+
+  it("stops at max switches and records cooldown only", async () => {
+    const h = await claudeCodexHarness(
+      DeviceSettings.parse({
+        failover: FailoverSettings.parse({
+          chain: [{ provider: "codex", model: "gpt-6.1-sol" }],
+          maxSwitchesPerPrompt: 1,
+        }),
+      }),
+      async function* () {
+        yield { type: "done", status: "failed", error: "rate", failure: rateLimit };
+      },
+      async function* () {
+        yield { type: "done", status: "failed", error: "still", failure: rateLimit };
+      },
+    );
+    const threadId = await createClaudeThread(h);
+    const { turnId } = h.startTurn(threadId, "once more");
+    await finishedFor(h.store, turnId);
+    await h.runner.idle();
+    const retryId = h.store.model.turns[threadId]?.at(-1)?.id ?? "";
+    await finishedFor(h.store, retryId);
+    await h.runner.idle();
+    expect(h.store.model.turns[threadId]).toHaveLength(2);
+    expect(h.store.model.cooldowns.codex?.reason).toBe("rate_limit");
+  });
+
+  it("ignores failover when disabled or the failure is not a trigger", async () => {
+    const h = await claudeCodexHarness(
+      DeviceSettings.parse({ failover: FailoverSettings.parse({ enabled: false }) }),
+      async function* () {
+        yield { type: "done", status: "failed", error: "rate", failure: rateLimit };
+      },
+      async function* () {
+        yield { type: "done", status: "completed", error: null };
+      },
+    );
+    const threadId = await createClaudeThread(h);
+    const { turnId } = h.startTurn(threadId, "nope");
+    await finishedFor(h.store, turnId);
+    await h.runner.idle();
+    expect(h.store.model.turns[threadId]).toHaveLength(1);
+  });
+
+  it("treats a duplicate failover command as idempotent", async () => {
+    const h = await claudeCodexHarness(
+      DeviceSettings.parse({
+        failover: FailoverSettings.parse({
+          chain: [{ provider: "codex", model: "gpt-6.1-sol" }],
+        }),
+      }),
+      async function* () {
+        yield { type: "done", status: "failed", error: "rate", failure: rateLimit };
+      },
+      async function* () {
+        yield { type: "done", status: "completed", error: null };
+      },
+    );
+    const threadId = await createClaudeThread(h);
+    const { turnId } = h.startTurn(threadId, "dup");
+    await finishedFor(h.store, turnId);
+    await h.runner.idle();
+    const turnsAfter = h.store.model.turns[threadId]?.length ?? 0;
+    h.dispatch({
+      commandId: `failover:${turnId}`,
+      type: "thread.failover",
+      threadId,
+      to: { provider: "codex", model: "gpt-6.1-sol" },
+      failure: rateLimit,
+      retryPrompt: "dup",
+    });
+    await h.runner.idle();
+    expect(h.store.model.turns[threadId]?.length).toBe(turnsAfter);
+  });
+
+  it("carries done.failure through turn.finished", async () => {
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* () {
+          yield {
+            type: "done",
+            status: "failed",
+            error: "rate",
+            failure: rateLimit,
+          };
+        }),
+      ],
+    });
+    const threadId = h.createThread("full");
+    const { turnId } = h.startTurn(threadId, "x");
+    const finished = await finishedFor(h.store, turnId);
+    expect(finished.failure).toEqual(rateLimit);
   });
 });
