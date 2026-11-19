@@ -111,6 +111,10 @@ describe("themes push", () => {
     const pushes: ThemesPush[] = [];
     const seen = new Set<string>();
     let resolveBurst: (() => void) | null = null;
+    let resolveWarm: (() => void) | null = null;
+    const warmedUp = new Promise<void>((resolve) => {
+      resolveWarm = resolve;
+    });
 
     socket.on("message", (data) => {
       const message: unknown = JSON.parse(String(data));
@@ -118,6 +122,7 @@ describe("themes push", () => {
       if (!push.success || push.data.push !== "themes") return;
       const themesPush = ThemesPush.parse(push.data);
       pushes.push(themesPush);
+      if (themesPush.changedIds.includes("warmup")) resolveWarm?.();
       for (const id of themesPush.changedIds) seen.add(id);
       if (["burst-a", "burst-b", "burst-c"].every((id) => seen.has(id))) resolveBurst?.();
     });
@@ -141,6 +146,13 @@ describe("themes push", () => {
         colors: {},
         css: "",
       })}\n`;
+
+    // macOS starts delivering FS events a moment after the watch is created. Prove the
+    // watcher is live with one write before timing the burst.
+    await writeFile(join(home, "themes", "warmup.json"), themeJson("warmup"), "utf8");
+    await warmedUp;
+    pushes.length = 0;
+    seen.clear();
 
     await Promise.all([
       writeFile(join(home, "themes", "burst-a.json"), themeJson("burst-a"), "utf8"),
