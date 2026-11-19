@@ -7,7 +7,7 @@ import { useStore } from "../state/store.ts";
 import { IconChevron, IconUndo } from "./Icons.tsx";
 import { FailoverNoticeRow } from "./failover/FailoverNotice.tsx";
 import { FallbackBanner } from "./failover/FallbackBanner.tsx";
-import { failoverNoticeFor } from "./failover/format.ts";
+import { failoverNoticeFor, failureText } from "./failover/format.ts";
 import { SwitchAndRetry } from "./failover/SwitchAndRetry.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { TimelineEntry } from "./Timeline.tsx";
@@ -76,9 +76,8 @@ const TurnView = memo(function TurnView({
       return [list[index], list[index - 1], list[index - 2]] as const;
     }),
   );
-  const failover = useStore((state) => state.model.threads[threadId]?.failover);
   if (!turn) return null;
-  const notice = failoverNoticeFor(before, prev, turn, failover);
+  const notice = failoverNoticeFor(before, prev, turn);
   return (
     <article className="turn" aria-label={`Turn: ${turn.prompt.slice(0, 60)}`}>
       {notice ? <FailoverNoticeRow notice={notice} /> : null}
@@ -209,11 +208,15 @@ function FinishedTurn({
       ) : null}
       {answer && answer.kind === "message" ? <Markdown text={answer.text} /> : null}
       {turn.status === "failed" ? (
-        <p className="turn-error" role="alert">
-          {turn.error ?? "The turn failed."}
+        <p className="turn-error" role="alert" title={turn.failure?.message || undefined}>
+          {turn.failure
+            ? failureText(turn.provider, turn.failure, Date.parse(turn.endedAt ?? turn.startedAt))
+            : (turn.error ?? "The turn failed.")}
         </p>
       ) : null}
-      {turn.status === "failed" && isLast && !running ? <SwitchAndRetry turn={turn} /> : null}
+      {turn.status === "failed" && turn.failure && isLast && !running ? (
+        <SwitchAndRetry turn={turn} failure={turn.failure} />
+      ) : null}
       {turn.status === "interrupted" ? (
         <p className="turn-notice">
           {turn.error ?? (isLast ? "Stopped." : "This turn was stopped.")}

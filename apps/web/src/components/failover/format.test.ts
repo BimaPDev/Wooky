@@ -6,6 +6,7 @@ import {
   cooldownFor,
   cooldownRowText,
   failoverNoticeFor,
+  failureText,
   limitedUntilLabel,
   moveItem,
   noticeText,
@@ -159,7 +160,7 @@ describe("notices", () => {
   const next = turn({ id: "c", prompt: "next" });
 
   it("detects a retry on another target after a failed turn", () => {
-    expect(failoverNoticeFor(undefined, failed, retry, undefined)).toEqual({
+    expect(failoverNoticeFor(undefined, failed, retry)).toEqual({
       kind: "failedOver",
       from: { provider: "claude", model: "opus" },
       to: { provider: "codex", model: "gpt-6.1-sol" },
@@ -168,32 +169,28 @@ describe("notices", () => {
     });
   });
 
-  it("takes the reason from the latest switch only", () => {
-    const current = {
-      original: { provider: "claude" as const, model: "opus" },
-      switchedAt: at(1),
-      reason: "quota" as const,
-      resetAt: at(180),
-      switches: 1,
-    };
-    expect(failoverNoticeFor(undefined, failed, retry, current)).toMatchObject({
+  it("takes the reason and reset time from the failed turn", () => {
+    const withFailure = turn({
+      id: "a",
+      status: "failed",
+      failure: { kind: "quota", resetAt: at(180), message: "limit" },
+    });
+    expect(failoverNoticeFor(undefined, withFailure, retry)).toMatchObject({
       reason: "quota",
       resetAt: at(180),
     });
-    const older = { ...current, switchedAt: at(10) };
-    expect(failoverNoticeFor(undefined, failed, retry, older)).toMatchObject({ reason: null });
   });
 
   it("ignores turns that are not a retry", () => {
-    expect(failoverNoticeFor(undefined, turn({ id: "x" }), retry, undefined)).toBeNull();
-    expect(failoverNoticeFor(undefined, undefined, failed, undefined)).toBeNull();
+    expect(failoverNoticeFor(undefined, turn({ id: "x" }), retry)).toBeNull();
+    expect(failoverNoticeFor(undefined, undefined, failed)).toBeNull();
     expect(
-      failoverNoticeFor(undefined, failed, turn({ id: "same", status: "completed" }), undefined),
+      failoverNoticeFor(undefined, failed, turn({ id: "same", status: "completed" })),
     ).toBeNull();
   });
 
   it("detects a return to the first model after a retry", () => {
-    expect(failoverNoticeFor(failed, retry, next, undefined)).toEqual({
+    expect(failoverNoticeFor(failed, retry, next)).toEqual({
       kind: "restored",
       to: { provider: "claude", model: "opus" },
     });
@@ -202,9 +199,19 @@ describe("notices", () => {
         failed,
         retry,
         turn({ id: "d", prompt: "next", provider: "codex", model: "gpt-6-luna" }),
-        undefined,
       ),
     ).toBeNull();
+  });
+});
+
+describe("failure text", () => {
+  it("names the provider and the reset time", () => {
+    expect(failureText("claude", { kind: "quota", resetAt: at(180), message: "x" }, now, fmt)).toBe(
+      "Claude hit its usage limit (resets 3:00 PM).",
+    );
+    expect(failureText("codex", { kind: "overloaded", message: "x" }, now, fmt)).toBe(
+      "Codex is overloaded.",
+    );
   });
 });
 

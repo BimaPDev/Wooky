@@ -510,6 +510,7 @@ export const fixtureModel: ReadModel = {
         startedAt: ago(5),
         endedAt: ago(4.5),
         error: "Claude usage limit reached.",
+        failure: { kind: "quota", resetAt: ago(-90), message: "Claude usage limit reached." },
       }),
       turn({
         id: "u8b",
@@ -538,6 +539,7 @@ export const fixtureModel: ReadModel = {
         startedAt: ago(90),
         endedAt: ago(89),
         error: "Claude rate limit reached.",
+        failure: { kind: "rate_limit", message: "Claude rate limit reached." },
       }),
       turn({
         id: "u9b",
@@ -569,6 +571,11 @@ export const fixtureModel: ReadModel = {
         startedAt: ago(3),
         endedAt: ago(2.5),
         error: "Claude usage limit reached. Resets at 3:00 PM.",
+        failure: {
+          kind: "quota",
+          resetAt: ago(-90),
+          message: "Claude usage limit reached. Resets at 3:00 PM.",
+        },
       }),
     ],
   },

@@ -3,8 +3,8 @@ import type {
   ProviderCooldown,
   ProviderKind,
   ProviderStatus,
-  ThreadFailoverState,
   Turn,
+  TurnFailure,
   TurnFailureKind,
 } from "@age/contracts";
 import { isAvailable, modelLabel } from "../labels.ts";
@@ -145,6 +145,29 @@ const reasonPhrase: Record<TurnFailureKind, string> = {
   other: "stopped with an error",
 };
 
+/** "Claude hit its usage limit (resets 3:00 PM)", without a final period. */
+function limitClause(
+  provider: ProviderKind,
+  reason: TurnFailureKind | null,
+  resetAt: string | null,
+  nowMs: number,
+  fmt: ClockFormat,
+): string {
+  const phrase = reason ? reasonPhrase[reason] : "hit a limit";
+  const resets = resetAt ? ` (resets ${clockLabel(resetAt, nowMs, fmt)})` : "";
+  return `${providerName[provider]} ${phrase}${resets}`;
+}
+
+/** The reason line shown under a failed turn. */
+export function failureText(
+  provider: ProviderKind,
+  failure: TurnFailure,
+  nowMs: number,
+  fmt: ClockFormat = {},
+): string {
+  return `${limitClause(provider, failure.kind, failure.resetAt ?? null, nowMs, fmt)}.`;
+}
+
 export function noticeText(
   notice: FailoverNotice,
   providers: ProviderStatus[],
@@ -154,9 +177,8 @@ export function noticeText(
   if (notice.kind === "restored") {
     return `Limit reset. Switched back to ${targetLabel(providers, notice.to)}.`;
   }
-  const phrase = notice.reason ? reasonPhrase[notice.reason] : "hit a limit";
-  const resets = notice.resetAt ? ` (resets ${clockLabel(notice.resetAt, nowMs, fmt)})` : "";
-  return `${providerName[notice.from.provider]} ${phrase}${resets}. Switched to ${targetLabel(providers, notice.to)} and retried.`;
+  const clause = limitClause(notice.from.provider, notice.reason, notice.resetAt, nowMs, fmt);
+  return `${clause}. Switched to ${targetLabel(providers, notice.to)} and retried.`;
 }
 
 const turnTarget = (turn: Turn) => targetOf(turn);
@@ -173,23 +195,21 @@ export function isFailoverRetry(prev: Turn | undefined, turn: Turn): boolean {
 
 /**
  * The read model keeps no failover event on the timeline, so notices are derived from the
- * turn sequence. `current` is only known for the latest switch, so older notices lose their reason.
+ * turn sequence: a failed turn followed by the same prompt on another target is a switch, and
+ * its reason comes from the failed turn's `failure`.
  */
 export function failoverNoticeFor(
   before: Turn | undefined,
   prev: Turn | undefined,
   turn: Turn,
-  current: ThreadFailoverState | undefined,
 ): FailoverNotice | null {
   if (prev && isFailoverRetry(prev, turn)) {
-    const latest =
-      current !== undefined && Date.parse(turn.startedAt) >= Date.parse(current.switchedAt);
     return {
       kind: "failedOver",
       from: turnTarget(prev),
       to: turnTarget(turn),
-      reason: latest ? current.reason : null,
-      resetAt: latest ? (current.resetAt ?? null) : null,
+      reason: prev.failure?.kind ?? null,
+      resetAt: prev.failure?.resetAt ?? null,
     };
   }
   if (

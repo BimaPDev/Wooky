@@ -15,7 +15,7 @@ import {
 } from "./format.ts";
 
 /** Offered on a failed last turn that was not switched automatically. */
-export function SwitchAndRetry({ turn }: { turn: Turn }) {
+export function SwitchAndRetry({ turn, failure }: { turn: Turn; failure: TurnFailure }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -37,10 +37,6 @@ export function SwitchAndRetry({ turn }: { turn: Turn }) {
   };
 
   const pick = (target: ModelTarget) => {
-    const failure: TurnFailure = {
-      kind: "other",
-      message: (turn.error ?? "The turn failed.").slice(0, 2000),
-    };
     close(false);
     setBusy(true);
     void failoverThread(turn.threadId, target, failure, turn.prompt).finally(() => setBusy(false));
@@ -59,7 +55,7 @@ export function SwitchAndRetry({ turn }: { turn: Turn }) {
       >
         Switch and retry
       </button>
-      {open ? <RetryMenu turn={turn} onPick={pick} onClose={close} /> : null}
+      {open ? <RetryMenu turn={turn} failure={failure} onPick={pick} onClose={close} /> : null}
     </div>
   );
 }
@@ -68,10 +64,12 @@ const EMPTY: Readonly<Record<string, never>> = {};
 
 function RetryMenu({
   turn,
+  failure,
   onPick,
   onClose,
 }: {
   turn: Turn;
+  failure: TurnFailure;
   onPick: (target: ModelTarget) => void;
   onClose: (restoreFocus: boolean) => void;
 }) {
@@ -102,12 +100,16 @@ function RetryMenu({
     available: (target) =>
       targets.some((entry) => sameTarget(entry, target)) &&
       providers.some((entry) => entry.kind === target.provider && isAvailable(entry, disabled)),
-    failure: { kind: "other", message: turn.error ?? "" },
+    failure,
     maxSwitchesPerPrompt: Number.MAX_SAFE_INTEGER,
   });
-  const ordered = suggested
-    ? [suggested, ...targets.filter((target) => !sameTarget(target, suggested))]
-    : targets;
+  const rest = targets.filter((target) => !suggested || !sameTarget(target, suggested));
+  const isLimited = (target: ModelTarget) => cooldownFor(cooldowns, target, nowMs) !== null;
+  const ordered = [
+    ...(suggested ? [suggested] : []),
+    ...rest.filter((target) => !isLimited(target)),
+    ...rest.filter(isLimited),
+  ];
 
   const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
