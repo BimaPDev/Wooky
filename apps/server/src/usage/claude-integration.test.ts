@@ -49,8 +49,8 @@ let wookyHome: string;
 let clock: number;
 
 beforeEach(async () => {
-  userHome = await mkdtemp(join(tmpdir(), "age-claude-int-user-"));
-  wookyHome = await mkdtemp(join(tmpdir(), "age-claude-int-home-"));
+  userHome = await mkdtemp(join(tmpdir(), "wooky-claude-int-user-"));
+  wookyHome = await mkdtemp(join(tmpdir(), "wooky-claude-int-home-"));
   clock = NOW;
 });
 

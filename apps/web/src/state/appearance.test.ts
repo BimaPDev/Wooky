@@ -1,4 +1,4 @@
-// age-allow-file color: assertions on generated theme CSS compare hex values.
+// wooky-allow-file color: assertions on generated theme CSS compare hex values.
 import { AppearanceTheme, DeviceSettings, type RpcMethod, type ThemesPush } from "@wooky/contracts";
 import { emptyReadModel } from "@wooky/domain";
 import { beforeEach, describe, expect, it } from "vitest";

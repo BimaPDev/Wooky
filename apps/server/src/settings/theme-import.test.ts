@@ -43,8 +43,8 @@ describe("importTheme", () => {
     expect(() => importTheme("x".repeat(MAX_THEME_IMPORT_TEXT + 1))).toThrow(/exceeds/);
   });
 
-  it("detects native AGE JSON", () => {
-    const age = {
+  it("detects native Wooky JSON", () => {
+    const native = {
       version: 1,
       id: "paper",
       name: "Paper",
@@ -54,8 +54,8 @@ describe("importTheme", () => {
       colors: {},
       css: "",
     };
-    const { format, theme } = importTheme(JSON.stringify(age));
-    expect(format).toBe("age");
+    const { format, theme } = importTheme(JSON.stringify(native));
+    expect(format).toBe("wooky");
     expect(theme.id).toBe("paper");
     expect(theme.builtin).toBeFalsy();
   });

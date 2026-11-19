@@ -272,7 +272,7 @@ describe("decide effort and scratch", () => {
     const scratch = accepted(
       run(
         emptyReadModel(),
-        command("project.add", { root: "/age/scratch", name: "No project", scratch: true }),
+        command("project.add", { root: "/wooky/scratch", name: "No project", scratch: true }),
       ),
     );
     expect(scratch.events[0]).toMatchObject({ project: { scratch: true } });

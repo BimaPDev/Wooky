@@ -28,7 +28,7 @@ async function raw(cwd: string, ...args: string[]): Promise<string> {
 }
 
 async function makeRepo(): Promise<string> {
-  const base = await mkdtemp(join(tmpdir(), "age-merge-safety-"));
+  const base = await mkdtemp(join(tmpdir(), "wooky-merge-safety-"));
   bases.push(base);
   const root = join(base, "repo");
   await mkdir(root);
@@ -259,7 +259,7 @@ describe("merge safety: idempotence and refusal", () => {
     expect(res.message).toMatch(/untracked/i);
   });
 
-  it("rejects a branch that is not an age branch", async () => {
+  it("rejects a branch that is not a wooky branch", async () => {
     const root = await makeRepo();
     const res = await git.mergeWorktree(
       root,

@@ -9,7 +9,7 @@ const safeSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect
 
 describe("theme CLI", () => {
   it("set imports a file, writes under WOOKY_HOME and activates it", async () => {
-    const home = await tempDir("age-home");
+    const home = await tempDir("wooky-home");
     const file = join(home, "wall.svg");
     await writeFile(file, safeSvg, "utf8");
 

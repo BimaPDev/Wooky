@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { setAgentRuntime, currentAgentRuntime } from "./providers/agent-env.ts";
 
-export const SERVER_DOWN = "AGE server is not running";
+export const SERVER_DOWN = "Wooky server is not running";
 
 const ServerPresence = z.object({
   url: z.string().min(1),

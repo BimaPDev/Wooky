@@ -6,10 +6,10 @@ type Run = (
 ) => Promise<{ stdout: string; stderr: string; code: number | null }>;
 
 const COMMIT_IDENTITY = {
-  GIT_AUTHOR_NAME: "AGE",
-  GIT_AUTHOR_EMAIL: "age@localhost",
-  GIT_COMMITTER_NAME: "AGE",
-  GIT_COMMITTER_EMAIL: "age@localhost",
+  GIT_AUTHOR_NAME: "Wooky",
+  GIT_AUTHOR_EMAIL: "wooky@localhost",
+  GIT_COMMITTER_NAME: "Wooky",
+  GIT_COMMITTER_EMAIL: "wooky@localhost",
 } as const;
 
 /** Stage and commit dirty worktree changes on its branch. No-op when there is nothing to commit. */

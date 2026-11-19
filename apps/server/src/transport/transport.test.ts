@@ -413,7 +413,7 @@ describe("transport", () => {
 
   it("serves health and the web build with an SPA fallback", async () => {
     const webDist = await tempDir("web");
-    await writeFile(join(webDist, "index.html"), "<!doctype html><title>AGE</title>");
+    await writeFile(join(webDist, "index.html"), "<!doctype html><title>Wooky</title>");
     await writeFile(join(webDist, "app.js"), "console.info(1)");
     const { server } = await boot({ webDist });
 
@@ -423,7 +423,7 @@ describe("transport", () => {
     expect(script.headers.get("content-type")).toContain("text/javascript");
     const route = await fetch(`${server.url}/threads/abc`);
     expect(route.headers.get("content-type")).toContain("text/html");
-    expect(await route.text()).toContain("<title>AGE</title>");
+    expect(await route.text()).toContain("<title>Wooky</title>");
     expect((await fetch(`${server.url}/missing.js`)).status).toBe(404);
     expect((await fetch(`${server.url}/..%2f..%2fetc%2fhosts.txt`)).status).toBe(404);
   });

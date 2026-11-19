@@ -132,7 +132,7 @@ describe("listening-line parser", () => {
 
 describe("server launch argv and env", () => {
   const base = {
-    execPath: "/Applications/AGE.app/Contents/MacOS/AGE",
+    execPath: "/Applications/Wooky.app/Contents/MacOS/Wooky",
     loaderUrl: "file:///repo/node_modules/tsx/dist/loader.mjs",
     serverEntry: "/repo/apps/server/src/bin.ts",
     webDist: "/repo/apps/web/dist",

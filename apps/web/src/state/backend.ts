@@ -12,6 +12,6 @@ export function setBackend(next: Backend) {
 }
 
 export function backend(): Backend {
-  if (!current) throw new Error("AGE backend not initialised");
+  if (!current) throw new Error("Wooky backend not initialised");
   return current;
 }

@@ -15,7 +15,7 @@ import type { DecideContext } from "./orchestrator/decide.ts";
 import type { EventStore } from "./store/event-store.ts";
 
 export function tempDir(label: string): Promise<string> {
-  return mkdtemp(join(tmpdir(), `age-${label}-`));
+  return mkdtemp(join(tmpdir(), `wooky-${label}-`));
 }
 
 /** Deterministic ids and clock for tests. */

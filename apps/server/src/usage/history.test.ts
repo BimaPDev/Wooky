@@ -68,8 +68,8 @@ let wookyHome: string;
 let clock: number;
 
 beforeEach(async () => {
-  userHome = await mkdtemp(join(tmpdir(), "age-history-user-"));
-  wookyHome = await mkdtemp(join(tmpdir(), "age-history-home-"));
+  userHome = await mkdtemp(join(tmpdir(), "wooky-history-user-"));
+  wookyHome = await mkdtemp(join(tmpdir(), "wooky-history-home-"));
   clock = NOW;
   fakeReaderRuns.clear();
   vi.spyOn(console, "error").mockImplementation(() => undefined);

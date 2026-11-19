@@ -9,7 +9,7 @@ export const HexColor = z
   .regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Expected a hex color");
 
 /**
- * Optional overrides for AGE CSS variables (without the leading --).
+ * Optional overrides for Wooky CSS variables (without the leading --).
  * Prefer canvas + accent; fill colors only when a role needs a special value.
  */
 export const ThemeColorRoles = z
@@ -163,7 +163,7 @@ export const AppearanceThemeSummary = z.object({
 });
 export type AppearanceThemeSummary = z.infer<typeof AppearanceThemeSummary>;
 
-export const ThemeImportFormat = z.enum(["age", "t3code", "svg"]);
+export const ThemeImportFormat = z.enum(["wooky", "t3code", "svg"]);
 export type ThemeImportFormat = z.infer<typeof ThemeImportFormat>;
 
 export const DeviceSettings = z.object({

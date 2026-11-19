@@ -64,7 +64,7 @@ export async function dispatch(command: CommandInput, commandId = crypto.randomU
     const ack = await backend().call("dispatch", full);
     return { ...ack, commandId };
   } catch (error) {
-    console.error(`AGE: ${command.type} failed`, error);
+    console.error(`Wooky: ${command.type} failed`, error);
     useStore.setState({
       notice: error instanceof Error ? error.message : "The server could not record that.",
     });
@@ -77,7 +77,7 @@ export async function refreshProviders() {
     const providers = await backend().call("providers.list", {});
     useStore.setState({ providers });
   } catch (error) {
-    console.error("AGE: providers.list failed", error);
+    console.error("Wooky: providers.list failed", error);
   }
 }
 
@@ -227,7 +227,7 @@ export function confirm(dialog: Omit<Extract<Dialog, { kind: "confirm" }>, "kind
 export const addProject = (root: string) => dispatch({ type: "project.add", root });
 
 function desktopFolderPicker(): (() => Promise<string | null>) | null {
-  const pick = globalThis.window?.age?.pickFolder;
+  const pick = globalThis.window?.wooky?.pickFolder;
   return typeof pick === "function" ? pick : null;
 }
 

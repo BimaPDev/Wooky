@@ -101,7 +101,7 @@ describe("createCursorAdapter e2e", () => {
   }
 
   it("interrupts a hanging turn and kills the fake process group", async () => {
-    const work = await mkdtemp(join(tmpdir(), "age-cursor-abort-"));
+    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-abort-"));
     const pidFile = join(work, "pid");
     const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
     const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
@@ -186,7 +186,7 @@ describe("createCursorAdapter e2e", () => {
   });
 
   it("finishes with failed when the child dies on a signal", async () => {
-    const work = await mkdtemp(join(tmpdir(), "age-cursor-signal-"));
+    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-signal-"));
     const pidFile = join(work, "pid");
     const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
     const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
@@ -221,7 +221,7 @@ describe("createCursorAdapter e2e", () => {
   });
 
   it("passes --force only in full runtime mode", async () => {
-    const argvFile = join(await mkdtemp(join(tmpdir(), "age-cursor-argv-")), "argv.json");
+    const argvFile = join(await mkdtemp(join(tmpdir(), "wooky-cursor-argv-")), "argv.json");
     const prev = process.env.WOOKY_FAKE_CURSOR_LOG_ARGV;
     process.env.WOOKY_FAKE_CURSOR_LOG_ARGV = argvFile;
     const adapter = createCursorAdapter({
@@ -243,7 +243,7 @@ describe("createCursorAdapter e2e", () => {
   });
 
   it("passes --resume when resumeSessionId is set", async () => {
-    const work = await mkdtemp(join(tmpdir(), "age-cursor-resume-"));
+    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-resume-"));
     const argvFile = join(work, "argv.json");
     const prev = process.env.WOOKY_FAKE_CURSOR_LOG_ARGV;
     process.env.WOOKY_FAKE_CURSOR_LOG_ARGV = argvFile;

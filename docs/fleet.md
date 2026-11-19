@@ -194,7 +194,7 @@ A coordinator calls this from its shell during a turn. It speaks the RPC above t
 local server. `spawn` and `list` use `$WOOKY_THREAD_ID` as `parentThreadId` and exit with
 `WOOKY_THREAD_ID is not set` when that variable is missing. The server is `$WOOKY_SERVER_URL`,
 or `WOOKY_HOME/server.json` when that file names a pid that is still alive. Otherwise the
-command exits with `AGE server is not running`.
+command exits with `Wooky server is not running`.
 
 ```text
 wooky agents spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--prompt-file <path>] -- <prompt...>

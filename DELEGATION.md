@@ -1,6 +1,6 @@
 # Kitchen rules: how work is delegated
 
-AGE is built by a head chef (the orchestrating agent) and several line cooks (worker
+Wooky is built by a head chef (the orchestrating agent) and several line cooks (worker
 agents on different models and harnesses). The method:
 
 1. **Mise en place first.** The head chef writes the contracts, the reducer, the seams

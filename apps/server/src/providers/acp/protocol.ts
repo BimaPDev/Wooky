@@ -145,6 +145,6 @@ export function initializeParams(): {
       fs: { readTextFile: false, writeTextFile: false },
       terminal: false,
     },
-    clientInfo: { name: "age", title: "AGE", version: "0.0.0" },
+    clientInfo: { name: "wooky", title: "Wooky", version: "0.0.0" },
   };
 }

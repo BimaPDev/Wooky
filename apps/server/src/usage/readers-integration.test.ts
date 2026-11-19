@@ -109,8 +109,8 @@ let userHome: string;
 let wookyHome: string;
 
 beforeEach(async () => {
-  userHome = await mkdtemp(join(tmpdir(), "age-readers-int-user-"));
-  wookyHome = await mkdtemp(join(tmpdir(), "age-readers-int-home-"));
+  userHome = await mkdtemp(join(tmpdir(), "wooky-readers-int-user-"));
+  wookyHome = await mkdtemp(join(tmpdir(), "wooky-readers-int-home-"));
 });
 
 afterEach(async () => {

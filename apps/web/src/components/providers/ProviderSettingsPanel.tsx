@@ -19,7 +19,7 @@ const ARGS_NOTE: Partial<Record<ProviderKind, string>> = {
     "Claude runs through the Agent SDK, which takes long flags only, such as --max-turns 4 or --max-turns=4. Short flags and bare words are ignored.",
   cursor: "Added before the prompt on each turn, not on version or model checks.",
   codex: "Added after app-server when Codex starts, not on the version check.",
-  opencode: "Added to the arguments AGE passes when it starts OpenCode.",
+  opencode: "Added to the arguments Wooky passes when it starts OpenCode.",
 };
 
 /** Binary, models and advanced options for one provider. Edits go up through `onChange`. */
@@ -133,7 +133,7 @@ function BinaryField({
         {set && busy
           ? "Checking."
           : failed
-            ? (status.problem ?? "AGE could not run this binary.")
+            ? (status.problem ?? "Wooky could not run this binary.")
             : found
               ? `Found${status.version ? `, version ${status.version}` : ""}.`
               : ""}

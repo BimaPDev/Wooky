@@ -116,7 +116,7 @@ describe("wooky agents", () => {
   });
 
   it("errors when no server is published and the pid in server.json is stale", async () => {
-    const home = await tempDir("age-home");
+    const home = await tempDir("wooky-home");
     await writeFile(
       join(home, "server.json"),
       JSON.stringify({ url: "http://127.0.0.1:9", pid: 2_147_483_646, startedAt: "t" }),
@@ -128,7 +128,7 @@ describe("wooky agents", () => {
       captured.io,
     );
     expect(code).toBe(1);
-    expect(captured.stderr().trim()).toBe("AGE server is not running");
+    expect(captured.stderr().trim()).toBe("Wooky server is not running");
   });
 
   it("spawns from argv, a file, or stdin and prints the thread id", async () => {
@@ -323,7 +323,7 @@ describe("wooky agents", () => {
   });
 
   it("uses a live server.json when WOOKY_SERVER_URL is unset", async () => {
-    const home = await tempDir("age-home");
+    const home = await tempDir("wooky-home");
     await withServer(
       () => [],
       async (url) => {

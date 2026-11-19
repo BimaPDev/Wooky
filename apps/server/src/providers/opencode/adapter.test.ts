@@ -45,7 +45,7 @@ describe("OpenCode adapter", () => {
   });
 
   it("selects the model with session/set_config_option and appends extra args", async () => {
-    home = await mkdtemp(join(tmpdir(), "age-opencode-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-opencode-"));
     const log = join(home, "log");
     process.env.WOOKY_FAKE_ACP_LOG = log;
     const adapter = createOpenCodeAdapter({
@@ -72,7 +72,7 @@ describe("OpenCode adapter", () => {
   });
 
   it("sets OPENCODE_PERMISSION from the runtime mode over a settings value", async () => {
-    home = await mkdtemp(join(tmpdir(), "age-opencode-perm-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-opencode-perm-"));
     const envFile = join(home, "env.json");
     process.env.WOOKY_FAKE_ACP_ENV_FILE = envFile;
     const adapter = createOpenCodeAdapter({
@@ -98,7 +98,7 @@ describe("OpenCode adapter", () => {
 
   it("reports a missing binary without spawning a shell", async () => {
     const status = await createOpenCodeAdapter({
-      bin: "age-missing-opencode",
+      bin: "wooky-missing-opencode",
       settings: () =>
         DeviceSettings.parse({ providers: { opencode: { customModels: ["local/one"] } } }),
     }).probe();

@@ -54,7 +54,7 @@ export function rpcCall<M extends RpcMethod>(
       settle(new RpcClientError(error.message));
     });
     ws.on("close", () => {
-      settle(new RpcClientError("The connection to AGE closed."));
+      settle(new RpcClientError("The connection to Wooky closed."));
     });
     ws.on("open", () => {
       ws.send(JSON.stringify({ id: 1, method, params }));

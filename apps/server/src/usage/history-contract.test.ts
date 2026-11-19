@@ -206,7 +206,7 @@ describe("HistoryReader seam", () => {
       readdir: () => Promise.resolve([]),
     };
     const ctx: HistoryReaderContext = {
-      homeDir: "/tmp/age-history-home",
+      homeDir: "/tmp/wooky-history-home",
       env: {},
       sinceMs: 0,
       untilMs: 1,
@@ -229,7 +229,7 @@ describe("HistoryReader seam", () => {
     const reader: HistoryReader = {
       origin: "cursor",
       read(context) {
-        expect(context.homeDir).toBe("/tmp/age-history-home");
+        expect(context.homeDir).toBe("/tmp/wooky-history-home");
         const report: HistorySourceReport = { origin: "cursor", status: "missing", files: 0 };
         return Promise.resolve({ records: [row], report });
       },

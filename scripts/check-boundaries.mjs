@@ -77,9 +77,9 @@ for (const file of files) {
   const text = readFileSync(file, "utf8");
   const lines = text.split("\n");
   const isTest = /\.test\.tsx?$/.test(file);
-  // File-level escape hatch, for the colour rule only: `// age-allow-file color: <reason>` on line 1,
+  // File-level escape hatch, for the colour rule only: `// wooky-allow-file color: <reason>` on line 1,
   // honoured only for theme data (state/), dev fixtures (dev/) and tests.
-  const fileColorHatch = /^\/\/\s*age-allow-file color:\s*\S/.test(lines[0] ?? "");
+  const fileColorHatch = /^\/\/\s*wooky-allow-file color:\s*\S/.test(lines[0] ?? "");
   const fileColorHatchScope =
     /^apps\/web\/src\/(state|dev)\//.test(rel.split(sep).join("/")) || isTest;
   const allowFileColor = fileColorHatch && fileColorHatchScope;
@@ -88,7 +88,7 @@ for (const file of files) {
       file,
       1,
       "file-hatch-scope",
-      "age-allow-file color is only allowed in state/, dev/ and tests",
+      "wooky-allow-file color is only allowed in state/, dev/ and tests",
     );
   }
 
@@ -103,7 +103,7 @@ for (const file of files) {
 
   lines.forEach((content, i) => {
     const line = i + 1;
-    const allow = (id) => (lines[i - 1] ?? "").includes(`age-allow ${id}`);
+    const allow = (id) => (lines[i - 1] ?? "").includes(`wooky-allow ${id}`);
 
     // Complexity lives at the adapter boundary: only adapters, git, terminal and the
     // desktop shell (which owns the server child) spawn processes.
@@ -118,7 +118,7 @@ for (const file of files) {
         file,
         line,
         "spawn-boundary",
-        "child_process only in server providers/, git/, terminal/, process/ (else age-allow)",
+        "child_process only in server providers/, git/, terminal/, process/ (else wooky-allow)",
       );
     }
 

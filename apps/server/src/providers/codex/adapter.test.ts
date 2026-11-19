@@ -37,7 +37,7 @@ describe("createCodexAdapter", () => {
   let workDir = "";
 
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "age-codex-test-"));
+    workDir = mkdtempSync(join(tmpdir(), "wooky-codex-test-"));
   });
 
   afterEach(() => {

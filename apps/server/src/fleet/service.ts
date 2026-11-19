@@ -57,8 +57,8 @@ export function createFleetService(deps: {
       const project = store.model.projects[thread.projectId];
       if (!project) throw new ServiceError("not_found", `No project with id ${thread.projectId}.`);
       try {
-        await git.commitWorktreeChanges(project.root, thread.worktree, `AGE: ${thread.title}`);
-        return await git.mergePreview(project.root, thread.worktree, `AGE: ${thread.title}`);
+        await git.commitWorktreeChanges(project.root, thread.worktree, `Wooky: ${thread.title}`);
+        return await git.mergePreview(project.root, thread.worktree, `Wooky: ${thread.title}`);
       } catch (error) {
         throw new ServiceError(
           "unavailable",

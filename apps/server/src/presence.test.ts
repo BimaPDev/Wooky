@@ -19,7 +19,7 @@ describe("server presence", () => {
   });
 
   it("writes server.json and an executable shim, then removes both", async () => {
-    home = await tempDir("age-home");
+    home = await tempDir("wooky-home");
     release = publishServerPresence(
       home,
       "http://127.0.0.1:4317",
@@ -56,7 +56,7 @@ describe("server presence", () => {
   });
 
   it("replaces a dead age shim and leaves a live one's alone", async () => {
-    home = await tempDir("age-home");
+    home = await tempDir("wooky-home");
     await mkdir(join(home, "bin"), { recursive: true });
     await writeFile(join(home, "bin", "age"), "#!/bin/sh\n# age-shim pid=2147483646\nexec true\n");
     await writeFile(join(home, "bin", "age.cmd"), "@echo off\r\nrem age-shim pid=2147483646\r\n");
@@ -75,7 +75,7 @@ describe("server presence", () => {
   });
 
   it("leaves a newer server's files in place", async () => {
-    home = await tempDir("age-home");
+    home = await tempDir("wooky-home");
     release = publishServerPresence(home, "http://127.0.0.1:1", () => "t");
     await writeFile(
       join(home, "server.json"),
@@ -90,7 +90,7 @@ describe("server presence", () => {
   });
 
   it("discovers a live server.json and rejects a stale pid", async () => {
-    home = await tempDir("age-home");
+    home = await tempDir("wooky-home");
     expect(pidAlive(process.pid)).toBe(true);
     expect(pidAlive(2_147_483_646)).toBe(false);
     expect(() => discoverServerUrl({ WOOKY_HOME: home })).toThrow(SERVER_DOWN);
@@ -114,7 +114,7 @@ describe("server presence", () => {
 
 describe("startServer presence", () => {
   it("publishes server.json for the listening server and removes it on close", async () => {
-    const home = await tempDir("age-home");
+    const home = await tempDir("wooky-home");
     const server = await startServer({
       home,
       port: 0,

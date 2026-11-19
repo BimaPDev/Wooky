@@ -40,7 +40,7 @@ afterEach(async () => {
 });
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "age-pick-"));
+  const dir = await mkdtemp(join(tmpdir(), "wooky-pick-"));
   dirs.push(dir);
   return dir;
 }

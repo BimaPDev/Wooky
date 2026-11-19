@@ -1,9 +1,9 @@
-# AGE — agent rules
+# Wooky — agent rules
 
-AGE is a local-first workspace for coding agents. It drives the agent CLIs the user
+Wooky is a local-first workspace for coding agents. It drives the agent CLIs the user
 already has installed and signed in to (Claude Code, Cursor Agent, Codex, plus a free
 Demo agent), shows what they are doing while they work, and keeps their changes
-reviewable. AGE has no model and no account of its own.
+reviewable. Wooky has no model and no account of its own.
 
 ## Principles
 
@@ -23,7 +23,7 @@ reviewable. AGE has no model and no account of its own.
 
 ## Glossary
 
-- **Provider**: a runtime AGE drives (claude, cursor, codex, demo). **Adapter**: the code
+- **Provider**: a runtime Wooky drives (claude, cursor, codex, demo). **Adapter**: the code
   translating its native protocol into `ProviderEvent`s.
 - **Project**: a directory. **Thread**: a durable conversation in a project, bound to a
   provider + model + runtime mode, optionally with its own worktree.
@@ -64,8 +64,8 @@ Adapters emit `ProviderEvent`s, which become `turn.*` events. See `docs/architec
 - Every React `useEffect` has a `// sync: <external system>` comment. Derive state in render.
 - Web components use CSS variables from `apps/web/src/styles/tokens.css`, never literal colours.
 
-Escape hatch: `// age-allow <rule-id>: <reason>` on the line above, only with a real reason.
-For `color` only, `// age-allow-file color: <reason>` as a file's first line exempts the whole file,
+Escape hatch: `// wooky-allow <rule-id>: <reason>` on the line above, only with a real reason.
+For `color` only, `// wooky-allow-file color: <reason>` as a file's first line exempts the whole file,
 and only under `apps/web/src/state/`, `apps/web/src/dev/` or in `*.test.ts(x)` files.
 
 ## Checks

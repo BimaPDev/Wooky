@@ -17,7 +17,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("AGE UI crashed", error, info.componentStack);
+    console.error("Wooky UI crashed", error, info.componentStack);
   }
 
   override render() {

@@ -48,9 +48,9 @@ export function formatAgents(agents: readonly UsableAgent[]): string {
  */
 export function fleetGuide(agents: readonly UsableAgent[]): string {
   const { maxLiveWorkers, maxAgentsWaitMs, maxReportSummary } = FLEET_LIMITS;
-  return `# Running several agents in AGE
+  return `# Running several agents in Wooky
 
-You are a coding agent running inside AGE. You can hand work to other coding agents
+You are a coding agent running inside Wooky. You can hand work to other coding agents
 (workers) and coordinate them. Each worker is a separate agent session with its own git
 worktree and branch, made from the project's current state. Workers run in parallel, and
 the user can watch every one of them on the agent board.

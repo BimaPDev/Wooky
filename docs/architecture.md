@@ -3,7 +3,7 @@
 ## Process model
 
 ```
- web / desktop client ──ws /ws──▶ age server ──▶ provider adapters ──▶ claude / cursor-agent / codex / demo
+ web / desktop client ──ws /ws──▶ Wooky server ──▶ provider adapters ──▶ claude / cursor-agent / codex / demo
         ▲   (commands, snapshot,       │
         └── pushed events)             ├── orchestrator (pure)
                                        ├── event store (node:sqlite, WOOKY_HOME/state.sqlite)

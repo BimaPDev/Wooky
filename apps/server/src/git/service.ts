@@ -52,9 +52,9 @@ const INHERITED_GIT_VARS = [
 
 const WOOKY_IDENTITY = {
   GIT_AUTHOR_NAME: "Wooky",
-  GIT_AUTHOR_EMAIL: "age@localhost",
+  GIT_AUTHOR_EMAIL: "wooky@localhost",
   GIT_COMMITTER_NAME: "Wooky",
-  GIT_COMMITTER_EMAIL: "age@localhost",
+  GIT_COMMITTER_EMAIL: "wooky@localhost",
 } as const;
 
 const PATCH_LIMIT = 200 * 1024;
@@ -218,7 +218,7 @@ export function createGitService(options?: {
   }
 
   async function withTempIndex<T>(fn: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> {
-    const dir = await mkdtemp(join(tmpdir(), "age-git-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-git-"));
     const indexFile = join(dir, "index");
     try {
       return await fn(baseEnv({ ...WOOKY_IDENTITY, GIT_INDEX_FILE: indexFile }));
@@ -254,7 +254,7 @@ export function createGitService(options?: {
       withTempIndex(async (env) => {
         const hasHead = await headExists(top, env);
         const tree = await writeWorkingTree(top, env);
-        const commitArgs = ["commit-tree", tree, "-m", "age checkpoint"];
+        const commitArgs = ["commit-tree", tree, "-m", "wooky checkpoint"];
         if (hasHead) {
           const parent = await run(["rev-parse", "HEAD"], { cwd: top, env });
           commitArgs.push("-p", parent.stdout.trim());

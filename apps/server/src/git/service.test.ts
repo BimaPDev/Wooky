@@ -41,7 +41,7 @@ async function raw(cwd: string, ...args: string[]): Promise<string> {
 
 /** Fresh repo at <base>/repo so `.wooky-worktrees` lands under <base> and is cleaned with it. */
 async function makeRepo(withCommit = true): Promise<string> {
-  const base = await mkdtemp(join(tmpdir(), "age-git-test-"));
+  const base = await mkdtemp(join(tmpdir(), "wooky-git-test-"));
   bases.push(base);
   const root = join(base, "repo");
   await mkdir(root);
@@ -66,7 +66,7 @@ describe("isRepo", () => {
     const root = await makeRepo();
     expect(await git.isRepo(root)).toBe(true);
 
-    const base = await mkdtemp(join(tmpdir(), "age-git-plain-"));
+    const base = await mkdtemp(join(tmpdir(), "wooky-git-plain-"));
     bases.push(base);
     expect(await git.isRepo(base)).toBe(false);
   });
@@ -358,7 +358,7 @@ describe("env hygiene (fix 3)", () => {
     const to = "refs/wooky/checkpoints/t/b/after";
     await git.captureCheckpoint(root, to);
 
-    const base = await mkdtemp(join(tmpdir(), "age-git-ext-"));
+    const base = await mkdtemp(join(tmpdir(), "wooky-git-ext-"));
     bases.push(base);
     const differ = join(base, "fail-differ.sh");
     await writeFile(differ, "#!/bin/sh\nexit 1\n");
@@ -511,7 +511,7 @@ async function setupFakeRepo(): Promise<{
   mainPath: string;
   wtPath: string;
 }> {
-  const base = await realpath(await mkdtemp(join(tmpdir(), "age-git-fake-")));
+  const base = await realpath(await mkdtemp(join(tmpdir(), "wooky-git-fake-")));
   bases.push(base);
   await mkdir(join(base, "main", ".git"), { recursive: true });
   await mkdir(join(base, "wt"), { recursive: true });
@@ -608,7 +608,7 @@ process.stdout.write(Buffer.alloc(256 * 1024, 65));
 
 describe("bounded run (fix 6)", () => {
   it("kills a git that exceeds the spawn timeout", async () => {
-    const base = await mkdtemp(join(tmpdir(), "age-git-slow-"));
+    const base = await mkdtemp(join(tmpdir(), "wooky-git-slow-"));
     bases.push(base);
     const bin = join(base, "slow.cjs");
     await writeFile(bin, SLOW_GIT);
@@ -618,7 +618,7 @@ describe("bounded run (fix 6)", () => {
   });
 
   it("kills a git that floods stdout past the cap", async () => {
-    const base = await mkdtemp(join(tmpdir(), "age-git-huge-"));
+    const base = await mkdtemp(join(tmpdir(), "wooky-git-huge-"));
     bases.push(base);
     const bin = join(base, "huge.cjs");
     await writeFile(bin, HUGE_GIT);
@@ -649,7 +649,7 @@ describe("listFiles", () => {
   });
 
   it("falls back to a bounded walk outside a repo", async () => {
-    const root = await mkdtemp(join(tmpdir(), "age-git-plain-"));
+    const root = await mkdtemp(join(tmpdir(), "wooky-git-plain-"));
     bases.push(root);
     await putFiles(root, {
       "x.txt": "",
@@ -666,7 +666,7 @@ describe("listFiles", () => {
     const repo = await makeRepo(false);
     await putFiles(repo, files);
     expect(await capped.listFiles(repo)).toHaveLength(10);
-    const plain = await mkdtemp(join(tmpdir(), "age-git-plain-"));
+    const plain = await mkdtemp(join(tmpdir(), "wooky-git-plain-"));
     bases.push(plain);
     await putFiles(plain, files);
     expect(await capped.listFiles(plain)).toHaveLength(10);
@@ -697,8 +697,8 @@ describe("commitWorktreeChanges", () => {
     const wt = await git.createWorktree(root, "uncommitted");
     await writeFile(join(wt.path, "worker-only.txt"), "from worker\n");
 
-    await git.commitWorktreeChanges(root, wt, "AGE: Worker title");
-    const preview = await git.mergePreview(root, wt, "AGE: Worker title");
+    await git.commitWorktreeChanges(root, wt, "Wooky: Worker title");
+    const preview = await git.mergePreview(root, wt, "Wooky: Worker title");
     expect(preview.files.some((file) => file.path === "worker-only.txt")).toBe(true);
 
     const branchStat = await git.diffBranchStat(root, wt.branch);
@@ -713,7 +713,7 @@ describe("commitWorktreeChanges", () => {
   it("is a no-op when the worktree is clean", async () => {
     const root = await makeRepo();
     const wt = await git.createWorktree(root, "clean-wt");
-    await expect(git.commitWorktreeChanges(root, wt, "AGE: x")).resolves.toBeUndefined();
+    await expect(git.commitWorktreeChanges(root, wt, "Wooky: x")).resolves.toBeUndefined();
   });
 });
 
@@ -722,7 +722,7 @@ describe("merge worktree", () => {
     const root = await makeRepo();
     const wt = await git.createWorktree(root, "with-untracked-root");
     await writeFile(join(wt.path, "land.txt"), "land\n");
-    await git.commitWorktreeChanges(root, wt, "AGE: land");
+    await git.commitWorktreeChanges(root, wt, "Wooky: land");
 
     await writeFile(join(root, "stray-untracked.txt"), "stray\n");
     const merged = await git.mergeWorktree(root, wt, "squash", "land", "squash land");

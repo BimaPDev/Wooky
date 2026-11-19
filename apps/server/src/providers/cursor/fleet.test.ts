@@ -61,7 +61,7 @@ describe("cursor fleet env", () => {
 
   async function run(input: TurnInput) {
     if (home) await rm(home, { recursive: true, force: true });
-    home = await mkdtemp(join(tmpdir(), "age-cursor-fleet-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-cursor-fleet-"));
     const script = join(home, "fake-agent.mjs");
     const capture = join(home, "capture.json");
     await writeFile(script, SCRIPT, "utf8");

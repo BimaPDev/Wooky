@@ -6,7 +6,7 @@ import { loadCache, saveCache } from "./history-cache.ts";
 
 let dir: string;
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "age-history-cache-"));
+  dir = await mkdtemp(join(tmpdir(), "wooky-history-cache-"));
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });

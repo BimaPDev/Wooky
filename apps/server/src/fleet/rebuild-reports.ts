@@ -33,7 +33,7 @@ export async function rebuildMissingWorkerReports(input: {
     let diffStat: Awaited<ReturnType<typeof workerDiffStat>> = undefined;
     if (thread.worktree && project) {
       try {
-        await git.commitWorktreeChanges(project.root, thread.worktree, `AGE: ${thread.title}`);
+        await git.commitWorktreeChanges(project.root, thread.worktree, `Wooky: ${thread.title}`);
       } catch {
         // Best effort before diff stat.
       }

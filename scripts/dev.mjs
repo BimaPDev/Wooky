@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `pnpm dev`: the AGE server on a free port (state in .wooky-dev), then the web dev server.
+// `pnpm dev`: the Wooky server on a free port (state in .wooky-dev), then the web dev server.
 // Each child leads its own process group, so shutdown reaches exactly what this script started.
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
@@ -96,7 +96,7 @@ function start(name, args, env, onLine) {
   child.on("exit", (code, signal) => {
     if (shuttingDown) return;
     const clean = code === 0 && signal === null;
-    shutdown(clean ? 0 : 1, `${name} exited (${code ?? signal}); stopping AGE.`);
+    shutdown(clean ? 0 : 1, `${name} exited (${code ?? signal}); stopping Wooky.`);
   });
   return entry;
 }
@@ -119,8 +119,8 @@ function startWeb(port) {
 }
 
 async function main() {
-  process.on("SIGINT", () => shutdown(130, "stopping AGE"));
-  process.on("SIGTERM", () => shutdown(143, "stopping AGE"));
+  process.on("SIGINT", () => shutdown(130, "stopping Wooky"));
+  process.on("SIGTERM", () => shutdown(143, "stopping Wooky"));
 
   if (webOnly) {
     startWeb(Number(process.env.WOOKY_PORT) || DEFAULT_PORT);

@@ -340,7 +340,7 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
   const configuredArgs = options?.codexArgs;
 
   // Cumulative thread token totals seen at the end of each turn, keyed by native
-  // thread id. The next turn on that thread subtracts this baseline so AGE sees
+  // thread id. The next turn on that thread subtracts this baseline so Wooky sees
   // the per-turn delta rather than the app-server's running total. It is memory
   // only, so the translator seeds a resumed turn that finds no entry here.
   const cumulativeUsageByThread = createUsageBaselineStore();

@@ -679,7 +679,7 @@ describe("effort and scratch", () => {
         project: {
           id: "s",
           name: "No project",
-          root: "/age/scratch",
+          root: "/wooky/scratch",
           createdAt: at,
           scratch: true,
         },

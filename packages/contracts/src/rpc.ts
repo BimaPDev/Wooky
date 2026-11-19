@@ -169,7 +169,7 @@ export const RpcMethods = {
     result: z.object({ deleted: z.boolean() }),
   },
   /**
-   * Import AGE theme JSON, a t3code theme JSON (version, name, appearance,
+   * Import Wooky theme JSON, a t3code theme JSON (version, name, appearance,
    * colors with canvas and surface, optional variants and css), or a raw SVG
    * file that becomes a wallpaper theme. The server classifies the text.
    */

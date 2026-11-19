@@ -1,4 +1,4 @@
-// age-allow-file color: theme studio data, not styling. Themes are computed in JS from these hex palettes, and the colour pickers and preview swatches need raw values.
+// wooky-allow-file color: theme studio data, not styling. Themes are computed in JS from these hex palettes, and the colour pickers and preview swatches need raw values.
 import type { ThemeColorRoles } from "@wooky/contracts";
 
 type Palette = Record<keyof ThemeColorRoles, string>;

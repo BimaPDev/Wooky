@@ -105,7 +105,7 @@ describe("ACP adapter", () => {
   });
 
   async function tempDir() {
-    home = await mkdtemp(join(tmpdir(), "age-acp-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-acp-"));
     return home;
   }
 
@@ -410,7 +410,7 @@ describe("ACP adapter", () => {
             {
               id: "gem",
               name: "Gem",
-              command: "age-missing-acp-bin",
+              command: "wooky-missing-acp-bin",
               enabled: true,
             },
           ],

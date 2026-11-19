@@ -28,7 +28,7 @@ async function raw(cwd: string, ...args: string[]): Promise<string> {
 
 /** Fresh repo with one commit on main. Cleans up with {@link cleanupTestRepos} in tests. */
 export async function makeRepo(withCommit = true): Promise<string> {
-  const base = await mkdtemp(join(tmpdir(), "age-git-test-"));
+  const base = await mkdtemp(join(tmpdir(), "wooky-git-test-"));
   bases.push(base);
   const root = join(base, "repo");
   await mkdir(root);

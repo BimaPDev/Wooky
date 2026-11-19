@@ -20,9 +20,9 @@ interface MergeOpsDeps {
 
 const WOOKY_IDENTITY = {
   GIT_AUTHOR_NAME: "Wooky",
-  GIT_AUTHOR_EMAIL: "age@localhost",
+  GIT_AUTHOR_EMAIL: "wooky@localhost",
   GIT_COMMITTER_NAME: "Wooky",
-  GIT_COMMITTER_EMAIL: "age@localhost",
+  GIT_COMMITTER_EMAIL: "wooky@localhost",
 } as const;
 
 /** New worktrees use wooky/<id>. age/<id> remains valid so stored threads can still merge. */
@@ -244,8 +244,8 @@ export function createMergeOps(deps: MergeOpsDeps) {
   }
 
   /**
-   * Put the root back in the state it had before an AGE merge began. Only ever acts on state
-   * AGE created (the marker proves it); a mid-merge root without the marker is the user's.
+   * Put the root back in the state it had before an Wooky merge began. Only ever acts on state
+   * Wooky created (the marker proves it); a mid-merge root without the marker is the user's.
    * `reset --merge` keeps working-tree edits that differ from the index, so a user's own
    * unrelated edit survives; when it cannot proceed we say so rather than force it.
    */
@@ -293,7 +293,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
     return { ok: false, message: detail ? `${MID_SQUASH}. ${detail}` : MID_SQUASH };
   }
 
-  /** After a failed git step: abort or unstage what AGE started, then drop the marker only if the root is clean. */
+  /** After a failed git step: abort or unstage what Wooky started, then drop the marker only if the root is clean. */
   async function rollback(
     top: string,
     dir: string,
@@ -451,7 +451,7 @@ export function createMergeOps(deps: MergeOpsDeps) {
       }
       try {
         if (deps.commitWorktree && title) {
-          await deps.commitWorktree(worktree, `AGE: ${title}`);
+          await deps.commitWorktree(worktree, `Wooky: ${title}`);
         }
         return await mergeLocked(top, worktree.branch, strategy, title, message);
       } finally {

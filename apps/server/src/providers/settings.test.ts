@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function tempFile(mode: number): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "age-bin-"));
+  const dir = await mkdtemp(join(tmpdir(), "wooky-bin-"));
   dirs.push(dir);
   const file = join(dir, "tool");
   await writeFile(file, "#!/bin/sh\n");
@@ -33,7 +33,7 @@ function settings(partial: Partial<ProviderSettings>): ProviderSettings {
 describe("checkBinaryPath", () => {
   it("rejects a relative path, a missing file and a directory", async () => {
     expect(checkBinaryPath("codex", "Codex")).toMatchObject({ ok: false, problem: /absolute/ });
-    expect(checkBinaryPath(join(tmpdir(), "age-no-such-binary"), "Codex")).toMatchObject({
+    expect(checkBinaryPath(join(tmpdir(), "wooky-no-such-binary"), "Codex")).toMatchObject({
       ok: false,
       problem: /No file/,
     });

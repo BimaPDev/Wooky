@@ -1,4 +1,4 @@
-interface AgeShell {
+interface WookyShell {
   platform: string;
   versions: { electron: string; chrome: string; node: string };
   /** Desktop shell only. Resolves to the chosen folder, or null when cancelled. */
@@ -6,5 +6,5 @@ interface AgeShell {
 }
 
 interface Window {
-  age?: AgeShell;
+  wooky?: WookyShell;
 }

@@ -17,7 +17,7 @@
  *   - "full"       -> approvalPolicy: "never",     sandbox: "danger-full-access" / dangerFullAccess
  * - In Codex `safety.rs`, `approvalPolicy: "untrusted"` still emits `item/fileChange/requestApproval`
  *   even inside `workspace-write` (while `"on-request"` would skip command prompts in sandboxed turns).
- *   To honor AGE's `"auto-edits"` contract ("file edits run, commands still ask"), the adapter uses
+ *   To honor Wooky's `"auto-edits"` contract ("file edits run, commands still ask"), the adapter uses
  *   `"untrusted"` so commands prompt, and auto-accepts non-escalated (`!grantRoot`) fileChange prompts
  *   when `runtimeMode === "auto-edits"`. Under `"untrusted"`, Codex still auto-allows its built-in
  *   read-only command safelist without issuing an approval request.

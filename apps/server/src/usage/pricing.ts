@@ -359,7 +359,7 @@ function keyRank(key: string): number {
   return /^(?:anthropic|openai|gemini|xai)\//.test(key) ? 1 : 2;
 }
 
-/** Reduces LiteLLM's published JSON to the four per-token rates AGE uses. */
+/** Reduces LiteLLM's published JSON to the four per-token rates Wooky uses. */
 export function reduceLitellm(json: unknown): RateTable {
   const table: RateTable = {};
   const ranks = new Map<string, number>();

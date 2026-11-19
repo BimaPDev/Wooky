@@ -105,7 +105,7 @@ describe("quoteAnswerLabel", () => {
 
 describe("readPlanFromFile", () => {
   function projectWithPlans(name: string, home?: string) {
-    const cwd = tempDir(`age-plan-${name}-`);
+    const cwd = tempDir(`wooky-plan-${name}-`);
     if (home) {
       setPlanUserHomeForTests(home);
       mkdirSync(join(home, ".claude", "plans"), { recursive: true });
@@ -143,8 +143,8 @@ describe("readPlanFromFile", () => {
   });
 
   it("rejects a plans directory that is a symbolic link", async () => {
-    const cwd = tempDir("age-plan-symlink-root-");
-    const outside = tempDir("age-plan-outside-");
+    const cwd = tempDir("wooky-plan-symlink-root-");
+    const outside = tempDir("wooky-plan-outside-");
     mkdirSync(outside, { recursive: true });
     writeFileSync(join(outside, "task.md"), "outside plan");
     mkdirSync(join(cwd, ".claude"), { recursive: true });
@@ -175,7 +175,7 @@ describe("readPlanFromFile", () => {
   });
 
   it("accepts paths when the temp root uses a /var spelling alias", async () => {
-    const base = tempDir("age-plan-var-");
+    const base = tempDir("wooky-plan-var-");
     const cwd = resolve(base);
     mkdirSync(join(cwd, ".claude", "plans"), { recursive: true });
     const planPath = join(cwd, ".claude", "plans", "task.md");
@@ -306,7 +306,7 @@ describe("readPlanFromFile", () => {
   });
 
   it("rejects a plan under project .claude symlinked to an outside directory", async () => {
-    const cwd = tempDir("age-plan-ancestor-claude-");
+    const cwd = tempDir("wooky-plan-ancestor-claude-");
     const outside = join(cwd, "outside-plans-root");
     mkdirSync(join(outside, "plans"), { recursive: true });
     writeFileSync(join(outside, "plans", "task.md"), SENTINEL);
@@ -320,7 +320,7 @@ describe("readPlanFromFile", () => {
   });
 
   it("rejects a custom plansDirectory reached through a symlinked ancestor", async () => {
-    const cwd = tempDir("age-plan-custom-ancestor-");
+    const cwd = tempDir("wooky-plan-custom-ancestor-");
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     writeFileSync(
       join(cwd, ".claude", "settings.json"),
@@ -341,7 +341,7 @@ describe("readPlanFromFile", () => {
 
 describe("openRegularFileSafely", () => {
   it("rejects a hard-link swap in the beforeOpen gap without leaking bytes", async () => {
-    const cwd = tempDir("age-open-before-hardlink-");
+    const cwd = tempDir("wooky-open-before-hardlink-");
     mkdirSync(join(cwd, ".claude", "plans"), { recursive: true });
     const planPath = join(cwd, ".claude", "plans", "task.md");
     const credPath = join(cwd, "credential.md");
@@ -364,7 +364,7 @@ describe("openRegularFileSafely", () => {
 
 describe("plansDirectoryFromSettings", () => {
   it("reads plansDirectory from settings.json", async () => {
-    const cwd = tempDir("age-settings-ok-");
+    const cwd = tempDir("wooky-settings-ok-");
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     writeFileSync(
       join(cwd, ".claude", "settings.json"),
@@ -374,7 +374,7 @@ describe("plansDirectoryFromSettings", () => {
   });
 
   it("ignores settings.json reached through a symlinked ancestor", async () => {
-    const cwd = tempDir("age-settings-ancestor-");
+    const cwd = tempDir("wooky-settings-ancestor-");
     const outside = join(cwd, "outside-claude");
     mkdirSync(outside, { recursive: true });
     writeFileSync(join(outside, "settings.json"), JSON.stringify({ plansDirectory: "owned" }));
@@ -383,7 +383,7 @@ describe("plansDirectoryFromSettings", () => {
   });
 
   it("ignores a symlinked settings.json", async () => {
-    const cwd = tempDir("age-settings-symlink-");
+    const cwd = tempDir("wooky-settings-symlink-");
     const outside = join(cwd, "evil-settings.json");
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     writeFileSync(outside, JSON.stringify({ plansDirectory: "owned" }));
@@ -392,7 +392,7 @@ describe("plansDirectoryFromSettings", () => {
   });
 
   it.skipIf(process.platform === "win32")("ignores a FIFO settings.json", async () => {
-    const cwd = tempDir("age-settings-fifo-");
+    const cwd = tempDir("wooky-settings-fifo-");
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     const fifo = join(cwd, ".claude", "settings.json");
     await execFileAsync("mkfifo", [fifo]);
@@ -400,7 +400,7 @@ describe("plansDirectoryFromSettings", () => {
   });
 
   it("ignores settings.json larger than 1 MiB", async () => {
-    const cwd = tempDir("age-settings-large-");
+    const cwd = tempDir("wooky-settings-large-");
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     const big = JSON.stringify({ plansDirectory: "x".repeat(1 << 20) });
     writeFileSync(join(cwd, ".claude", "settings.json"), big);
@@ -410,7 +410,7 @@ describe("plansDirectoryFromSettings", () => {
 
 describe("resolvePlanMarkdown", () => {
   it("reads from a custom plansDirectory in project settings", async () => {
-    const cwd = tempDir("age-plan-custom-dir-");
+    const cwd = tempDir("wooky-plan-custom-dir-");
     const custom = join(cwd, "docs", "plans");
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     mkdirSync(custom, { recursive: true });

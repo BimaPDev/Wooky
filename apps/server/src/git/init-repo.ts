@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const IDENTITY = ["-c", "user.name=Wooky", "-c", "user.email=age@localhost"];
+const IDENTITY = ["-c", "user.name=Wooky", "-c", "user.email=wooky@localhost"];
 
 /** Make `dir` a git repository with one empty commit, so checkpoints and worktrees have a HEAD. */
 export async function initRepo(dir: string): Promise<void> {

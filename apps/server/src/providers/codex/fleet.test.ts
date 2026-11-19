@@ -58,7 +58,7 @@ describe("codex fleet env", () => {
 
   async function run(overrides: Partial<TurnInput> = {}) {
     if (home) rmSync(home, { recursive: true, force: true });
-    home = mkdtempSync(join(tmpdir(), "age-codex-fleet-"));
+    home = mkdtempSync(join(tmpdir(), "wooky-codex-fleet-"));
     const logFile = join(home, "frames.jsonl");
     const envFile = join(home, "env.json");
     process.env.WOOKY_FAKE_CODEX_LOG_ENV = envFile;

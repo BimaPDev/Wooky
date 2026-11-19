@@ -71,7 +71,7 @@ export function createWorkerHost(options: WorkerHostOptions): WorkerHost {
 
   function start(): WorkerLike {
     const init: WorkerInit = {
-      ageUsageHistory: true,
+      wookyUsageHistory: true,
       homeDir: options.userHome,
       cachePath: join(options.home, CACHE_FILE_NAME),
       readersModule: options.readersModule ?? null,

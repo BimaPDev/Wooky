@@ -15,7 +15,7 @@ export function themeFileTooLarge(byteLength: number): boolean {
 }
 
 export function importFormatLabel(format: ThemeImportFormat): string {
-  if (format === "age") return "AGE theme";
+  if (format === "wooky") return "Wooky theme";
   if (format === "t3code") return "t3code theme";
   return "SVG wallpaper";
 }

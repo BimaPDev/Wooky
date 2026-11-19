@@ -217,7 +217,7 @@ describe("pricing service", () => {
   let clock: number;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), "age-pricing-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-pricing-"));
     clock = NOW;
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });

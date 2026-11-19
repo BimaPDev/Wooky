@@ -1,7 +1,7 @@
 # Failover (auto switcher)
 
 When a turn fails because the active provider hit a rate limit, quota, or overload,
-AGE can switch the thread to another model and retry the same prompt. The user sees a
+Wooky can switch the thread to another model and retry the same prompt. The user sees a
 timeline notice; the conversation continues via the existing handoff path (provider
 change with transcript context).
 

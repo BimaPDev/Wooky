@@ -45,7 +45,7 @@ afterEach(async () => {
 
 describe("cursor honours provider settings", () => {
   it("runs the configured binary with extra args before the prompt and the user env", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "age-cursor-settings-"));
+    const dir = await mkdtemp(join(tmpdir(), "wooky-cursor-settings-"));
     dirs.push(dir);
     const argvFile = join(dir, "argv.json");
     const adapter = createCursorAdapter({

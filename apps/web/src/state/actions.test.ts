@@ -109,8 +109,8 @@ function installBridge(pickFolder: (() => Promise<string | null>) | null) {
     delete (globalThis as { window?: unknown }).window;
     return;
   }
-  (globalThis as unknown as { window: { age: AgeShell } }).window = {
-    age: {
+  (globalThis as unknown as { window: { wooky: WookyShell } }).window = {
+    wooky: {
       platform: "darwin",
       versions: { electron: "0", chrome: "0", node: "24" },
       pickFolder,

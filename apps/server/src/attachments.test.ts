@@ -8,7 +8,7 @@ import { createAttachmentStore } from "./attachments.ts";
 describe("attachment store", () => {
   let home: string;
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), "age-attach-"));
+    home = await mkdtemp(join(tmpdir(), "wooky-attach-"));
   });
   afterEach(async () => {
     await rm(home, { recursive: true, force: true });

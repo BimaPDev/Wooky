@@ -96,7 +96,7 @@ function isT3codeTheme(value: unknown): value is Record<string, unknown> {
   return typeof (colors as Record<string, unknown>).canvas === "string";
 }
 
-function isAgeTheme(value: unknown): boolean {
+function isWookyTheme(value: unknown): boolean {
   return AppearanceTheme.safeParse(value).success;
 }
 
@@ -166,9 +166,9 @@ function importT3code(raw: Record<string, unknown>): { theme: Theme; format: The
   return { theme, format: "t3code" };
 }
 
-function importAge(raw: unknown): { theme: Theme; format: ThemeImportFormat } {
+function importWooky(raw: unknown): { theme: Theme; format: ThemeImportFormat } {
   const theme = AppearanceTheme.parse({ ...(raw as object), builtin: false });
-  return { theme, format: "age" };
+  return { theme, format: "wooky" };
 }
 
 export function importTheme(
@@ -189,7 +189,7 @@ export function importTheme(
       throw new Error("Unrecognized theme format.");
     }
 
-    if (isAgeTheme(parsed)) result = importAge(parsed);
+    if (isWookyTheme(parsed)) result = importWooky(parsed);
     else if (isT3codeTheme(parsed)) result = importT3code(parsed);
     else throw new Error("Unrecognized theme format.");
   }

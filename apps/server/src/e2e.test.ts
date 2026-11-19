@@ -1,6 +1,6 @@
 // Head-chef integration test: the whole user journey across stations, with a real
 // server, real WebSocket, real git and the demo agent. Nothing here is faked.
-// age-allow child-process: the fixture builds a real git repo to test against.
+// wooky-allow child-process: the fixture builds a real git repo to test against.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
