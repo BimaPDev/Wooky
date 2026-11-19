@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { AppearanceTheme } from "@age/contracts";
-import { importTheme } from "./theme-import.ts";
+import { importTheme, MAX_THEME_IMPORT_TEXT } from "./theme-import.ts";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const orbitFixture = readFileSync(join(fixtureDir, "orbit-t3code.json"), "utf8");
@@ -29,6 +29,7 @@ describe("importTheme", () => {
     expect(theme.colors.text2).toBe("#96a3b8");
     expect(theme.variants?.light?.canvas).toBe("#f5f5f2");
     expect(theme.variants?.light?.colors.text).toBe("#11151c");
+    expect(theme.css).toBe(".safe { color: var(--text); }");
     AppearanceTheme.parse(theme);
   });
 
@@ -37,6 +38,10 @@ describe("importTheme", () => {
     raw.css = '@import "https://evil.example/a.css"; body { color: red; }';
     const { theme } = importTheme(JSON.stringify(raw));
     expect(theme.css).toBe("");
+  });
+
+  it("rejects import text over the RPC size cap", () => {
+    expect(() => importTheme("x".repeat(MAX_THEME_IMPORT_TEXT + 1))).toThrow(/exceeds/);
   });
 
   it("detects native AGE JSON", () => {

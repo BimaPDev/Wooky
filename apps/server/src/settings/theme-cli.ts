@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { MAX_THEME_IMPORT_TEXT } from "./theme-import.ts";
 import { createThemeStore } from "./themes.ts";
 
 export const THEME_USAGE = `Usage: age theme <command>
@@ -27,6 +28,9 @@ export function runThemeCli(args: string[], env: Record<string, string | undefin
     case "set": {
       if (!arg) throw new Error("Missing theme file path.");
       const text = readFileSync(resolve(arg), "utf8");
+      if (text.length > MAX_THEME_IMPORT_TEXT) {
+        throw new Error(`Theme import text exceeds ${MAX_THEME_IMPORT_TEXT} characters.`);
+      }
       const { theme } = store.importFromText(text, arg, true);
       process.stdout.write(`${theme.id}\n`);
       return;

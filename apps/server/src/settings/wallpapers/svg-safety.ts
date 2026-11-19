@@ -55,7 +55,10 @@ const SMIL_TAGS = new Set(
   ["animate", "animatetransform", "animatemotion", "set"].map((t) => t.toLowerCase()),
 );
 
+import { assertSafeCss, assertSafeSvgAttributeValue } from "../css-safety.ts";
+
 const FRAGMENT_HREF_RE = /^#[A-Za-z_][A-Za-z0-9_.:-]*$/;
+const ON_ATTR_SEGMENT_RE = /^on[a-z]/i;
 
 type ParsedAttr = { name: string; value: string };
 
@@ -179,52 +182,33 @@ function parseCloseTag(s: string, start: number): { name: string; end: number } 
   return { name: namePart.name, end: i + 1 };
 }
 
-function assertSafeCss(css: string, context: string): void {
-  const lower = css.toLowerCase();
-  if (/@import\b/.test(lower)) {
-    throw new Error(`Unsafe SVG: ${context} must not contain @import.`);
+function isEventHandlerAttribute(name: string): boolean {
+  if (ON_ATTR_SEGMENT_RE.test(name)) return true;
+  for (const segment of name.split(":")) {
+    if (ON_ATTR_SEGMENT_RE.test(segment)) return true;
+    if (segment.toLowerCase() === "on") return true;
   }
-  if (/@font-face\b/.test(lower)) {
-    throw new Error(`Unsafe SVG: ${context} must not contain @font-face.`);
-  }
-  if (/\bimage-set\s*\(/.test(lower)) {
-    throw new Error(`Unsafe SVG: ${context} must not contain image-set().`);
-  }
-  if (/\belement\s*\(/.test(lower)) {
-    throw new Error(`Unsafe SVG: ${context} must not contain element().`);
-  }
-  if (/\bcross-fade\s*\(/.test(lower)) {
-    throw new Error(`Unsafe SVG: ${context} must not contain cross-fade().`);
-  }
-  if (/\bexpression\s*\(/.test(lower)) {
-    throw new Error(`Unsafe SVG: ${context} must not contain expression().`);
-  }
-  if (/javascript\s*:/.test(lower)) {
-    throw new Error(`Unsafe SVG: ${context} must not contain javascript: URLs.`);
-  }
-  const urlRe = /\burl\s*\(/gi;
-  for (const match of css.matchAll(urlRe)) {
-    if (match.index === undefined) continue;
-    const after = css.slice(match.index + match[0].length);
-    if (!/^\s*(?:#[-A-Za-z0-9_.:]+|"#[-A-Za-z0-9_.:]+"|'#[-A-Za-z0-9_.:]+')/.test(after)) {
-      throw new Error(`Unsafe SVG: ${context} url() may only reference local # fragments.`);
-    }
-  }
+  return false;
 }
 
 function assertSafeAttribute(tagName: string, attr: ParsedAttr): void {
+  if (isEventHandlerAttribute(attr.name)) {
+    throw new Error("Unsafe SVG: event-handler attributes (on*) are not allowed.");
+  }
   const local = attrLocalName(attr.name);
   const localLower = local.toLowerCase();
-  if (localLower.startsWith("on")) {
-    throw new Error("Unsafe SVG: event-handler attributes (on*) are not allowed.");
+  const nameLower = attr.name.toLowerCase();
+  if (localLower === "base" || nameLower === "xml:base") {
+    throw new Error("Unsafe SVG: base URL attributes are not allowed.");
   }
   if (localLower === "href") {
     if (!FRAGMENT_HREF_RE.test(attr.value.trim())) {
       throw new Error(`Unsafe SVG: href must be a local # fragment, not "${attr.value.trim()}".`);
     }
   }
-  if (localLower === "style" || attr.name.toLowerCase() === "style") {
-    assertSafeCss(attr.value, "style attribute");
+  assertSafeSvgAttributeValue(attr.value, `attribute ${attr.name}`);
+  if (localLower === "style" || nameLower === "style") {
+    assertSafeCss(attr.value, `Unsafe SVG: style attribute`, "svg");
   }
   const tagLocal = tagLocalName(tagName).toLowerCase();
   if (SMIL_TAGS.has(tagLocal) && localLower === "attributename") {
@@ -242,11 +226,19 @@ function assertSafeAttribute(tagName: string, attr: ParsedAttr): void {
 }
 
 function readStyleContent(s: string, afterOpen: number): { content: string; end: number } {
-  const closeRe = /<\/style\s*>/i;
-  const rest = s.slice(afterOpen);
-  const match = closeRe.exec(rest);
-  if (!match) throw new Error("Unsafe SVG: unclosed <style> element.");
-  return { content: rest.slice(0, match.index), end: afterOpen + match.index + match[0].length };
+  let j = afterOpen;
+  while (j < s.length) {
+    if (s[j] !== "<") {
+      j += 1;
+      continue;
+    }
+    const close = /^<\/style\s*>/i.exec(s.slice(j));
+    if (close) {
+      return { content: s.slice(afterOpen, j), end: j + close[0].length };
+    }
+    throw new Error("Unsafe SVG: `<` is not allowed inside <style> content.");
+  }
+  throw new Error("Unsafe SVG: unclosed <style> element.");
 }
 
 export function assertSafeSvg(svg: string): void {
@@ -283,7 +275,7 @@ export function assertSafeSvg(svg: string): void {
     const tagLocal = tagLocalName(open.name).toLowerCase();
     if (!open.selfClose && tagLocal === "style") {
       const block = readStyleContent(svg, i);
-      assertSafeCss(block.content, "<style> content");
+      assertSafeCss(block.content, "Unsafe SVG: <style> content", "svg");
       i = block.end;
     }
   }

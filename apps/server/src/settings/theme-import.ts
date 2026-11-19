@@ -9,6 +9,8 @@ import {
 import { assertSafeSvg, toDataUrl } from "./wallpapers/scenes.ts";
 import { sanitizeThemeCss } from "./theme-css.ts";
 
+export const MAX_THEME_IMPORT_TEXT = 7_000_000;
+
 const SVG_START_RE = /^\s*(?:<\?xml[\s\S]*?\?>\s*)?<svg\b/i;
 const ANIMATED_SVG_RE = /<\s*animate(?:Transform)?\b|@keyframes\b|<\s*set\b/i;
 
@@ -181,6 +183,9 @@ export function importTheme(
   text: string,
   filename?: string,
 ): { theme: Theme; format: ThemeImportFormat } {
+  if (text.length > MAX_THEME_IMPORT_TEXT) {
+    throw new Error(`Theme import text exceeds ${MAX_THEME_IMPORT_TEXT} characters.`);
+  }
   if (SVG_START_RE.test(text)) return importSvg(text, filename);
 
   let parsed: unknown;

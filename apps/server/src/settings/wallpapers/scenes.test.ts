@@ -311,6 +311,81 @@ describe("wallpaper scenes", () => {
         /DOCTYPE/,
       ],
       ["ev:onload", '<svg xmlns="http://www.w3.org/2000/svg" ev:onload="alert(1)"></svg>', /on\*/],
+      [
+        "on:load namespaced",
+        '<svg xmlns="http://www.w3.org/2000/svg" on:load="alert(1)"></svg>',
+        /event-handler/,
+      ],
+      [
+        "on:click unquoted",
+        '<svg xmlns="http://www.w3.org/2000/svg" on:click=alert(1)></svg>',
+        /event-handler/,
+      ],
+      [
+        "fill url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "stroke url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect stroke="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "mask url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect mask="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "filter attr url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect filter="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "clip-path url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect clip-path="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "marker-end url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><path marker-end="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "url javascript",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(javascript:alert(1))"/></svg>',
+        /javascript/i,
+      ],
+      [
+        "url data",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(data:text/html,x)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "xml:base",
+        '<svg xmlns="http://www.w3.org/2000/svg" xml:base="https://evil.example/"></svg>',
+        /base URL/,
+      ],
+      [
+        "base attribute",
+        '<svg xmlns="http://www.w3.org/2000/svg" base="https://evil.example/"></svg>',
+        /base URL/,
+      ],
+      [
+        "set smil clip-path",
+        '<svg xmlns="http://www.w3.org/2000/svg"><set attributeName="clip-path" to="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "animate smil values url",
+        '<svg xmlns="http://www.w3.org/2000/svg"><animate attributeName="fill" values="url(https://evil.example);red"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "fake style close",
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{content:"</style"} .b{}</style></svg>',
+        /`<` is not allowed/,
+      ],
     ];
 
     for (const [label, sample, pattern] of unsafeSamples) {

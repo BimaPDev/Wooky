@@ -16,11 +16,12 @@ export function watchThemeFiles(
   themes: ThemeStore,
   broadcast: (message: ThemesPush) => void,
 ): () => void {
-  const pending = new Map<string, ReturnType<typeof setTimeout>>();
   const changed = new Set<string>();
   let settingsDirty = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
 
   const flush = () => {
+    timer = null;
     const changedIds = [...changed];
     changed.clear();
     if (changedIds.length === 0 && !settingsDirty) return;
@@ -29,17 +30,9 @@ export function watchThemeFiles(
     settingsDirty = false;
   };
 
-  const schedule = (key: string, run: () => void) => {
-    const existing = pending.get(key);
-    if (existing) clearTimeout(existing);
-    pending.set(
-      key,
-      setTimeout(() => {
-        pending.delete(key);
-        run();
-        flush();
-      }, 100),
-    );
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(flush, 100);
   };
 
   const watchers: FSWatcher[] = [];
@@ -49,9 +42,8 @@ export function watchThemeFiles(
       watch(themes.themesDir, { persistent: false }, (_event, filename) => {
         if (!filename || IGNORED_NAME_RE.test(filename)) return;
         const id = themeIdFromPath(themes.themesDir, join(themes.themesDir, filename));
-        schedule(`theme:${filename}`, () => {
-          if (id) changed.add(id);
-        });
+        if (id) changed.add(id);
+        schedule();
       }),
     );
   } catch {
@@ -61,9 +53,8 @@ export function watchThemeFiles(
   try {
     watchers.push(
       watch(themes.settingsPath, { persistent: false }, () => {
-        schedule("settings", () => {
-          settingsDirty = true;
-        });
+        settingsDirty = true;
+        schedule();
       }),
     );
   } catch {
@@ -71,8 +62,8 @@ export function watchThemeFiles(
   }
 
   return () => {
-    for (const timer of pending.values()) clearTimeout(timer);
-    pending.clear();
+    if (timer) clearTimeout(timer);
+    timer = null;
     for (const w of watchers) w.close();
   };
 }

@@ -69,4 +69,65 @@ describe("themes push", () => {
     expect(push.changedIds).toContain("cli-paper");
     expect(push.activeThemeId).toBe("default");
   });
+
+  it("coalesces a burst of theme file writes into one push", async () => {
+    const home = await tempDir("home");
+    const server = await startServer({
+      home,
+      port: 0,
+      host: "127.0.0.1",
+      adapters: [createDemoAdapter({ stepMs: 0 })],
+    });
+    servers.push(server);
+
+    const socket = new WebSocket(`${server.url.replace("http", "ws")}${AGE_WS_PATH}`);
+    sockets.push(socket);
+    const pushes: ThemesPush[] = [];
+    let rejectBurst: ((error: Error) => void) | null = null;
+    let resolveBurst: ((push: ThemesPush) => void) | null = null;
+
+    socket.on("message", (data) => {
+      const message: unknown = JSON.parse(String(data));
+      const push = RpcPush.safeParse(message);
+      if (!push.success || push.data.push !== "themes") return;
+      const themesPush = ThemesPush.parse(push.data);
+      pushes.push(themesPush);
+      if (pushes.length > 1) {
+        rejectBurst?.(new Error(`Expected one themes push, received ${pushes.length}.`));
+        return;
+      }
+      if (themesPush.changedIds.length >= 3) resolveBurst?.(themesPush);
+    });
+
+    await new Promise<void>((resolve, reject) =>
+      socket.once("open", () => resolve()).once("error", reject),
+    );
+
+    const pushPromise = new Promise<ThemesPush>((resolve, reject) => {
+      resolveBurst = resolve;
+      rejectBurst = reject;
+    });
+
+    const themeJson = (id: string) =>
+      `${JSON.stringify({
+        version: 1,
+        id,
+        name: id,
+        appearance: "dark",
+        canvas: "#111111",
+        accent: "#d7c9a7",
+        colors: {},
+        css: "",
+      })}\n`;
+
+    await Promise.all([
+      writeFile(join(home, "themes", "burst-a.json"), themeJson("burst-a"), "utf8"),
+      writeFile(join(home, "themes", "burst-b.json"), themeJson("burst-b"), "utf8"),
+      writeFile(join(home, "themes", "burst-c.json"), themeJson("burst-c"), "utf8"),
+    ]);
+
+    const push = await pushPromise;
+    expect(pushes).toHaveLength(1);
+    expect([...push.changedIds].sort()).toEqual(["burst-a", "burst-b", "burst-c"]);
+  });
 });
