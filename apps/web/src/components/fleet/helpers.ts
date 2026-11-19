@@ -1,5 +1,14 @@
-import type { FleetRow, FleetStatus, ProviderKind, Thread, ThreadGroup } from "@age/contracts";
+import type {
+  AgeEvent,
+  FleetRow,
+  FleetStatus,
+  ProviderKind,
+  ReadModel,
+  Thread,
+  ThreadGroup,
+} from "@age/contracts";
 import { FLEET_LIMITS } from "@age/contracts";
+import { fleetRows } from "@age/domain";
 import { fuzzyFilter } from "../../lib/fuzzy.ts";
 
 export const FANOUT_MIN_TARGETS = 2;
@@ -31,8 +40,66 @@ export interface JumpItem {
 
 export type SidebarTreeNode =
   | { kind: "thread"; thread: Thread }
+  | { kind: "orphaned"; thread: Thread }
   | { kind: "coordinator"; thread: Thread; workers: Thread[] }
   | { kind: "group"; group: ThreadGroup; threads: Thread[] };
+
+let fleetRowsCache: { seq: number; rows: readonly FleetRow[] } | null = null;
+let statusCache: { signature: string; map: Readonly<Record<string, FleetStatus>> } | null = null;
+
+/** One fleetRows pass per model.seq, shared by the board, sidebar and jump switcher. */
+export function selectFleetRows(model: ReadModel): readonly FleetRow[] {
+  if (fleetRowsCache?.seq === model.seq) return fleetRowsCache.rows;
+  const rows = fleetRows(model);
+  fleetRowsCache = { seq: model.seq, rows };
+  return rows;
+}
+
+/** Cheap key so itemDelta does not rebuild the sidebar status map. */
+export function fleetStatusSignature(model: ReadModel): string {
+  return Object.values(model.threads)
+    .map((thread) => {
+      const last = model.turns[thread.id]?.at(-1);
+      const activeId = last?.status === "running" ? last.id : "";
+      const pending =
+        last?.status === "running"
+          ? last.items.filter(
+              (item) =>
+                (item.kind === "approval" && item.decision === null) ||
+                (item.kind === "question" && item.answers === null && !item.dismissed),
+            ).length
+          : 0;
+      return `${thread.id}:${thread.status}:${last?.status ?? ""}:${activeId}:${pending}`;
+    })
+    .toSorted()
+    .join("\n");
+}
+
+export function selectFleetStatusById(model: ReadModel): Readonly<Record<string, FleetStatus>> {
+  const signature = fleetStatusSignature(model);
+  if (statusCache?.signature === signature) return statusCache.map;
+  const map = Object.fromEntries(selectFleetRows(model).map((row) => [row.threadId, row.status]));
+  statusCache = { signature, map };
+  return map;
+}
+
+export function groupIdFromCreatedEvent(event: AgeEvent, commandId: string): string | null {
+  if (event.type === "group.created" && event.commandId === commandId) return event.group.id;
+  return null;
+}
+
+export function groupIdFromDispatchAck(ack: {
+  commandId: string;
+  events?: unknown;
+}): string | null {
+  if (!Array.isArray(ack.events)) return null;
+  for (const event of ack.events) {
+    if (!event || typeof event !== "object") continue;
+    const groupId = groupIdFromCreatedEvent(event as AgeEvent, ack.commandId);
+    if (groupId) return groupId;
+  }
+  return null;
+}
 
 export interface BoardGroup {
   status: FleetStatus;
@@ -169,7 +236,17 @@ export function buildSidebarTree(
       continue;
     }
     if (thread.parentThreadId && coordinatorIds.has(thread.parentThreadId)) {
-      emitCoordinator(thread.parentThreadId);
+      if (allById.has(thread.parentThreadId)) {
+        emitCoordinator(thread.parentThreadId);
+        continue;
+      }
+      used.add(thread.id);
+      nodes.push({ kind: "orphaned", thread });
+      continue;
+    }
+    if (thread.parentThreadId && !allById.has(thread.parentThreadId)) {
+      used.add(thread.id);
+      nodes.push({ kind: "orphaned", thread });
       continue;
     }
     const group = thread.groupId ? fanoutById.get(thread.groupId) : undefined;
@@ -217,7 +294,7 @@ export function fleetRoleLabel(
 ): string {
   if (row.role === "coordinator") return "Coordinator";
   if (row.role === "worker" && row.parentThreadId)
-    return parentTitle ? `Worker of ${parentTitle}` : "Worker";
+    return parentTitle ? `Worker of ${parentTitle}` : "Orphaned worker";
   if (row.role === "worker" || row.groupId) return "Fan-out";
   return "Solo";
 }

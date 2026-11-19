@@ -2,7 +2,9 @@
 import {
   AppearanceTheme,
   DeviceSettings,
+  type AgeEvent,
   type AppearanceTheme as AppearanceThemeValue,
+  type Command,
   type DeviceSettings as DeviceSettingsValue,
   type FileDiff,
   type Origin,
@@ -18,6 +20,7 @@ import {
   type UsageWindowDays,
 } from "@age/contracts";
 import { fleetRows } from "@age/domain";
+import { receiveEvent, useStore } from "../state/store.ts";
 import {
   looksLikeSvg,
   looksLikeT3code,
@@ -1229,6 +1232,90 @@ function fixtureUsageHistory(windowDays: UsageWindowDays): UsageHistoryResult {
   };
 }
 
+type FixtureDraft = AgeEvent extends infer Event
+  ? Event extends AgeEvent
+    ? Omit<Event, "seq" | "at"> & { at?: string }
+    : never
+  : never;
+
+function injectFixtureEvents(drafts: readonly FixtureDraft[]): void {
+  const at = new Date().toISOString();
+  for (const draft of drafts) {
+    const seq = Math.max(fixtureModel.seq, useStore.getState().model.seq) + 1;
+    receiveEvent({ at, ...draft, seq } as AgeEvent);
+    Object.assign(fixtureModel, useStore.getState().model);
+  }
+}
+
+function applyFixtureCommand(command: Command): void {
+  const at = new Date().toISOString();
+  if (command.type === "fanout.start") {
+    const groupId = `g-${command.commandId}`;
+    const threadIds = command.targets.map((_, index) => `t-${command.commandId}-${index}`);
+    const title = command.title?.trim() || command.prompt.trim() || "Fan-out";
+    injectFixtureEvents([
+      {
+        type: "group.created",
+        commandId: command.commandId,
+        group: {
+          id: groupId,
+          projectId: command.projectId,
+          kind: "fanout",
+          prompt: command.prompt,
+          threadIds,
+          createdAt: at,
+        },
+      },
+      ...command.targets.map((target, index) => ({
+        type: "thread.created" as const,
+        commandId: command.commandId,
+        thread: thread({
+          id: threadIds[index] ?? `t-${command.commandId}-${index}`,
+          projectId: command.projectId,
+          title,
+          provider: target.provider,
+          model: target.model,
+          runtimeMode: command.runtimeMode,
+          role: "worker",
+          groupId,
+          isolate: true,
+          status: "idle",
+          createdAt: at,
+          updatedAt: at,
+        }),
+      })),
+    ]);
+    return;
+  }
+  if (command.type === "fanout.pick") {
+    injectFixtureEvents([
+      {
+        type: "group.winnerPicked",
+        commandId: command.commandId,
+        groupId: command.groupId,
+        threadId: command.threadId,
+      },
+    ]);
+    return;
+  }
+  if (command.type === "thread.merge") {
+    injectFixtureEvents([
+      {
+        type: "thread.mergeChanged",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        merge: { status: "merging", targetBranch: "main", at },
+      },
+      {
+        type: "thread.mergeChanged",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        merge: { status: "merged", targetBranch: "main", commit: "fixture", at },
+      },
+    ]);
+  }
+}
+
 function respond(method: RpcMethod, params: unknown): unknown {
   switch (method) {
     case "snapshot":
@@ -1255,9 +1342,12 @@ function respond(method: RpcMethod, params: unknown): unknown {
       ].filter((entry) => entry.path.includes((params as RpcParams<"fs.pickable">).query ?? ""));
     case "fs.pickFolder":
       return { path: null, supported: false };
-    case "dispatch":
+    case "dispatch": {
+      const command = params as Command;
       console.info("AGE fixture dispatch", params);
+      applyFixtureCommand(command);
       return { accepted: true, duplicate: false, seq: fixtureModel.seq };
+    }
     case "subscribe":
       return { replayed: 0 };
     case "settings.get":

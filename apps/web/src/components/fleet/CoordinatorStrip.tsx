@@ -1,17 +1,14 @@
-import { childrenOf, fleetRows } from "@age/domain";
+import { childrenOf } from "@age/domain";
 import { useMemo } from "react";
 import { selectThread } from "../../state/actions.ts";
 import { useStore } from "../../state/store.ts";
 import { FleetStatusMark } from "./FleetStatusMark.tsx";
-import { workerCountLabel } from "./helpers.ts";
+import { selectFleetStatusById, workerCountLabel } from "./helpers.ts";
 
 export function CoordinatorStrip({ threadId }: { threadId: string }) {
   const model = useStore((state) => state.model);
   const workers = childrenOf(model, threadId);
-  const statuses = useMemo(
-    () => Object.fromEntries(fleetRows(model).map((row) => [row.threadId, row.status])),
-    [model],
-  );
+  const statuses = selectFleetStatusById(model);
   const waiting = useMemo(
     () => workers.filter((worker) => statuses[worker.id] === "waiting").length,
     [workers, statuses],

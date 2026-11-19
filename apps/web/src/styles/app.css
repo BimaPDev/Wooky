@@ -5974,6 +5974,7 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   background: transparent;
   color: var(--text-2);
   text-align: left;
+  cursor: pointer;
 }
 
 .fleet-board-row:hover {
@@ -6306,6 +6307,11 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   padding: var(--space-2) var(--space-3);
   color: var(--text-3);
   font-size: var(--text-sm);
+}
+
+.fleet-column-expand {
+  margin: 0 var(--space-3) var(--space-2);
+  align-self: flex-start;
 }
 
 .fleet-column-foot {

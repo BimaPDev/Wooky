@@ -286,8 +286,8 @@ export function Composer({ threadId }: { threadId: string }) {
                 onClick={() =>
                   openFanoutDialog({
                     projectId: thread.projectId,
-                    prompt: draft.trim(),
                     runtimeMode: thread.runtimeMode,
+                    getPrompt: () => (area.current?.value ?? "").trim(),
                   })
                 }
               >

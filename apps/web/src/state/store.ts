@@ -52,7 +52,11 @@ export interface AppState {
   fleetBoardOpen: boolean;
   jumpOpen: boolean;
   compareGroupId: string | null;
-  fanoutDialog: { projectId: string; prompt: string; runtimeMode: RuntimeMode } | null;
+  fanoutDialog: {
+    projectId: string;
+    runtimeMode: RuntimeMode;
+    getPrompt: () => string;
+  } | null;
   /** null = follow the system preference. */
   theme: Theme | null;
   /** Bumped when a turn finishes, so the Changes panel knows to refetch. */
@@ -151,6 +155,15 @@ useStore.subscribe((state, prev) => {
   });
 });
 
+const eventListeners = new Set<(event: AgeEvent) => void>();
+
+export function subscribeToEvents(listener: (event: AgeEvent) => void): () => void {
+  eventListeners.add(listener);
+  return () => {
+    eventListeners.delete(listener);
+  };
+}
+
 export function receiveSnapshot(model: ReadModel) {
   useStore.setState((state) => {
     const selected =
@@ -178,6 +191,7 @@ export function receiveEvent(event: AgeEvent) {
       patch.nav = pruneNavStack(state.nav, navTargetExists(model));
     return patch;
   });
+  for (const listener of eventListeners) listener(event);
 }
 
 function newestThreadId(model: ReadModel): string | null {

@@ -1,7 +1,5 @@
 import type { FleetRow } from "@age/contracts";
-import { fleetRows } from "@age/domain";
 import { memo, useState } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { Counts } from "../DiffView.tsx";
 import { IconSearch } from "../Icons.tsx";
 import { providerLabels } from "../labels.ts";
@@ -14,17 +12,19 @@ import {
   fleetRoleLabel,
   formatRelativeActivity,
   groupFleetRows,
+  selectFleetRows,
 } from "./helpers.ts";
 
 export function FleetBoard() {
   const model = useStore((state) => state.model);
-  const rows = fleetRows(model);
+  const rows = selectFleetRows(model);
   const projects = model.projects;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const groups = groupFleetRows(filterFleetRows(rows, query, (id) => projects[id]?.name ?? ""));
   const flat = groups.flatMap((group) => group.rows);
   const index = Math.min(active, Math.max(0, flat.length - 1));
+  const activeId = flat[index]?.threadId;
 
   return (
     <section className="fleet-board" aria-label="Agent board">
@@ -33,10 +33,13 @@ export function FleetBoard() {
         <label className="search-field fleet-board-filter">
           <IconSearch />
           <input
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="fleet-board-list"
+            aria-activedescendant={activeId ? `fleet-board-${activeId}` : undefined}
             value={query}
             placeholder="Filter agents"
             aria-label="Filter agents"
-            aria-controls="fleet-board-list"
             onChange={(event) => {
               setQuery(event.target.value);
               setActive(0);
@@ -71,7 +74,16 @@ export function FleetBoard() {
                 return (
                   <FleetBoardRow
                     key={row.threadId}
-                    threadId={row.threadId}
+                    row={row}
+                    projectName={projects[row.projectId]?.name ?? ""}
+                    parentTitle={
+                      row.parentThreadId
+                        ? (model.threads[row.parentThreadId]?.title ?? undefined)
+                        : undefined
+                    }
+                    parentMissing={Boolean(
+                      row.parentThreadId && !model.threads[row.parentThreadId],
+                    )}
                     active={flatIndex === index}
                     onHighlight={() => flatIndex !== index && setActive(flatIndex)}
                   />
@@ -86,81 +98,64 @@ export function FleetBoard() {
 }
 
 const FleetBoardRow = memo(function FleetBoardRow({
-  threadId,
+  row,
+  projectName,
+  parentTitle,
+  parentMissing,
   active,
   onHighlight,
 }: {
-  threadId: string;
+  row: FleetRow;
+  projectName: string;
+  parentTitle?: string;
+  parentMissing: boolean;
   active: boolean;
   onHighlight: () => void;
 }) {
-  const snapshot = useStore(
-    useShallow((state) => {
-      const row = fleetRows(state.model).find((item) => item.threadId === threadId);
-      if (!row) return null;
-      const parent = row.parentThreadId ? state.model.threads[row.parentThreadId] : undefined;
-      return {
-        title: row.title,
-        projectName: state.model.projects[row.projectId]?.name ?? "",
-        provider: row.provider,
-        model: row.model,
-        role: row.role,
-        parentThreadId: row.parentThreadId,
-        groupId: row.groupId,
-        parentTitle: parent?.title,
-        status: row.status,
-        lastActivityAt: row.lastActivityAt,
-        additions: row.diffStat?.additions,
-        deletions: row.diffStat?.deletions,
-      };
-    }),
-  );
-  if (!snapshot) return null;
-  const row: Pick<FleetRow, "role" | "parentThreadId" | "groupId"> = snapshot;
-
+  const role = parentMissing
+    ? "Orphaned worker"
+    : fleetRoleLabel(row, parentTitle !== undefined ? parentTitle || "Untitled thread" : undefined);
   return (
-    <li>
-      <button
-        type="button"
-        role="option"
-        aria-selected={active}
-        aria-label={`${snapshot.title || "Untitled thread"}, ${BOARD_STATUS_LABEL[snapshot.status]}`}
-        className={[
-          "fleet-board-row",
-          active ? "active" : null,
-          snapshot.status === "waiting" ? "waiting" : null,
-        ]
-          .filter(Boolean)
-          .join(" ")}
-        onPointerMove={onHighlight}
-        onClick={() => openFleetThread(threadId)}
+    <li
+      id={`fleet-board-${row.threadId}`}
+      role="option"
+      aria-selected={active}
+      aria-label={`${row.title || "Untitled thread"}, ${BOARD_STATUS_LABEL[row.status]}`}
+      className={[
+        "fleet-board-row",
+        active ? "active" : null,
+        row.status === "waiting" ? "waiting" : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      onPointerMove={onHighlight}
+      onClick={() => openFleetThread(row.threadId)}
+    >
+      <span className="fleet-board-status">
+        <FleetStatusMark status={row.status} />
+      </span>
+      <span
+        className={`provider-badge provider-${row.provider}`}
+        title={providerLabels[row.provider]}
       >
-        <span className="fleet-board-status">
-          <FleetStatusMark status={snapshot.status} />
+        {row.provider.slice(0, 2).toUpperCase()}
+      </span>
+      <span className="fleet-board-copy">
+        <span className="fleet-board-title-row">
+          <span className="thread-title">{row.title || "Untitled thread"}</span>
+          <span className="thread-time">{formatRelativeActivity(row.lastActivityAt)}</span>
         </span>
-        <span
-          className={`provider-badge provider-${snapshot.provider}`}
-          title={providerLabels[snapshot.provider]}
-        >
-          {snapshot.provider.slice(0, 2).toUpperCase()}
+        <span className="fleet-board-meta">
+          <span>{row.model}</span>
+          <span aria-hidden="true">·</span>
+          <span>{projectName || "Unknown project"}</span>
+          <span aria-hidden="true">·</span>
+          <span>{role}</span>
         </span>
-        <span className="fleet-board-copy">
-          <span className="fleet-board-title-row">
-            <span className="thread-title">{snapshot.title || "Untitled thread"}</span>
-            <span className="thread-time">{formatRelativeActivity(snapshot.lastActivityAt)}</span>
-          </span>
-          <span className="fleet-board-meta">
-            <span>{snapshot.model}</span>
-            <span aria-hidden="true">·</span>
-            <span>{snapshot.projectName || "Unknown project"}</span>
-            <span aria-hidden="true">·</span>
-            <span>{fleetRoleLabel(row, snapshot.parentTitle)}</span>
-          </span>
-        </span>
-        {snapshot.additions !== undefined && snapshot.deletions !== undefined ? (
-          <Counts additions={snapshot.additions} deletions={snapshot.deletions} />
-        ) : null}
-      </button>
+      </span>
+      {row.diffStat ? (
+        <Counts additions={row.diffStat.additions} deletions={row.diffStat.deletions} />
+      ) : null}
     </li>
   );
 });
