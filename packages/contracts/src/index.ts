@@ -1,3 +1,4 @@
+export * from "./failover.ts";
 export * from "./model.ts";
 export * from "./commands.ts";
 export * from "./events.ts";

@@ -5,6 +5,7 @@ import {
   DeviceSettings,
   ThemeImportFormat,
 } from "./appearance.ts";
+import { ProviderCooldown } from "./failover.ts";
 import { Command } from "./commands.ts";
 import { AgeEvent } from "./events.ts";
 import { FileDiff, Id, Project, ProviderKind, ProviderStatus, Thread, Turn } from "./model.ts";
@@ -25,6 +26,7 @@ export const ReadModel = z.object({
   threads: z.record(z.string(), Thread),
   /** Turns per thread, oldest first. */
   turns: z.record(z.string(), z.array(Turn)),
+  cooldowns: z.record(z.string(), ProviderCooldown).default({}),
 });
 export type ReadModel = z.infer<typeof ReadModel>;
 

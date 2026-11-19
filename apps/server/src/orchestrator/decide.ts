@@ -126,6 +126,8 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
       return promoteQueued(model, command, ctx);
     case "turn.revert":
       return revertTurn(model, command);
+    case "thread.failover":
+      return reject("bad_request", "Failover is not implemented yet.");
   }
 }
 

@@ -12,7 +12,7 @@ describe("an event log written before the P0 contracts", () => {
     // An old snapshot (web client against an older server) decodes to the same model.
     expect(replayed).toEqual(ReadModel.parse(legacyReadModel));
     expect(JSON.parse(JSON.stringify(replayed))).toEqual(
-      withEmptyQueues(legacyReadModel as LegacyModel),
+      withLegacyDefaults(legacyReadModel as LegacyModel),
     );
   });
 
@@ -32,10 +32,10 @@ describe("an event log written before the P0 contracts", () => {
 
 type LegacyModel = { threads: Record<string, object> } & Record<string, unknown>;
 
-/** The only shape change an old model sees: threads gain an empty queue on decode. */
-function withEmptyQueues(model: LegacyModel) {
+/** Shape gaps an old snapshot has relative to the current ReadModel decoder. */
+function withLegacyDefaults(model: LegacyModel) {
   const threads = Object.fromEntries(
     Object.entries(model.threads).map(([id, thread]) => [id, { ...thread, queue: [] }]),
   );
-  return { ...model, threads };
+  return { ...model, threads, cooldowns: {} };
 }

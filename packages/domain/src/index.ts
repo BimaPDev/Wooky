@@ -1,5 +1,11 @@
 export { applyEvent, applyEvents, emptyReadModel } from "./project.ts";
 export {
+  cooldownUntil,
+  DEFAULT_MODEL_RANKING,
+  pickFallback,
+  shouldSwitchBack,
+} from "./failover.ts";
+export {
   activeTurn,
   handoffTranscript,
   latestPlan,
