@@ -1,6 +1,9 @@
 import {
   app,
   BrowserWindow,
+  dialog,
+  ipcMain,
+  type IpcMainInvokeEvent,
   Menu,
   nativeImage,
   session,
@@ -18,10 +21,12 @@ import {
   dataPageUrl,
   decideNavigation,
   errorPage,
+  createSingleFlight,
   isPermissionAllowed,
   OutputTail,
   ServerStartError,
   startingPage,
+  usableWindow,
   WINDOW_BACKGROUND,
   type ChildEvents,
 } from "./logic.ts";
@@ -258,9 +263,39 @@ function focusWindow(): void {
   win.focus();
 }
 
+const PICK_FOLDER_CHANNEL = "age:pick-folder";
+let folderPickerRegistered = false;
+const runFolderPick = createSingleFlight();
+
+/** Sheet attached to the window that asked. A destroyed window does not get a dialog. */
+async function pickProjectDirectory(event: IpcMainInvokeEvent): Promise<string | null> {
+  const win = usableWindow(BrowserWindow.fromWebContents(event.sender));
+  if (!win) return null;
+  const result = await dialog.showOpenDialog(win, {
+    title: "Add project",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0] ?? null;
+}
+
+function registerFolderPicker(): void {
+  if (folderPickerRegistered) return;
+  folderPickerRegistered = true;
+  ipcMain.handle(PICK_FOLDER_CHANNEL, (event) => runFolderPick(() => pickProjectDirectory(event)));
+}
+
+function unregisterFolderPicker(): void {
+  if (!folderPickerRegistered) return;
+  folderPickerRegistered = false;
+  ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
+}
+
 function main(): void {
   app.setName("Wooky");
   if (process.platform === "win32") app.setAppUserModelId("Wooky");
+  registerFolderPicker();
+  app.on("will-quit", unregisterFolderPicker);
   app.on("second-instance", focusWindow);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -8,6 +8,7 @@ import {
 import {
   openDialog,
   openSettings,
+  pickProjectFolder,
   removeProject,
   removeThread,
   renameThread,
@@ -47,6 +48,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const groupByProject = useStore((state) => state.deviceSettings?.projectGrouping ?? true);
   const status = useStore((state) => state.status);
   const fixture = useStore((state) => state.fixture);
+  const pickingFolder = useStore((state) => state.pickingFolder);
   const [query, setQuery] = useState("");
   const [workingOpen, setWorkingOpen] = useState(true);
   const [settledOpen, setSettledOpen] = useState(false);
@@ -119,7 +121,9 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
           className="icon-button"
           aria-label="Add project"
           title="Add project"
-          onClick={() => openDialog({ kind: "addProject" })}
+          aria-busy={pickingFolder}
+          disabled={pickingFolder}
+          onClick={() => void pickProjectFolder()}
         >
           <IconFolderPlus />
         </button>

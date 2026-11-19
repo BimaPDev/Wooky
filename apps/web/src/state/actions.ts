@@ -184,6 +184,38 @@ export function confirm(dialog: Omit<Extract<Dialog, { kind: "confirm" }>, "kind
 
 export const addProject = (root: string) => dispatch({ type: "project.add", root });
 
+function desktopFolderPicker(): (() => Promise<string | null>) | null {
+  const pick = globalThis.window?.age?.pickFolder;
+  return typeof pick === "function" ? pick : null;
+}
+
+export async function pickProjectFolder(): Promise<void> {
+  const state = useStore.getState();
+  if (state.pickingFolder || state.dialog) return;
+  useStore.setState({ pickingFolder: true, paletteOpen: false });
+  try {
+    const bridge = desktopFolderPicker();
+    if (bridge) {
+      const path = await bridge();
+      if (path) await addProject(path);
+      return;
+    }
+    const picked = await backend().call("fs.pickFolder", { title: "Add project" });
+    if (!picked.supported) {
+      openDialog({ kind: "addProject" });
+      return;
+    }
+    if (picked.path) await addProject(picked.path);
+  } catch (error) {
+    useStore.setState({
+      notice: error instanceof Error ? error.message : "Could not open the folder chooser.",
+    });
+    openDialog({ kind: "addProject" });
+  } finally {
+    useStore.setState({ pickingFolder: false });
+  }
+}
+
 export function removeProject(projectId: string) {
   const project = useStore.getState().model.projects[projectId];
   confirm({

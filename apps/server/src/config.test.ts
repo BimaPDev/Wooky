@@ -12,6 +12,7 @@ describe("resolveConfig", () => {
       host: "127.0.0.1",
       webDist: null,
       allowedHosts: [],
+      allowRemotePicker: false,
     });
   });
 
@@ -24,7 +25,14 @@ describe("resolveConfig", () => {
     });
     expect(
       resolveConfig(["--port", "0", "--home", "rel", "--host", "::1", "--web-dist", "/w"], env),
-    ).toEqual({ home: resolve("rel"), port: 0, host: "::1", webDist: "/w", allowedHosts: [] });
+    ).toEqual({
+      home: resolve("rel"),
+      port: 0,
+      host: "::1",
+      webDist: "/w",
+      allowedHosts: [],
+      allowRemotePicker: false,
+    });
   });
 
   it("collects allowed hosts from flags and the environment", () => {
@@ -32,6 +40,16 @@ describe("resolveConfig", () => {
       AGE_ALLOWED_HOSTS: " studio.local, ,",
     });
     expect(config).toMatchObject({ allowedHosts: ["box.lan", "mac.tailnet", "studio.local"] });
+  });
+
+  it("keeps the remote folder chooser off unless the operator opts in", () => {
+    expect(resolveConfig([], {})).toMatchObject({ allowRemotePicker: false });
+    expect(resolveConfig([], { AGE_ALLOW_REMOTE_PICKER: "1" })).toMatchObject({
+      allowRemotePicker: true,
+    });
+    expect(resolveConfig(["--allow-remote-picker"], {})).toMatchObject({
+      allowRemotePicker: true,
+    });
   });
 
   it("rejects bad input and recognises --help", () => {

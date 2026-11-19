@@ -66,6 +66,11 @@ export const RpcMethods = {
     params: z.object({ query: z.string().optional() }),
     result: z.array(z.object({ path: z.string(), isGitRepo: z.boolean() })),
   },
+  /** Open the operating system's folder chooser on the server's machine. */
+  "fs.pickFolder": {
+    params: z.object({ title: z.string().max(80).optional() }),
+    result: z.object({ path: z.string().nullable(), supported: z.boolean() }),
+  },
   /** Files and directories in a thread's workspace matching query, best first. */
   "fs.searchEntries": {
     params: z.object({
@@ -204,3 +209,5 @@ export type ServerMessage = z.infer<typeof ServerMessage>;
 
 export const AGE_WS_PATH = "/ws";
 export const AGE_DEFAULT_PORT = 4317;
+/** How long the server waits for the folder dialog before killing its child. */
+export const PICK_FOLDER_TIMEOUT_MS = 10 * 60 * 1000;

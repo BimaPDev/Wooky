@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { dismissNotice, openDialog, setPaletteOpen } from "../state/actions.ts";
+import { dismissNotice, pickProjectFolder, setPaletteOpen } from "../state/actions.ts";
 import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
 import { useStore, type Theme } from "../state/store.ts";
 import { syncRootThemeClass } from "../state/theme.ts";
@@ -33,6 +33,7 @@ export function App() {
     thread ? state.model.projects[thread.projectId] : undefined,
   );
   const notice = useStore((state) => state.notice);
+  const pickingFolder = useStore((state) => state.pickingFolder);
   const hasProjects = useStore((state) => Object.keys(state.model.projects).length !== 0);
   const settingsOpen = useStore((state) => state.settingsOpen);
   const sidebarOpen = useStore((state) => state.sidebarOpen);
@@ -137,7 +138,9 @@ export function App() {
                     <button
                       type="button"
                       className="button primary"
-                      onClick={() => openDialog({ kind: "addProject" })}
+                      aria-busy={pickingFolder}
+                      disabled={pickingFolder}
+                      onClick={() => void pickProjectFolder()}
                     >
                       Add a project folder
                     </button>

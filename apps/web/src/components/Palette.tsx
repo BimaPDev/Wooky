@@ -3,6 +3,7 @@ import { fuzzyFilter } from "../lib/fuzzy.ts";
 import {
   configureThread,
   openDialog,
+  pickProjectFolder,
   selectThread,
   setPaletteOpen,
   toggleChanges,
@@ -42,7 +43,13 @@ function PaletteDialog() {
         label: "New thread",
         run: () => openDialog({ kind: "newThread", projectId: null }),
       },
-      { id: "add-project", label: "Add project", run: () => openDialog({ kind: "addProject" }) },
+      { id: "add-project", label: "Add project", run: () => void pickProjectFolder() },
+      {
+        id: "add-project-path",
+        label: "Add project by path",
+        hint: "Enter a path instead",
+        run: () => openDialog({ kind: "addProject" }),
+      },
     ];
     if (selected) {
       list.push({
