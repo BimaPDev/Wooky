@@ -176,6 +176,10 @@ export const Thread = z.object({
   interactionMode: InteractionMode.optional(),
   /** Absent means the model's own default. */
   effort: EffortLevel.optional(),
+  /** Claude fast mode. Absent means off. */
+  fastMode: z.boolean().optional(),
+  /** Claude ultracode: standing workflow orchestration. Absent means off. */
+  ultracode: z.boolean().optional(),
   /** Follow-ups waiting for the running turn, oldest first. */
   queue: z.array(QueuedPrompt).default([]),
   /** Absent on logs written before fleet. Treat as solo. */
@@ -363,6 +367,10 @@ export const ProviderStatus = z.object({
       resolvedModel: z.string().optional(),
       /** Effort levels this model accepts. Absent: the model has no effort setting. */
       efforts: z.array(EffortLevel).optional(),
+      /** True when the model has a fast mode. */
+      fastMode: z.boolean().optional(),
+      /** True when the model can run with ultracode. */
+      ultracode: z.boolean().optional(),
     }),
   ),
   /**

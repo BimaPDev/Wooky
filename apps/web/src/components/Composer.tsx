@@ -26,6 +26,7 @@ import {
   type PickerPatch,
   type PickerTarget,
 } from "./ModelPicker.tsx";
+import { moveFocus, PopoverChip, usePopoverClose } from "./Popover.tsx";
 import { QueuedPrompts } from "./QueuedPrompts.tsx";
 
 export function Composer({ threadId }: { threadId: string }) {
@@ -38,6 +39,8 @@ export function Composer({ threadId }: { threadId: string }) {
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode ?? "default",
     effort: thread.effort,
+    fastMode: thread.fastMode,
+    ultracode: thread.ultracode,
   };
   return (
     <ComposerForm
@@ -334,18 +337,23 @@ export function ComposerForm({
           />
           <div className="composer-toolbar">
             <div className="composer-toolbar-start">
-              <button
-                type="button"
+              <PopoverChip
                 className="composer-icon-btn"
-                aria-label="Add context"
-                title={
-                  threadId ? "Tag a file or folder" : "Files can be tagged once the thread starts"
+                label="Add"
+                ariaLabel="Add context"
+                title="Add context"
+                size="small"
+                panel={
+                  <AddMenu
+                    canTag={threadId !== null}
+                    canFanout={draft.trim() !== ""}
+                    onTag={insertMention}
+                    onFanout={() => onFanout(() => (area.current?.value ?? "").trim())}
+                  />
                 }
-                disabled={threadId === null}
-                onClick={insertMention}
               >
                 <IconPaperclip />
-              </button>
+              </PopoverChip>
             </div>
             <div className="composer-toolbar-end">
               <ModelChip
@@ -356,8 +364,6 @@ export function ComposerForm({
                 {...(failoverThread ? { failoverThread } : {})}
                 open={modelPickerOpen}
                 onOpenChange={setModelPickerOpen}
-                fanoutDisabled={!draft.trim()}
-                onFanout={() => onFanout(() => (area.current?.value ?? "").trim())}
               />
               <button
                 type="button"
@@ -394,6 +400,55 @@ export function ComposerForm({
           onChange={onChange}
         />
       </div>
+    </div>
+  );
+}
+
+function AddMenu({
+  canTag,
+  canFanout,
+  onTag,
+  onFanout,
+}: {
+  canTag: boolean;
+  canFanout: boolean;
+  onTag: () => void;
+  onFanout: () => void;
+}) {
+  const close = usePopoverClose();
+  return (
+    <div className="runtime-menu" role="menu" aria-label="Add context" onKeyDown={moveFocus}>
+      <button
+        type="button"
+        role="menuitem"
+        className="runtime-option"
+        disabled={!canTag}
+        autoFocus
+        title={canTag ? undefined : "Files can be tagged once the thread starts"}
+        onClick={() => {
+          close();
+          onTag();
+        }}
+      >
+        <span className="runtime-option-copy">
+          <span className="runtime-option-title">Tag a file or folder</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="runtime-option"
+        disabled={!canFanout}
+        title={canFanout ? undefined : "Type a message first"}
+        onClick={() => {
+          close();
+          onFanout();
+        }}
+      >
+        <span className="runtime-option-copy">
+          <span className="runtime-option-title">Run on several agents</span>
+        </span>
+      </button>
     </div>
   );
 }

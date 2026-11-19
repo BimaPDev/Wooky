@@ -158,6 +158,19 @@ describe("runTurn options", () => {
     expect(without.calls[0]?.options).not.toHaveProperty("effort");
   });
 
+  it("puts fast mode and ultracode in the settings overlay only when on", async () => {
+    const on = fakeQuery(simple);
+    await collect(
+      createClaudeAdapter({ query: on.fake }).runTurn(
+        turnInput({ fastMode: true, ultracode: true }),
+      ),
+    );
+    expect(on.calls[0]?.options).toMatchObject({ settings: { fastMode: true, ultracode: true } });
+    const off = fakeQuery(simple);
+    await collect(createClaudeAdapter({ query: off.fake }).runTurn(turnInput()));
+    expect(off.calls[0]?.options).not.toHaveProperty("settings");
+  });
+
   it("passes an explicit model and the configured binary", async () => {
     const { fake, calls } = fakeQuery(simple);
     const adapter = createClaudeAdapter({ query: fake, claudeBin: "/opt/claude" });

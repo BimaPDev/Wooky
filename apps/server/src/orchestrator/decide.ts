@@ -105,6 +105,8 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
           handoff: provider !== thread.provider,
           ...(command.interactionMode ? { interactionMode: command.interactionMode } : {}),
           ...(command.effort ? { effort: command.effort } : {}),
+          ...(command.fastMode !== undefined ? { fastMode: command.fastMode } : {}),
+          ...(command.ultracode !== undefined ? { ultracode: command.ultracode } : {}),
         },
       ]);
     }
@@ -264,6 +266,8 @@ function createThread(
           worktree: null,
           ...(command.isolate ? { isolate: true } : {}),
           ...(command.effort ? { effort: command.effort } : {}),
+          ...(command.fastMode !== undefined ? { fastMode: command.fastMode } : {}),
+          ...(command.ultracode !== undefined ? { ultracode: command.ultracode } : {}),
           providerSessionId: null,
           queue: [],
           status: "idle",

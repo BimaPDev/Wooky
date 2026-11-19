@@ -35,6 +35,8 @@ export type ClaudeModelOption = {
   /** Canonical model id an alias row resolves to. */
   resolvedModel?: string;
   efforts?: EffortLevel[];
+  fastMode?: boolean;
+  ultracode?: boolean;
 };
 
 export type ClaudeAuthProbeResult = {
@@ -75,6 +77,9 @@ export function claudeModelOptions(infos: readonly ModelInfo[]): ClaudeModelOpti
       label: info.displayName?.trim() || prettifyModelId(id),
       ...(resolvedModel ? { resolvedModel } : {}),
       ...(efforts.length > 0 ? { efforts: [...efforts] } : {}),
+      ...(info.supportsFastMode ? { fastMode: true } : {}),
+      // The SDK reports no ultracode flag; models with effort levels and adaptive thinking take it.
+      ...(efforts.length > 0 && info.supportsAdaptiveThinking !== false ? { ultracode: true } : {}),
     });
   }
   if (options.length === 0) return [];

@@ -103,8 +103,19 @@ describe("resolveDraft", () => {
       runtimeMode: "approve",
       interactionMode: "default",
       effort: "medium",
+      fastMode: false,
+      ultracode: false,
       isolate: false,
     });
+  });
+
+  it("drops fast mode and ultracode the model does not support", () => {
+    const fast = { ...claude, models: [{ id: "default", label: "Default", fastMode: true }] };
+    const resolved = resolveDraft(draft({ fastMode: true, ultracode: true }), {
+      ...context(),
+      providers: [fast],
+    });
+    expect(resolved).toMatchObject({ fastMode: true, ultracode: false });
   });
 
   it("uses the model set in provider settings and the last-used runtime mode", () => {

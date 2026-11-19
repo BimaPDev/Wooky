@@ -29,6 +29,7 @@ import {
   resolvePlanMarkdown,
   toolAnswers,
 } from "./interaction.ts";
+import { sessionSettings } from "./session-settings.ts";
 import { clip } from "./text.ts";
 import { describeTool, str, toolKind, type ToolInput } from "./tools.ts";
 import { probeClaudeAuth } from "./probe-auth.ts";
@@ -41,12 +42,13 @@ const STDERR_TAIL_CHARS = 2_000;
 const CAPABILITIES = { rewind: true, questions: true, planMode: true, queue: true };
 
 const BUILT_IN_EFFORTS: EffortLevel[] = ["low", "medium", "high", "max"];
+const BUILT_IN_SPEED = { fastMode: true, ultracode: true } as const;
 
 const MODELS = [
   { id: "default", label: "Default" },
-  { id: "fable", label: "Fable", efforts: BUILT_IN_EFFORTS },
-  { id: "opus", label: "Opus", efforts: BUILT_IN_EFFORTS },
-  { id: "sonnet", label: "Sonnet", efforts: BUILT_IN_EFFORTS },
+  { id: "fable", label: "Fable", efforts: BUILT_IN_EFFORTS, ...BUILT_IN_SPEED },
+  { id: "opus", label: "Opus", efforts: BUILT_IN_EFFORTS, ...BUILT_IN_SPEED },
+  { id: "sonnet", label: "Sonnet", efforts: BUILT_IN_EFFORTS, ...BUILT_IN_SPEED },
   { id: "haiku", label: "Haiku" },
 ];
 
@@ -183,6 +185,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         includePartialMessages: true,
         ...(input.model !== "default" ? { model: input.model } : {}),
         ...(input.effort ? { effort: input.effort } : {}),
+        ...sessionSettings(input),
         ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
         ...(input.resumeSessionId && input.resumeAt
           ? { resumeSessionAt: input.resumeAt, forkSession: true }

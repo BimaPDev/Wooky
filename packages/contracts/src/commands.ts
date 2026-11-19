@@ -85,6 +85,8 @@ export const Command = z.discriminatedUnion("type", [
     isolate: z.boolean(),
     title: z.string().optional(),
     effort: EffortLevel.optional(),
+    fastMode: z.boolean().optional(),
+    ultracode: z.boolean().optional(),
   }),
   z.object({ ...base, type: z.literal("thread.rename"), threadId: Id, title: z.string().min(1) }),
   z.object({ ...base, type: z.literal("thread.remove"), threadId: Id }),
@@ -98,6 +100,8 @@ export const Command = z.discriminatedUnion("type", [
     runtimeMode: RuntimeMode.optional(),
     interactionMode: InteractionMode.optional(),
     effort: EffortLevel.optional(),
+    fastMode: z.boolean().optional(),
+    ultracode: z.boolean().optional(),
   }),
   z.object({
     ...base,

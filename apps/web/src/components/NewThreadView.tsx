@@ -16,7 +16,7 @@ import {
 import { useStore } from "../state/store.ts";
 import { ComposerForm } from "./Composer.tsx";
 import { IconChevron, IconCheckSmall, IconFolder } from "./Icons.tsx";
-import { PopoverChip, usePopoverClose } from "./ModelPicker.tsx";
+import { PopoverChip, usePopoverClose } from "./Popover.tsx";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
 
 const NO_PROJECT = "No project";
@@ -177,6 +177,8 @@ function DraftComposer() {
         runtimeMode: resolved.runtimeMode,
         interactionMode: resolved.interactionMode,
         effort: resolved.effort,
+        fastMode: resolved.fastMode,
+        ultracode: resolved.ultracode,
         isolate: resolved.isolate,
       }}
       onChange={(patch) => patchNewThread(patch)}

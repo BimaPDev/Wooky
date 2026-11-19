@@ -97,6 +97,16 @@ describe("device settings", () => {
     expect(DeviceSettings.parse({ activeThemeId: "abyss" }).wallpaperMotion).toBe("on");
     expect(DeviceSettings.safeParse({ wallpaperMotion: "reduced" }).success).toBe(false);
   });
+
+  it("keeps favourite models, at most 30, and a patch with only them leaves the rest alone", () => {
+    expect(DeviceSettings.parse({}).favoriteModels).toEqual([]);
+    const target = { provider: "claude", model: "default" };
+    expect(DeviceSettingsPatch.parse({ favoriteModels: [target] })).toEqual({
+      favoriteModels: [target],
+    });
+    const many = Array.from({ length: 31 }, (_, index) => ({ ...target, model: `m${index}` }));
+    expect(DeviceSettingsPatch.safeParse({ favoriteModels: many }).success).toBe(false);
+  });
 });
 
 describe("theme rpc", () => {

@@ -411,6 +411,8 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         resumeAt,
         interactionMode: turn.interactionMode ?? live.interactionMode ?? "default",
         ...(live.effort ? { effort: live.effort } : {}),
+        ...(live.fastMode ? { fastMode: true } : {}),
+        ...(live.ultracode ? { ultracode: true } : {}),
         handoffContext,
         role: live.role,
         signal,
