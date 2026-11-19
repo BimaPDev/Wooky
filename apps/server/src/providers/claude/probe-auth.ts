@@ -28,11 +28,16 @@ export type ClaudeAuthProbeResult = {
 };
 
 export function accountAuthenticated(account: AccountInfo | undefined): boolean {
-  const tokenSource = account?.tokenSource?.trim() ?? "";
-  const apiKeySource = account?.apiKeySource?.trim() ?? "";
-  const hasToken = tokenSource.length > 0 && tokenSource !== "none";
-  const hasKey = apiKeySource.length > 0 && apiKeySource !== "none";
-  return hasToken || hasKey;
+  if (!account) return false;
+  const set = (value: string | undefined) => {
+    const trimmed = value?.trim() ?? "";
+    return trimmed.length > 0 && trimmed !== "none";
+  };
+  if (set(account.tokenSource) || set(account.apiKeySource)) return true;
+  // A claude.ai (OAuth) login reports the account, not a token source.
+  if (set(account.email) || set(account.subscriptionType)) return true;
+  // Bedrock, Vertex, gateways and the like authenticate outside Claude Code.
+  return account.apiProvider !== undefined && account.apiProvider !== "firstParty";
 }
 
 export async function probeClaudeAuth(

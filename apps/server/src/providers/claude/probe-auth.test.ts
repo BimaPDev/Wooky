@@ -107,6 +107,26 @@ describe("accountAuthenticated", () => {
   it("treats explicit none sources as signed out", () => {
     expect(accountAuthenticated({ tokenSource: "none", apiKeySource: "none" })).toBe(false);
   });
+
+  it("treats a claude.ai login (account fields, no token source) as signed in", () => {
+    expect(
+      accountAuthenticated({
+        email: "someone@example.com",
+        organization: "Org",
+        subscriptionType: "Claude Pro",
+        apiProvider: "firstParty",
+      }),
+    ).toBe(true);
+  });
+
+  it("treats a third-party backend as signed in", () => {
+    expect(accountAuthenticated({ apiProvider: "bedrock" })).toBe(true);
+  });
+
+  it("treats a missing or empty first-party account as signed out", () => {
+    expect(accountAuthenticated(undefined)).toBe(false);
+    expect(accountAuthenticated({ apiProvider: "firstParty" })).toBe(false);
+  });
 });
 
 describe("probeClaudeAuth prompt", () => {
