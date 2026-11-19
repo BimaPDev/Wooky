@@ -10,6 +10,7 @@ import {
 import { ServiceError } from "../errors.ts";
 import { getBuiltinWallpaperThemes } from "./builtin-wallpapers.ts";
 import { importTheme as parseImport } from "./theme-import.ts";
+import { validateThemeContent } from "./theme-validate.ts";
 
 const SETTINGS_FILE = "settings.json";
 const THEMES_DIR = "themes";
@@ -142,11 +143,15 @@ export function createThemeStore(home: string) {
   }
 
   function readCustom(id: string): Theme | null {
+    const path = customPath(id);
     try {
-      const raw = JSON.parse(readFileSync(customPath(id), "utf8"));
+      const raw = JSON.parse(readFileSync(path, "utf8"));
       const theme = AppearanceTheme.parse({ ...raw, id, builtin: false });
+      validateThemeContent(theme);
       return theme;
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid theme file.";
+      console.warn(`Skipping invalid theme file "${path}": ${message}`);
       return null;
     }
   }
@@ -187,6 +192,14 @@ export function createThemeStore(home: string) {
     if (allBuiltins().some((theme) => theme.id === input.id))
       throw new ServiceError("conflict", `Built-in theme "${input.id}" cannot be overwritten.`);
     const theme = AppearanceTheme.parse({ ...input, builtin: false });
+    try {
+      validateThemeContent(theme);
+    } catch (error) {
+      throw new ServiceError(
+        "bad_request",
+        error instanceof Error ? error.message : "Theme content is not allowed.",
+      );
+    }
     writeFileSync(customPath(theme.id), `${JSON.stringify(theme, null, 2)}\n`, "utf8");
     return theme;
   }

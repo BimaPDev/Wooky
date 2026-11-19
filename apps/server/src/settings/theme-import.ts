@@ -7,7 +7,7 @@ import {
   type ThemeVariant,
 } from "@age/contracts";
 import { assertSafeSvg, toDataUrl } from "./wallpapers/scenes.ts";
-import { sanitizeThemeCss } from "./theme-css.ts";
+import { validateThemeContent } from "./theme-validate.ts";
 
 export const MAX_THEME_IMPORT_TEXT = 7_000_000;
 
@@ -137,15 +137,7 @@ function importT3code(raw: Record<string, unknown>): { theme: Theme; format: The
   const id = slugify(name);
   const { canvas, accent, roles } = mapT3Colors((raw.colors ?? {}) as Record<string, unknown>);
   const appearance = raw.appearance === "light" ? "light" : "dark";
-  let css = "";
-  if (typeof raw.css === "string") {
-    const safe = sanitizeThemeCss(raw.css);
-    if (safe === null) {
-      console.warn(`Dropped unsafe CSS from imported t3code theme "${name}".`);
-    } else {
-      css = safe;
-    }
-  }
+  const css = typeof raw.css === "string" ? raw.css.trim() : "";
   const variants: Theme["variants"] = {};
   const rawVariants = raw.variants;
   if (typeof rawVariants === "object" && rawVariants !== null) {
@@ -186,17 +178,22 @@ export function importTheme(
   if (text.length > MAX_THEME_IMPORT_TEXT) {
     throw new Error(`Theme import text exceeds ${MAX_THEME_IMPORT_TEXT} characters.`);
   }
-  if (SVG_START_RE.test(text)) return importSvg(text, filename);
+  let result: { theme: Theme; format: ThemeImportFormat };
+  if (SVG_START_RE.test(text)) {
+    result = importSvg(text, filename);
+  } else {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error("Unrecognized theme format.");
+    }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("Unrecognized theme format.");
+    if (isAgeTheme(parsed)) result = importAge(parsed);
+    else if (isT3codeTheme(parsed)) result = importT3code(parsed);
+    else throw new Error("Unrecognized theme format.");
   }
 
-  if (isAgeTheme(parsed)) return importAge(parsed);
-  if (isT3codeTheme(parsed)) return importT3code(parsed);
-
-  throw new Error("Unrecognized theme format.");
+  validateThemeContent(result.theme);
+  return result;
 }
