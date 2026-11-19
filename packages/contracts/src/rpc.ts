@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { AppearanceTheme, AppearanceThemeSummary, DeviceSettings } from "./appearance.ts";
+import {
+  AppearanceTheme,
+  AppearanceThemeSummary,
+  DeviceSettings,
+  ThemeImportFormat,
+} from "./appearance.ts";
 import { Command } from "./commands.ts";
 import { AgeEvent } from "./events.ts";
 import { FileDiff, Id, Project, ProviderKind, ProviderStatus, Thread, Turn } from "./model.ts";
@@ -93,6 +98,23 @@ export const RpcMethods = {
     params: z.object({ id: z.string() }),
     result: z.object({ deleted: z.boolean() }),
   },
+  /**
+   * Import AGE theme JSON, a t3code theme JSON (version, name, appearance,
+   * colors with canvas and surface, optional variants and css), or a raw SVG
+   * file that becomes a wallpaper theme. The server classifies the text.
+   */
+  "themes.import": {
+    params: z.object({
+      text: z.string().max(7_000_000),
+      filename: z.string().max(255).optional(),
+      activate: z.boolean().optional(),
+    }),
+    result: z.object({ theme: AppearanceTheme, format: ThemeImportFormat }),
+  },
+  "themes.activate": {
+    params: z.object({ id: z.string() }),
+    result: DeviceSettings,
+  },
   /** Start a local shell in cwd (project/worktree root). One session per call. */
   "terminal.open": {
     params: z.object({
@@ -164,7 +186,15 @@ export const RpcEventPush = z.object({
 });
 export type RpcEventPush = z.infer<typeof RpcEventPush>;
 
-export const RpcPush = z.union([RpcEventPush, TerminalPush]);
+/** Theme or settings change made outside this client, for example from the CLI. */
+export const ThemesPush = z.object({
+  push: z.literal("themes"),
+  activeThemeId: z.string(),
+  changedIds: z.array(z.string()),
+});
+export type ThemesPush = z.infer<typeof ThemesPush>;
+
+export const RpcPush = z.union([RpcEventPush, TerminalPush, ThemesPush]);
 export type RpcPush = z.infer<typeof RpcPush>;
 
 export const ServerMessage = z.union([RpcResponse, RpcPush]);

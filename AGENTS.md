@@ -101,7 +101,9 @@ user's quota; do not run them unless the task says so.
 - Inter for UI, a monospace only for code, paths and terminal output. Sentence case. No
   uppercase tracked labels, no emoji, no exclamation marks.
 - Motion: short, one-shot, `transform`/`opacity` only. Respect reduced motion. The only
-  loop allowed is the working indicator.
+  loops allowed are the working indicator and a theme wallpaper the user chose. The
+  wallpaper loop is opt-out (`wallpaperMotion`), stops while the window is hidden and
+  respects reduced motion.
 - Every interactive element has hover, active and focus-visible states, an accessible name
   and keyboard access.
 

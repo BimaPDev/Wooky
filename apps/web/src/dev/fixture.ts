@@ -553,6 +553,26 @@ const fixtureThemes: AppearanceTheme[] = [
   },
 ];
 
+function themeSummaryExtras(theme: AppearanceTheme): {
+  hasWallpaper: boolean;
+  animated: boolean;
+  modes: Array<"dark" | "light">;
+} {
+  const modes: Array<"dark" | "light"> = [theme.appearance];
+  const other = theme.appearance === "dark" ? "light" : "dark";
+  if (theme.variants?.[other]) modes.push(other);
+  const layers = [
+    theme.background,
+    theme.variants?.dark?.background,
+    theme.variants?.light?.background,
+  ];
+  return {
+    hasWallpaper: layers.some((layer) => layer?.image !== undefined),
+    animated: layers.some((layer) => layer?.animated === true),
+    modes,
+  };
+}
+
 let fixtureSettings: DeviceSettingsValue = DeviceSettings.parse({
   activeThemeId: "default",
   colorMode: "system",
@@ -733,6 +753,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
           accent: theme.accent,
           builtin: Boolean(theme.builtin),
           hasCss: theme.css.length > 0,
+          ...themeSummaryExtras(theme),
         })),
       };
     case "themes.get": {
@@ -755,6 +776,13 @@ function respond(method: RpcMethod, params: unknown): unknown {
       fixtureThemes.splice(index, 1);
       if (fixtureSettings.activeThemeId === id) fixtureSettings.activeThemeId = "default";
       return { deleted: true };
+    }
+    case "themes.import":
+      throw new Error("Theme import is not available in the fixture.");
+    case "themes.activate": {
+      const id = (params as RpcParams<"themes.activate">).id;
+      fixtureSettings = { ...fixtureSettings, activeThemeId: id };
+      return fixtureSettings;
     }
     case "terminal.open":
       return { sessionId: "term_fixture", shell: "fixture" };

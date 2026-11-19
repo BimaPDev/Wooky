@@ -90,6 +90,29 @@ const BUILTIN: Theme[] = [
   },
 ];
 
+function toSummary(theme: Theme, builtin: boolean) {
+  const modes: Array<"dark" | "light"> = [theme.appearance];
+  const other = theme.appearance === "dark" ? "light" : "dark";
+  if (theme.variants?.[other]) modes.push(other);
+  const layers = [
+    theme.background,
+    theme.variants?.dark?.background,
+    theme.variants?.light?.background,
+  ];
+  return AppearanceThemeSummary.parse({
+    id: theme.id,
+    name: theme.name,
+    appearance: theme.appearance,
+    canvas: theme.canvas,
+    accent: theme.accent,
+    builtin,
+    hasCss: theme.css.length > 0,
+    hasWallpaper: layers.some((layer) => layer?.image !== undefined),
+    animated: layers.some((layer) => layer?.animated === true),
+    modes,
+  });
+}
+
 export function createThemeStore(home: string) {
   const themesDir = join(home, THEMES_DIR);
   const settingsPath = join(home, SETTINGS_FILE);
@@ -132,17 +155,7 @@ export function createThemeStore(home: string) {
     const themes: ReturnType<typeof AppearanceThemeSummary.parse>[] = [];
     for (const theme of BUILTIN) {
       seen.add(theme.id);
-      themes.push(
-        AppearanceThemeSummary.parse({
-          id: theme.id,
-          name: theme.name,
-          appearance: theme.appearance,
-          canvas: theme.canvas,
-          accent: theme.accent,
-          builtin: true,
-          hasCss: theme.css.length > 0,
-        }),
-      );
+      themes.push(toSummary(theme, true));
     }
     for (const name of readdirSync(themesDir)) {
       if (!name.endsWith(".json")) continue;
@@ -151,17 +164,7 @@ export function createThemeStore(home: string) {
       const theme = readCustom(id);
       if (!theme) continue;
       seen.add(id);
-      themes.push(
-        AppearanceThemeSummary.parse({
-          id: theme.id,
-          name: theme.name,
-          appearance: theme.appearance,
-          canvas: theme.canvas,
-          accent: theme.accent,
-          builtin: false,
-          hasCss: theme.css.length > 0,
-        }),
-      );
+      themes.push(toSummary(theme, false));
     }
     return { themesDir, activeThemeId: settings.activeThemeId, themes };
   }

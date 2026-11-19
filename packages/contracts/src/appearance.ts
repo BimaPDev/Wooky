@@ -70,13 +70,13 @@ export const ThemeShape = z
   .strict();
 export type ThemeShape = z.infer<typeof ThemeShape>;
 
-/** Inline image only (data: URL), so themes stay one portable JSON file. */
+/** Inline image only (data: URL), so themes stay one portable JSON file. SVG is base64, never markup. */
 export const ThemeImage = z
   .string()
   .max(6_000_000)
   .regex(
-    /^data:image\/(png|jpeg|webp|gif|avif);base64,[A-Za-z0-9+/]+=*$/,
-    "Background must be a base64 PNG, JPEG, WebP, GIF or AVIF data URL",
+    /^data:image\/(png|jpeg|webp|gif|avif|svg\+xml);base64,[A-Za-z0-9+/]+=*$/,
+    "Background must be a base64 PNG, JPEG, WebP, GIF, AVIF or SVG data URL",
   );
 
 export const ThemeBackground = z
@@ -86,11 +86,26 @@ export const ThemeBackground = z
     /** 0-90: canvas-coloured veil over the image. */
     dim: z.number().int().min(0).max(90).optional(),
     blur: z.number().int().min(0).max(40).optional(),
+    /** Backdrop-filter blur in px on app panels over a wallpaper. */
+    panelBlur: z.number().int().min(0).max(40).optional(),
     /** 0-100: how solid app surfaces are over the image. */
     surfaceOpacity: z.number().int().min(0).max(100).optional(),
+    /** Hint that `image` is an animated SVG. Callers do not inspect the bytes. */
+    animated: z.boolean().optional(),
   })
   .strict();
 export type ThemeBackground = z.infer<typeof ThemeBackground>;
+
+/** Palette and wallpaper for one colour mode. Fonts, shape and css stay on the theme. */
+export const ThemeVariant = z
+  .object({
+    canvas: HexColor,
+    accent: HexColor,
+    colors: ThemeColorRoles.default({}),
+    background: ThemeBackground.optional(),
+  })
+  .strict();
+export type ThemeVariant = z.infer<typeof ThemeVariant>;
 
 export const AppearanceTheme = z.object({
   version: z.literal(1).default(1),
@@ -109,6 +124,18 @@ export const AppearanceTheme = z.object({
   fonts: ThemeFonts.optional(),
   shape: ThemeShape.optional(),
   background: ThemeBackground.optional(),
+  /**
+   * Top-level canvas, accent, colors and background describe `appearance`.
+   * When the effective colour mode differs and `variants[mode]` exists, that
+   * variant replaces canvas, accent, colors and background.
+   */
+  variants: z
+    .object({
+      dark: ThemeVariant.optional(),
+      light: ThemeVariant.optional(),
+    })
+    .strict()
+    .optional(),
   /** Extra CSS after variables. No @import; url() only with data: or #. Max 50k. */
   css: z.string().max(50_000).default(""),
   builtin: z.boolean().optional(),
@@ -123,8 +150,17 @@ export const AppearanceThemeSummary = z.object({
   accent: HexColor,
   builtin: z.boolean(),
   hasCss: z.boolean(),
+  /** True when the theme or a variant has a background image. */
+  hasWallpaper: z.boolean(),
+  /** True when a background sets the animated hint. */
+  animated: z.boolean(),
+  /** Modes the theme supports natively: `appearance`, plus the other when that variant exists. */
+  modes: z.array(z.enum(["dark", "light"])),
 });
 export type AppearanceThemeSummary = z.infer<typeof AppearanceThemeSummary>;
+
+export const ThemeImportFormat = z.enum(["age", "t3code", "svg"]);
+export type ThemeImportFormat = z.infer<typeof ThemeImportFormat>;
 
 export const DeviceSettings = z.object({
   activeThemeId: z.string().default("default"),
@@ -146,5 +182,7 @@ export const DeviceSettings = z.object({
   followUp: z.enum(["queue", "off"]).default("queue"),
   /** Read Claude, Cursor, Codex and OpenCode history on this machine. */
   importLocalHistory: z.boolean().default(true),
+  /** Wallpaper animation. Off stops it; a hidden window and reduced motion stop it too. */
+  wallpaperMotion: z.enum(["on", "off"]).default("on"),
 });
 export type DeviceSettings = z.infer<typeof DeviceSettings>;
