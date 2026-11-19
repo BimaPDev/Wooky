@@ -13,6 +13,21 @@ export interface ModelRate {
   cacheWrite?: number;
   /** 1-hour cache writes. Falls back to 2× input, then `cacheWrite`. */
   cacheWrite1h?: number;
+  /**
+   * Higher rates once prompt tokens (uncached + cache read + cache write)
+   * exceed the threshold. Highest matching threshold wins. LiteLLM encodes
+   * these as `input_cost_per_token_above_Nk_tokens`.
+   */
+  contextTiers?: readonly ContextTier[];
+}
+
+export interface ContextTier {
+  thresholdTokens: number;
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cacheWrite1h?: number;
 }
 
 /** Keyed by `normalizeModelId`. Plain data, so it can cross to the worker. */
@@ -79,6 +94,11 @@ const ALIASES: Readonly<Record<string, string>> = {
   "claude-4-5-sonnet": "claude-sonnet-4-5",
   "claude-4-5-haiku": "claude-haiku-4-5",
   "claude-4-1-opus": "claude-opus-4-1",
+  "claude-5-opus": "claude-opus-5",
+  "claude-5-sonnet": "claude-sonnet-5",
+  "claude-5-5-opus": "claude-opus-5-5",
+  "claude-5-5-sonnet": "claude-sonnet-5-5",
+  "claude-5-5-haiku": "claude-haiku-5-5",
   "gpt-5-codex-mini": "gpt-5-mini",
 };
 
@@ -128,20 +148,59 @@ const perMillion = (
   return rate;
 };
 
+const millionTier = (
+  thresholdK: number,
+  input: number,
+  output: number,
+  cacheRead?: number,
+  cacheWrite?: number,
+  cacheWrite1h?: number,
+): ContextTier => {
+  const tier: ContextTier = {
+    thresholdTokens: thresholdK * 1000,
+    input: input / 1e6,
+    output: output / 1e6,
+  };
+  if (cacheRead !== undefined) tier.cacheRead = cacheRead / 1e6;
+  if (cacheWrite !== undefined) tier.cacheWrite = cacheWrite / 1e6;
+  if (cacheWrite1h !== undefined) tier.cacheWrite1h = cacheWrite1h / 1e6;
+  return tier;
+};
+
+const withTiers = (rate: ModelRate, ...tiers: ContextTier[]): ModelRate => ({
+  ...rate,
+  contextTiers: tiers,
+});
+
 /**
  * Offline snapshot of common models, in USD per million tokens. The LiteLLM table
  * overrides it whenever one is available. Models missing here price as unknown.
  */
 export const BUNDLED_RATES: RateTable = {
+  "claude-opus-5-5": perMillion(4, 20, 0.2, 5, 8),
+  "claude-opus-5": perMillion(5, 25, 0.5, 6.25, 10),
+  "claude-opus-4-8": perMillion(5, 25, 0.5, 6.25, 10),
+  "claude-opus-4-6": perMillion(5, 25, 0.5, 6.25, 10),
   "claude-opus-4-5": perMillion(5, 25, 0.5, 6.25, 10),
   "claude-opus-4-1": perMillion(15, 75, 1.5, 18.75, 30),
   "claude-opus-4": perMillion(15, 75, 1.5, 18.75, 30),
+  "claude-sonnet-5-5": perMillion(2, 10, 0.1, 2.5, 4),
+  "claude-sonnet-5": perMillion(2, 10, 0.2, 2.5, 4),
+  "claude-sonnet-4-6": perMillion(3, 15, 0.3, 3.75, 6),
   "claude-sonnet-4-5": perMillion(3, 15, 0.3, 3.75, 6),
   "claude-sonnet-4": perMillion(3, 15, 0.3, 3.75, 6),
   "claude-3-7-sonnet": perMillion(3, 15, 0.3, 3.75, 6),
   "claude-3-5-sonnet": perMillion(3, 15, 0.3, 3.75, 6),
+  "claude-haiku-5-5": withTiers(
+    perMillion(0.1, 0.5, 0.01, 0.125, 0.2),
+    millionTier(100, 0.5, 2.5, 0.05, 0.625, 1),
+  ),
   "claude-haiku-4-5": perMillion(1, 5, 0.1, 1.25, 2),
   "claude-3-5-haiku": perMillion(0.8, 4, 0.08, 1, 1.6),
+  "claude-fable-5-2": perMillion(8, 40, 0.2, 10, 16),
+  "claude-fable-5": perMillion(10, 50, 1, 12.5, 20),
+  "gpt-5.6-sol": withTiers(perMillion(4, 20, 0.4, 5), millionTier(272, 8, 40, 0.8, 10)),
+  "gpt-5.6": withTiers(perMillion(4, 20, 0.4, 5), millionTier(272, 8, 40, 0.8, 10)),
   "gpt-5": perMillion(1.25, 10, 0.125),
   "gpt-5-codex": perMillion(1.25, 10, 0.125),
   "gpt-5-mini": perMillion(0.25, 2, 0.025),
@@ -150,10 +209,51 @@ export const BUNDLED_RATES: RateTable = {
   "gpt-4.1": perMillion(2, 8, 0.5),
   o3: perMillion(2, 8, 0.5),
   "o4-mini": perMillion(1.1, 4.4, 0.275),
+  "gemini-4-carbon": perMillion(2, 10, 0.1),
+  "gemini-4-argon": perMillion(2, 10, 0.1),
   "gemini-2.5-pro": perMillion(1.25, 10),
   "gemini-2.5-flash": perMillion(0.3, 2.5),
+  "grok-4.7": withTiers(perMillion(2, 6, 0.5), millionTier(200, 4, 12, 1)),
+  "grok-4.6": withTiers(perMillion(2, 6, 0.5), millionTier(200, 4, 12, 1)),
+  "grok-4.5": withTiers(perMillion(2, 6, 0.3), millionTier(200, 4, 12, 0.6)),
   "grok-4": perMillion(3, 15, 0.75),
 };
+
+function scaleCacheField(
+  base: ModelRate,
+  field: "cacheRead" | "cacheWrite" | "cacheWrite1h",
+  input: number,
+): number | undefined {
+  const value = base[field];
+  if (value === undefined) return undefined;
+  if (base.input <= 0) return value;
+  return (value / base.input) * input;
+}
+
+/** Highest LiteLLM context tier whose threshold the prompt has crossed. */
+function ratesAt(rate: ModelRate, promptTokens: number): ModelRate {
+  const tier = rate.contextTiers?.find((entry) => promptTokens > entry.thresholdTokens);
+  if (tier === undefined) return rate;
+  return {
+    input: tier.input,
+    output: tier.output,
+    cacheRead: tier.cacheRead ?? scaleCacheField(rate, "cacheRead", tier.input),
+    cacheWrite: tier.cacheWrite ?? scaleCacheField(rate, "cacheWrite", tier.input),
+    cacheWrite1h: tier.cacheWrite1h ?? scaleCacheField(rate, "cacheWrite1h", tier.input),
+  };
+}
+
+function unsplit(reportedUsd: number): Priced {
+  return {
+    input: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    output: 0,
+    other: reportedUsd,
+    savings: 0,
+    priced: reportedUsd > 0,
+  };
+}
 
 /** `Pricer` over a rate table. Lookups are memoised per model string. */
 export function createPricer(table: RateTable): Pricer {
@@ -174,33 +274,27 @@ export function createPricer(table: RateTable): Pricer {
     }
     const reportedUsd =
       reported !== undefined && Number.isFinite(reported) && reported > 0 ? reported : 0;
-    if (rate === null) {
-      return {
-        input: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        output: 0,
-        other: reportedUsd,
-        savings: 0,
-        priced: reportedUsd > 0,
-      };
-    }
-    const cacheReadRate = rate.cacheRead ?? rate.input;
-    const cacheWriteRate = rate.cacheWrite ?? rate.input;
-    const cacheWrite1hRate = rate.cacheWrite1h ?? rate.input * 2;
+    if (rate === null) return unsplit(reportedUsd);
+    const applied = ratesAt(rate, inputTokens + cacheReadTokens + cacheWriteTokens);
+    const cacheReadRate = applied.cacheRead ?? applied.input;
+    const cacheWriteRate = applied.cacheWrite ?? applied.input;
+    const cacheWrite1hRate = applied.cacheWrite1h ?? applied.input * 2;
     const oneHour = Math.min(Math.max(0, cacheWrite1hTokens), cacheWriteTokens);
     const fiveMinute = cacheWriteTokens - oneHour;
-    const input = inputTokens * rate.input;
+    const input = inputTokens * applied.input;
     const cacheRead = cacheReadTokens * cacheReadRate;
     const cacheWrite = fiveMinute * cacheWriteRate + oneHour * cacheWrite1hRate;
-    const output = outputTokens * rate.output;
+    const output = outputTokens * applied.output;
+    const listCost = input + cacheRead + cacheWrite + output;
+    if (reportedUsd > 0 && listCost <= 0) return unsplit(reportedUsd);
+    const scale = reportedUsd > 0 ? reportedUsd / listCost : 1;
     return {
-      input,
-      cacheRead,
-      cacheWrite,
-      output,
-      other: Math.max(0, reportedUsd - input - cacheRead - cacheWrite - output),
-      savings: Math.max(0, cacheReadTokens * (rate.input - cacheReadRate)),
+      input: input * scale,
+      cacheRead: cacheRead * scale,
+      cacheWrite: cacheWrite * scale,
+      output: output * scale,
+      other: 0,
+      savings: Math.max(0, cacheReadTokens * (applied.input - cacheReadRate)),
       priced: true,
     };
   };
@@ -213,6 +307,51 @@ const LitellmEntry = z.object({
   cache_creation_input_token_cost: z.number().nonnegative().optional(),
   cache_creation_input_token_cost_above_1hr: z.number().nonnegative().optional(),
 });
+
+const CONTEXT_TIER_INPUT_KEY = /^input_cost_per_token_above_(\d{1,7})k_tokens$/;
+
+function finiteNonneg(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function readContextTiers(
+  raw: Record<string, unknown>,
+  base: ModelRate,
+): readonly ContextTier[] | undefined {
+  const thresholds = new Set<number>();
+  for (const key of Object.keys(raw)) {
+    const match = CONTEXT_TIER_INPUT_KEY.exec(key);
+    if (match !== null) thresholds.add(Number(match[1]) * 1000);
+  }
+  if (thresholds.size === 0) return undefined;
+  return [...thresholds]
+    .sort((a, b) => b - a)
+    .map((thresholdTokens) => {
+      const suffix = `_above_${thresholdTokens / 1000}k_tokens`;
+      const input = finiteNonneg(raw[`input_cost_per_token${suffix}`]) ?? base.input;
+      const output = finiteNonneg(raw[`output_cost_per_token${suffix}`]) ?? base.output;
+      const tier: ContextTier = { thresholdTokens, input, output };
+      const cacheRead = finiteNonneg(raw[`cache_read_input_token_cost${suffix}`]);
+      const cacheWrite = finiteNonneg(raw[`cache_creation_input_token_cost${suffix}`]);
+      const cacheWrite1h = finiteNonneg(raw[`cache_creation_input_token_cost_above_1hr${suffix}`]);
+      if (cacheRead !== undefined) tier.cacheRead = cacheRead;
+      else {
+        const scaled = scaleCacheField(base, "cacheRead", input);
+        if (scaled !== undefined) tier.cacheRead = scaled;
+      }
+      if (cacheWrite !== undefined) tier.cacheWrite = cacheWrite;
+      else {
+        const scaled = scaleCacheField(base, "cacheWrite", input);
+        if (scaled !== undefined) tier.cacheWrite = scaled;
+      }
+      if (cacheWrite1h !== undefined) tier.cacheWrite1h = cacheWrite1h;
+      else {
+        const scaled = scaleCacheField(base, "cacheWrite1h", input);
+        if (scaled !== undefined) tier.cacheWrite1h = scaled;
+      }
+      return tier;
+    });
+}
 
 /** Lower wins when several raw keys normalise to one id: bare ids, then first-party prefixes. */
 function keyRank(key: string): number {
@@ -245,6 +384,10 @@ export function reduceLitellm(json: unknown): RateTable {
       rate.cacheWrite = entry.data.cache_creation_input_token_cost;
     if (entry.data.cache_creation_input_token_cost_above_1hr !== undefined)
       rate.cacheWrite1h = entry.data.cache_creation_input_token_cost_above_1hr;
+    if (typeof value === "object" && value !== null) {
+      const tiers = readContextTiers(value as Record<string, unknown>, rate);
+      if (tiers !== undefined) rate.contextTiers = tiers;
+    }
     Object.defineProperty(table, id, {
       value: rate,
       enumerable: true,
@@ -255,17 +398,21 @@ export function reduceLitellm(json: unknown): RateTable {
   return table;
 }
 
+const TokenRateFields = z.object({
+  input: z.number(),
+  output: z.number(),
+  cacheRead: z.number().optional(),
+  cacheWrite: z.number().optional(),
+  cacheWrite1h: z.number().optional(),
+});
+
 const RatesCacheFile = z.object({
   version: z.literal(1),
   fetchedAt: z.number(),
   rates: z.record(
     z.string(),
-    z.object({
-      input: z.number(),
-      output: z.number(),
-      cacheRead: z.number().optional(),
-      cacheWrite: z.number().optional(),
-      cacheWrite1h: z.number().optional(),
+    TokenRateFields.extend({
+      contextTiers: z.array(TokenRateFields.extend({ thresholdTokens: z.number() })).optional(),
     }),
   ),
 });

@@ -34,7 +34,10 @@ describe("normalizeModelId", () => {
     ["claude-sonnet-4@20250514", "claude-sonnet-4"],
     ["openrouter/anthropic/claude-haiku-4-5", "claude-haiku-4-5"],
     ["cursor-grok-4.6-high", "grok-4.6"],
+    ["cursor-grok-4.7-high-fast", "grok-4.7"],
     ["claude-opus-4-8-thinking-high", "claude-opus-4-8"],
+    ["claude-opus-5-5-20260301", "claude-opus-5-5"],
+    ["claude-5-5-opus", "claude-opus-5-5"],
     ["composer-2.5", "composer-2.5"],
   ])("%s -> %s", (raw, expected) => {
     expect(normalizeModelId(raw)).toBe(expected);
@@ -64,12 +67,18 @@ describe("pricing a record", () => {
     expect(p).toMatchObject({ input: 0, output: 0, other: 0, savings: 0, priced: false });
   });
 
-  it("sends a reported cost the rates cannot split to other", () => {
+  it("scales list prices onto a reported total so the split sums to what the provider billed", () => {
     const split = price("test-model", 1_000_000, 0, 0, 0, 1.75);
-    expect(split.input).toBeCloseTo(1, 9);
-    expect(split.other).toBeCloseTo(0.75, 9);
+    expect(split.input).toBeCloseTo(1.75, 9);
+    expect(split.other).toBe(0);
     const covered = price("test-model", 1_000_000, 0, 0, 0, 0.5);
+    expect(covered.input).toBeCloseTo(0.5, 9);
     expect(covered.other).toBe(0);
+  });
+
+  it("keeps a reported cost as other when the model is priced but list cost is zero", () => {
+    const p = price("test-model", 0, 0, 0, 0, 1.2);
+    expect(p).toMatchObject({ input: 0, other: 1.2, priced: true });
   });
 
   it("keeps the whole reported cost as other for an unknown model, and counts it priced", () => {
@@ -109,8 +118,23 @@ describe("pricing a record", () => {
       15,
       9,
     );
+    expect(offline("claude-opus-5-5", 1_000_000, 0, 0, 0, undefined).input).toBeCloseTo(4, 9);
     expect(offline("gpt-5-codex", 1_000_000, 0, 0, 0, undefined).priced).toBe(true);
+    expect(offline("gpt-5.6-sol", 1_000_000, 0, 0, 0, undefined).priced).toBe(true);
+    expect(offline("gemini-4-carbon", 1_000_000, 0, 0, 0, undefined).priced).toBe(true);
     expect(offline("constructor", 1, 0, 0, 0, undefined).priced).toBe(false);
+  });
+
+  it("applies the highest context tier once prompt tokens cross the threshold", () => {
+    const offline = createPricer(BUNDLED_RATES);
+    const atThreshold = offline("grok-4.6", 200_000, 0, 0, 0, undefined);
+    expect(atThreshold.input).toBeCloseTo(0.4, 9);
+    const over = offline("grok-4.6", 200_001, 0, 0, 0, undefined);
+    expect(over.input).toBeCloseTo(0.800004, 6);
+    const cachedOver = offline("grok-4.6", 0, 250_000, 0, 0, undefined);
+    expect(cachedOver.cacheRead).toBeCloseTo(0.25, 9);
+    const haikuOver = offline("claude-haiku-5-5", 0, 150_000, 0, 0, undefined);
+    expect(haikuOver.cacheRead).toBeCloseTo(0.0075, 9);
   });
 });
 
@@ -141,6 +165,50 @@ describe("reduceLitellm", () => {
       cacheWrite1h: 6e-6,
     });
     expect(Object.keys(table)).toEqual(["claude-sonnet-4-5"]);
+  });
+
+  it("reads long-context tiers and ignores batch-only above-threshold keys", () => {
+    const table = reduceLitellm({
+      "xai/grok-4.6": {
+        input_cost_per_token: 2e-6,
+        output_cost_per_token: 6e-6,
+        cache_read_input_token_cost: 5e-7,
+        input_cost_per_token_above_200k_tokens: 4e-6,
+        output_cost_per_token_above_200k_tokens: 12e-6,
+        cache_read_input_token_cost_above_200k_tokens: 1e-6,
+        input_cost_per_token_above_200k_tokens_batches: 3.2e-6,
+      },
+      "claude-haiku-5-5": {
+        input_cost_per_token: 1e-7,
+        output_cost_per_token: 5e-7,
+        cache_read_input_token_cost: 1e-8,
+        cache_creation_input_token_cost: 1.25e-7,
+        cache_creation_input_token_cost_above_1hr: 2e-7,
+        input_cost_per_token_above_100k_tokens: 5e-7,
+        output_cost_per_token_above_100k_tokens: 2.5e-6,
+        cache_read_input_token_cost_above_100k_tokens: 5e-8,
+        cache_creation_input_token_cost_above_100k_tokens: 6.25e-7,
+        cache_creation_input_token_cost_above_1hr_above_100k_tokens: 1e-6,
+      },
+    });
+    expect(table["grok-4.6"]?.contextTiers).toEqual([
+      {
+        thresholdTokens: 200_000,
+        input: 4e-6,
+        output: 12e-6,
+        cacheRead: 1e-6,
+      },
+    ]);
+    expect(table["claude-haiku-5-5"]?.contextTiers).toEqual([
+      {
+        thresholdTokens: 100_000,
+        input: 5e-7,
+        output: 2.5e-6,
+        cacheRead: 5e-8,
+        cacheWrite: 6.25e-7,
+        cacheWrite1h: 1e-6,
+      },
+    ]);
   });
 });
 
@@ -178,6 +246,24 @@ describe("pricing service", () => {
     expect(snapshot.table["claude-sonnet-4-5"]).toBeDefined();
     const stored = JSON.parse(await readFile(join(home, "usage-model-rates.json"), "utf8"));
     expect(stored.rates["fresh-model"].output).toBeCloseTo(5e-6, 12);
+  });
+
+  it("persists long-context tiers and reloads them from the cache file", async () => {
+    const body = {
+      "xai/grok-4.6": {
+        input_cost_per_token: 2e-6,
+        output_cost_per_token: 6e-6,
+        cache_read_input_token_cost: 5e-7,
+        input_cost_per_token_above_200k_tokens: 4e-6,
+        output_cost_per_token_above_200k_tokens: 12e-6,
+        cache_read_input_token_cost_above_200k_tokens: 1e-6,
+      },
+    };
+    await service(respond(body)).load();
+    clock += 30 * HOUR;
+    const snapshot = await service(offline()).cached();
+    expect(snapshot.table["grok-4.6"]?.contextTiers?.[0]?.thresholdTokens).toBe(200_000);
+    expect(snapshot.table["grok-4.6"]?.contextTiers?.[0]?.input).toBe(4e-6);
   });
 
   it("sends only a plain request for the public table, with no user data", async () => {
