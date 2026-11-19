@@ -54,10 +54,15 @@ export interface RunningServer {
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const limits = createLimitsService();
+  const themes = createThemeStore(options.home);
+  const providerSettings = (kind: ProviderKind) => themes.getSettings().providers[kind];
   const adapters =
     options.adapters ??
-    builtinAdapters({ onClaudeRateLimit: (info) => limits.ingestClaudeRateLimit(info) });
-  const registry = createProviderRegistry(adapters);
+    builtinAdapters({
+      onClaudeRateLimit: (info) => limits.ingestClaudeRateLimit(info),
+      providerSettings,
+    });
+  const registry = createProviderRegistry(adapters, { settings: providerSettings });
   const capabilities = new Map<ProviderKind, ProviderCapabilities>();
   const demo = registry.get("demo");
   if (demo) {
@@ -70,6 +75,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
   const providers = {
     get: (kind: ProviderKind) => registry.get(kind),
+    invalidate: () => registry.invalidate(),
     async list() {
       const statuses = await registry.list();
       for (const status of statuses) {
@@ -89,7 +95,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const store = openEventStore(options.home, ctx.now);
   const git = options.git ?? createGitService();
   let dispatchCommand: (command: Command) => void = () => {};
-  const themes = createThemeStore(options.home);
   const runner = createEffectRunner({
     store,
     providers,

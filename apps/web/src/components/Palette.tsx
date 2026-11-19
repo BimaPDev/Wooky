@@ -15,6 +15,7 @@ import { NO_DISABLED_PROVIDERS, useStore } from "../state/store.ts";
 import { toggleTheme } from "../state/theme.ts";
 import { isAvailable, shortcut } from "./labels.ts";
 import { Modal } from "./Modal.tsx";
+import { defaultModelFor } from "./providers/helpers.ts";
 
 interface PaletteAction {
   id: string;
@@ -32,6 +33,7 @@ function PaletteDialog() {
   const projects = useStore((state) => state.model.projects);
   const threads = useStore((state) => state.model.threads);
   const providers = useStore((state) => state.providers);
+  const deviceSettings = useStore((state) => state.deviceSettings);
   const disabledProviders = useStore(
     (state) => state.deviceSettings?.disabledProviders ?? NO_DISABLED_PROVIDERS,
   );
@@ -104,7 +106,7 @@ function PaletteDialog() {
             close();
             void configureThread(selected, {
               provider: provider.kind,
-              model: provider.models[0]?.id ?? "",
+              model: defaultModelFor(provider, deviceSettings),
             });
           },
         });
@@ -132,7 +134,7 @@ function PaletteDialog() {
       });
     }
     return list;
-  }, [projects, threads, providers, disabledProviders, selected]);
+  }, [projects, threads, providers, deviceSettings, disabledProviders, selected]);
 
   const results = fuzzyFilter(actions, query, (action) => `${action.label} ${action.hint ?? ""}`);
   const index = Math.min(active, Math.max(0, results.length - 1));

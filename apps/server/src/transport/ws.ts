@@ -104,6 +104,9 @@ function createHandlers(
     "settings.get": () => themes.getSettings(),
     "settings.put": ({ settings }) => {
       const next = themes.putSettings(settings);
+      if (settings.providers !== undefined || settings.acpAgents !== undefined) {
+        providers.invalidate();
+      }
       if (settings.activeThemeId !== undefined) notifyThemes([]);
       return next;
     },

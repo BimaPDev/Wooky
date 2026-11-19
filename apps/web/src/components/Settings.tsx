@@ -1,4 +1,10 @@
-import { DeviceSettings, type ProviderKind, type ProviderStatus } from "@age/contracts";
+import {
+  DeviceSettings,
+  type AcpAgentConfig,
+  type ProviderKind,
+  type ProviderSettings,
+  type ProviderStatus,
+} from "@age/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { loadDeviceSettings, patchDeviceSettings } from "../state/appearance.ts";
 import {
@@ -18,12 +24,17 @@ import {
   IconFolder,
   IconInfo,
   IconPalette,
+  IconPlus,
   IconRefresh,
   IconRestore,
   IconSearch,
   IconSliders,
 } from "./Icons.tsx";
 import { Modal } from "./Modal.tsx";
+import { AgentEditor, AgentPresets } from "./providers/AcpAgents.tsx";
+import { agentFromPreset, LIMITS, updateProviderSettings } from "./providers/helpers.ts";
+import { ProviderSettingsPanel } from "./providers/ProviderSettingsPanel.tsx";
+import { useSettingsDraft } from "./providers/useSettingsDraft.ts";
 import { UsageDashboard } from "./UsageDashboard.tsx";
 
 const NAV: { id: SettingsPage; label: string; group: string | null; icon: () => ReactNode }[] = [
@@ -223,23 +234,59 @@ function GeneralPage() {
   );
 }
 
+type Selection =
+  { type: "provider"; kind: ProviderKind } | { type: "agent"; id: string } | { type: "new-agent" };
+
+const NO_AGENTS: readonly AcpAgentConfig[] = [];
+
 function ProvidersPage() {
   const providers = useStore((state) => state.providers);
   const settings = useStore((state) => state.deviceSettings);
-  const [chosen, setSelected] = useState<ProviderKind | null>(null);
+  const [chosen, setSelected] = useState<Selection | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [presetAgent, setPresetAgent] = useState<{ key: number; agent: AcpAgentConfig } | null>(
+    null,
+  );
+  const providerDraft = useSettingsDraft("providers", "Could not save the provider settings.");
+  const agentDraft = useSettingsDraft("acpAgents", "Could not save the agents.");
 
-  // sync: load device settings for provider enable toggles
+  // sync: load device settings for provider options, defaults and agents
   useEffect(() => {
     void loadDeviceSettings();
   }, []);
 
-  const selected =
-    chosen && providers.some((entry) => entry.kind === chosen)
+  if (!settings || !providerDraft.value || !agentDraft.value) {
+    return (
+      <div className="settings-sections">
+        <p className="empty-state small">Loading settings.</p>
+      </div>
+    );
+  }
+
+  const records = providerDraft.value;
+  const agents = agentDraft.value ?? NO_AGENTS;
+  // Agents get their own rows, so the aggregate ACP entry stays out of the provider rows.
+  const rows = providers.filter((entry) => entry.kind !== "acp");
+  const acpStatus = providers.find((entry) => entry.kind === "acp");
+  const agentIds = new Set(agents.map((agent) => agent.id));
+  const disabled = new Set(settings.disabledProviders);
+
+  const selection: Selection | null =
+    chosen?.type === "new-agent" ||
+    (chosen?.type === "agent" && agentIds.has(chosen.id)) ||
+    (chosen?.type === "provider" && rows.some((entry) => entry.kind === chosen.kind))
       ? chosen
-      : (providers[0]?.kind ?? null);
-  const disabled = new Set(settings?.disabledProviders ?? []);
-  const active = providers.find((entry) => entry.kind === selected) ?? null;
+      : rows[0]
+        ? { type: "provider", kind: rows[0].kind }
+        : null;
+  const activeProvider =
+    selection?.type === "provider"
+      ? (rows.find((entry) => entry.kind === selection.kind) ?? null)
+      : null;
+  const activeAgent =
+    selection?.type === "agent"
+      ? (agents.find((agent) => agent.id === selection.id) ?? null)
+      : null;
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -256,6 +303,16 @@ function ProvidersPage() {
     else next.add(kind);
     void patchDeviceSettings({ disabledProviders: [...next] });
   };
+
+  const saveAgent = (agent: AcpAgentConfig) =>
+    agentDraft.save(agents.map((entry) => (entry.id === agent.id ? agent : entry)));
+
+  const agentSummary = (agent: AcpAgentConfig) =>
+    !agent.enabled
+      ? { headline: "Disabled", detail: null as string | null, tone: "muted" as const }
+      : acpStatus
+        ? providerSummary(acpStatus, true)
+        : { headline: "Waiting for adapter", detail: null, tone: "muted" as const };
 
   return (
     <div className="settings-sections">
@@ -274,83 +331,209 @@ function ProvidersPage() {
           </button>
         }
       >
-        {providers.length === 0 ? (
+        {providers.length === 0 && agents.length === 0 ? (
           <p className="settings-help">No providers reported yet. Refresh to probe your PATH.</p>
-        ) : (
-          <div className="providers-panel">
-            <div className="providers-list" role="listbox" aria-label="Providers">
-              {providers.map((provider) => {
+        ) : null}
+        <div className="providers-panel">
+          <div className="providers-list">
+            <div role="listbox" aria-label="Providers">
+              {rows.map((provider) => {
                 const enabled = !disabled.has(provider.kind);
-                const summary = providerSummary(provider, enabled);
-                const isSelected = provider.kind === selected;
                 return (
-                  <div
+                  <ProviderRow
                     key={provider.kind}
-                    role="option"
-                    aria-selected={isSelected}
-                    className={
-                      isSelected
-                        ? "provider-row selected"
-                        : enabled
-                          ? "provider-row"
-                          : "provider-row disabled"
-                    }
-                  >
-                    <button
-                      type="button"
-                      className="provider-row-hit"
-                      aria-label={`Select ${provider.label}`}
-                      onClick={() => setSelected(provider.kind)}
-                    />
-                    <ProviderMark kind={provider.kind} />
-                    <span className="provider-row-copy">
-                      <span className="provider-row-title">
-                        <span className="provider-row-name">{provider.label}</span>
-                        {provider.version ? (
-                          <code className="provider-row-version">v{provider.version}</code>
-                        ) : null}
-                      </span>
-                      <span
-                        className={
-                          summary.tone === "error"
-                            ? "provider-row-status error"
-                            : "provider-row-status"
-                        }
-                      >
-                        {summary.tone === "error" ? (
-                          <span className="provider-status-dot" aria-hidden />
-                        ) : null}
-                        <span>
-                          {summary.headline}
-                          {summary.detail ? ` · ${summary.detail}` : ""}
-                        </span>
-                      </span>
-                    </span>
-                    <span className="provider-row-actions">
+                    kind={provider.kind}
+                    name={provider.label}
+                    version={provider.version}
+                    summary={providerSummary(provider, enabled)}
+                    selected={selection?.type === "provider" && selection.kind === provider.kind}
+                    dimmed={!enabled}
+                    onSelect={() => setSelected({ type: "provider", kind: provider.kind })}
+                    actions={
                       <Toggle
                         checked={enabled}
                         onChange={(checked) => setEnabled(provider.kind, checked)}
                         label={`Enable ${provider.label}`}
                       />
-                    </span>
-                  </div>
+                    }
+                  />
                 );
               })}
             </div>
-            <div className="provider-detail" data-provider-detail="">
-              {active ? (
-                <ProviderDetail
-                  provider={active}
-                  enabled={!disabled.has(active.kind)}
-                  onEnabledChange={(checked) => setEnabled(active.kind, checked)}
-                />
-              ) : (
-                <p className="muted">No providers configured.</p>
-              )}
+            <p className="providers-list-heading">Agents you add</p>
+            {agents.length > 0 ? (
+              <div role="listbox" aria-label="Agents you added">
+                {agents.map((agent) => (
+                  <ProviderRow
+                    key={agent.id}
+                    kind="acp"
+                    name={agent.name}
+                    version={null}
+                    summary={agentSummary(agent)}
+                    selected={selection?.type === "agent" && selection.id === agent.id}
+                    dimmed={!agent.enabled}
+                    onSelect={() => setSelected({ type: "agent", id: agent.id })}
+                    actions={
+                      <Toggle
+                        checked={agent.enabled}
+                        onChange={(enabled) => saveAgent({ ...agent, enabled })}
+                        label={`Enable ${agent.name}`}
+                      />
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="providers-list-empty">
+                Any agent that speaks the Agent Client Protocol, such as Gemini CLI, Goose or Kiro.
+              </p>
+            )}
+            <div className="providers-list-add">
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={agents.length >= LIMITS.agents}
+                aria-pressed={selection?.type === "new-agent"}
+                onClick={() => {
+                  setPresetAgent(null);
+                  setSelected({ type: "new-agent" });
+                }}
+              >
+                <IconPlus />
+                Add agent
+              </button>
             </div>
           </div>
-        )}
+          <div className="provider-detail" data-provider-detail="">
+            {activeProvider ? (
+              <ProviderDetail
+                key={activeProvider.kind}
+                provider={activeProvider}
+                enabled={!disabled.has(activeProvider.kind)}
+                onEnabledChange={(checked) => setEnabled(activeProvider.kind, checked)}
+                settings={records[activeProvider.kind]}
+                busy={providerDraft.busy}
+                onSettingsChange={(patch) =>
+                  providerDraft.save(updateProviderSettings(records, activeProvider.kind, patch))
+                }
+              />
+            ) : activeAgent ? (
+              <div className="provider-detail-inner">
+                <header className="provider-detail-head">
+                  <div className="provider-detail-title">
+                    <ProviderMark kind="acp" />
+                    <h4>{activeAgent.name}</h4>
+                  </div>
+                </header>
+                <div className="provider-detail-block">
+                  <p className="setting-title">Status</p>
+                  <p className="provider-detail-status">
+                    {agentSummary(activeAgent).headline}
+                    {agentSummary(activeAgent).detail
+                      ? ` · ${agentSummary(activeAgent).detail}`
+                      : ""}
+                  </p>
+                </div>
+                <AgentEditor
+                  key={activeAgent.id}
+                  mode="edit"
+                  agent={activeAgent}
+                  otherIds={new Set([...agentIds].filter((id) => id !== activeAgent.id))}
+                  onSave={saveAgent}
+                  onDelete={() => {
+                    agentDraft.save(agents.filter((entry) => entry.id !== activeAgent.id));
+                    setSelected(null);
+                  }}
+                />
+              </div>
+            ) : selection?.type === "new-agent" ? (
+              <div className="provider-detail-inner">
+                <header className="provider-detail-head">
+                  <div className="provider-detail-title">
+                    <ProviderMark kind="acp" />
+                    <h4>Add agent</h4>
+                  </div>
+                </header>
+                <AgentPresets
+                  onPick={(preset) =>
+                    setPresetAgent({
+                      key: (presetAgent?.key ?? 0) + 1,
+                      agent: agentFromPreset(preset, agentIds),
+                    })
+                  }
+                />
+                <AgentEditor
+                  key={presetAgent?.key ?? 0}
+                  mode="create"
+                  agent={presetAgent?.agent ?? null}
+                  otherIds={agentIds}
+                  onSave={(agent) => {
+                    agentDraft.save([...agents, agent]);
+                    setPresetAgent(null);
+                    setSelected({ type: "agent", id: agent.id });
+                  }}
+                />
+              </div>
+            ) : (
+              <p className="muted">No providers configured.</p>
+            )}
+          </div>
+        </div>
       </SettingsSection>
+    </div>
+  );
+}
+
+function ProviderRow({
+  kind,
+  name,
+  version,
+  summary,
+  selected,
+  dimmed,
+  onSelect,
+  actions,
+}: {
+  kind: ProviderKind;
+  name: string;
+  version: string | null;
+  summary: { headline: string; detail: string | null; tone: "error" | "muted" | "ok" };
+  selected: boolean;
+  dimmed: boolean;
+  onSelect: () => void;
+  actions: ReactNode;
+}) {
+  return (
+    <div
+      role="option"
+      aria-selected={selected}
+      className={
+        selected ? "provider-row selected" : dimmed ? "provider-row disabled" : "provider-row"
+      }
+    >
+      <button
+        type="button"
+        className="provider-row-hit"
+        aria-label={`Select ${name}`}
+        onClick={onSelect}
+      />
+      <ProviderMark kind={kind} />
+      <span className="provider-row-copy">
+        <span className="provider-row-title">
+          <span className="provider-row-name">{name}</span>
+          {version ? <code className="provider-row-version">v{version}</code> : null}
+        </span>
+        <span
+          className={summary.tone === "error" ? "provider-row-status error" : "provider-row-status"}
+        >
+          {summary.tone === "error" ? <span className="provider-status-dot" aria-hidden /> : null}
+          <span>
+            {summary.headline}
+            {summary.detail ? ` · ${summary.detail}` : ""}
+          </span>
+        </span>
+      </span>
+      <span className="provider-row-actions">{actions}</span>
     </div>
   );
 }
@@ -359,10 +542,16 @@ function ProviderDetail({
   provider,
   enabled,
   onEnabledChange,
+  settings,
+  busy,
+  onSettingsChange,
 }: {
   provider: ProviderStatus;
   enabled: boolean;
   onEnabledChange: (checked: boolean) => void;
+  settings: ProviderSettings | undefined;
+  busy: boolean;
+  onSettingsChange: (patch: Partial<ProviderSettings>) => void;
 }) {
   const [busyKind, setBusyKind] = useState<ProviderKind | null>(null);
   const [feedback, setFeedback] = useState<{
@@ -375,7 +564,7 @@ function ProviderDetail({
   const needsSignIn = canSignIn && (provider.authenticated === false || !provider.installed);
   const connected =
     enabled && provider.installed && provider.authenticated !== false && !provider.problem;
-  const busy = busyKind === provider.kind;
+  const signingIn = busyKind === provider.kind;
   const shown = feedback?.kind === provider.kind ? feedback : null;
 
   const onSignIn = async () => {
@@ -419,8 +608,8 @@ function ProviderDetail({
             <button
               type="button"
               className={needsSignIn || !connected ? "button primary" : "ghost-button"}
-              disabled={busy}
-              aria-busy={busy}
+              disabled={signingIn}
+              aria-busy={signingIn}
               onClick={() => void onSignIn()}
             >
               {needsSignIn || !connected ? "Sign in" : "Sign in again"}
@@ -451,33 +640,13 @@ function ProviderDetail({
         </div>
       </div>
 
-      <div className="provider-detail-runtime">
-        <h5>Runtime</h5>
-        <SettingRow
-          title="Binary"
-          description="Wooky drives the CLI on your PATH. Install it, sign in, then refresh."
-        >
-          <code className="mono muted">{binaryHint(provider.kind)}</code>
-        </SettingRow>
-        <SettingRow
-          title="Models"
-          description={
-            provider.models.length > 0
-              ? "Models reported by this provider."
-              : "No models reported yet."
-          }
-        >
-          {provider.models.length > 0 ? (
-            <ul className="provider-model-list">
-              {provider.models.map((model) => (
-                <li key={model.id}>{model.label}</li>
-              ))}
-            </ul>
-          ) : (
-            <span className="muted">—</span>
-          )}
-        </SettingRow>
-      </div>
+      <ProviderSettingsPanel
+        kind={provider.kind}
+        status={provider}
+        settings={settings}
+        busy={busy}
+        onChange={onSettingsChange}
+      />
     </div>
   );
 }
@@ -510,23 +679,6 @@ function providerSummary(provider: ProviderStatus, enabled: boolean) {
     return { headline: "Authenticated", detail: null, tone: "ok" as const };
   }
   return { headline: "Installed", detail: null, tone: "ok" as const };
-}
-
-function binaryHint(kind: ProviderKind) {
-  switch (kind) {
-    case "claude":
-      return "claude";
-    case "codex":
-      return "codex";
-    case "cursor":
-      return "agent";
-    case "demo":
-      return "built-in";
-    case "opencode":
-      return "opencode";
-    case "acp":
-      return "configured command";
-  }
 }
 
 function ProjectsPage() {

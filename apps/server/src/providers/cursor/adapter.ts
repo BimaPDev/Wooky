@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ProviderEvent, ProviderStatus } from "@age/contracts";
+import type { ProviderEvent, ProviderSettings, ProviderStatus } from "@age/contracts";
 import { z } from "zod";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { fleetChildEnv, prefixSessionPrompt } from "../agent-env.ts";
+import { resolveLaunch, withUserEnv } from "../settings.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { createNdjsonSplitter } from "./ndjson.ts";
 import { isAuthFailure, parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
@@ -26,9 +27,16 @@ export const CURSOR_FAKE_AGENT_SCRIPT = join(
 export interface CursorAdapterOptions {
   cursorBin?: string;
   cursorArgsPrefix?: string[];
+  /**
+   * The user's settings for this provider, read at each probe and turn. `binaryPath` replaces
+   * `cursor-agent`. `extraArgs` go before the prompt on turns only (not on version, status or
+   * model-list probes). `env` is merged over the child environment.
+   */
+  settings?: () => ProviderSettings | undefined;
 }
 
 let modelsCache: {
+  key: string;
   at: number;
   models: Array<{ id: string; label: string }>;
 } | null = null;
@@ -41,11 +49,14 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
   const configuredPrefix = options.cursorArgsPrefix ?? [];
 
   const launch = () => {
-    const resolved = resolveCommand(configuredBin);
-    if (!resolved) return { bin: configuredBin, prefix: configuredPrefix };
+    const user = resolveLaunch(options.settings?.(), configuredBin, "Cursor Agent");
+    const resolved = resolveCommand(user.bin);
     return {
-      bin: resolved.command,
-      prefix: [...resolved.prefixArgs, ...configuredPrefix],
+      bin: resolved?.command ?? user.bin,
+      prefix: [...(resolved?.prefixArgs ?? []), ...configuredPrefix],
+      problem: user.problem,
+      extraArgs: user.extraArgs,
+      env: user.env,
     };
   };
 
@@ -60,15 +71,16 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
         authenticated: null,
         version: null,
         models: [{ id: "auto", label: "Auto" }],
+        modelsSource: "static",
         problem: null,
         capabilities: CAPABILITIES,
       };
 
-      const { bin: cursorBin, prefix: cursorArgsPrefix } = launch();
+      const { bin: cursorBin, prefix: cursorArgsPrefix, env } = launch();
 
       let version: string | null = null;
       try {
-        const probe = await runProbe(cursorBin, cursorArgsPrefix, ["--version"]);
+        const probe = await runProbe(cursorBin, cursorArgsPrefix, ["--version"], env);
         if (probe.timedOut) {
           return {
             ...base,
@@ -102,13 +114,13 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
 
       let authenticated: boolean | null = null;
       try {
-        const { stdout } = await runProbe(cursorBin, cursorArgsPrefix, ["status"]);
+        const { stdout } = await runProbe(cursorBin, cursorArgsPrefix, ["status"], env);
         authenticated = parseAuthFromStatus(stdout);
       } catch {
         authenticated = null;
       }
 
-      const listed = await listModels(cursorBin, cursorArgsPrefix);
+      const listed = await listModels(cursorBin, cursorArgsPrefix, env);
       if (listed.authFailed) authenticated = false;
       const models = listed.models;
 
@@ -124,40 +136,50 @@ export function createCursorAdapter(options: CursorAdapterOptions = {}): Provide
         authenticated,
         version,
         models,
+        modelsSource: listed.live ? "live" : "static",
         problem,
         capabilities: CAPABILITIES,
       };
     },
 
     runTurn(input: TurnInput): AsyncIterable<ProviderEvent> {
-      const { bin, prefix } = launch();
-      return runCursorTurn(bin, prefix, input);
+      const { bin, prefix, problem, extraArgs, env } = launch();
+      if (problem) return failedTurn(problem);
+      return runCursorTurn(bin, prefix, input, extraArgs, env);
     },
   };
+}
+
+async function* failedTurn(error: string): AsyncIterable<ProviderEvent> {
+  yield { type: "done", status: "failed", error };
 }
 
 async function listModels(
   cursorBin: string,
   prefix: string[],
-): Promise<{ models: Array<{ id: string; label: string }>; authFailed: boolean }> {
+  env: Readonly<Record<string, string>>,
+): Promise<{ models: Array<{ id: string; label: string }>; authFailed: boolean; live: boolean }> {
   const now = Date.now();
-  if (modelsCache && now - modelsCache.at < MODELS_CACHE_MS) {
-    return { models: modelsCache.models, authFailed: false };
+  const key = [cursorBin, ...prefix].join("\0");
+  if (modelsCache && modelsCache.key === key && now - modelsCache.at < MODELS_CACHE_MS) {
+    return { models: modelsCache.models, authFailed: false, live: true };
   }
   try {
-    const { stdout, stderr, code } = await runProbe(cursorBin, prefix, ["--list-models"]);
+    const { stdout, stderr, code } = await runProbe(cursorBin, prefix, ["--list-models"], env);
     if (code === 0) {
       const parsed = parseModelsFromList(stdout);
       if (parsed.length > 0) {
-        modelsCache = { at: now, models: parsed };
-        return { models: parsed, authFailed: false };
+        modelsCache = { key, at: now, models: parsed };
+        return { models: parsed, authFailed: false, live: true };
       }
     }
-    if (isAuthFailure(`${stdout}\n${stderr}`)) return { models: FALLBACK_MODELS, authFailed: true };
+    if (isAuthFailure(`${stdout}\n${stderr}`)) {
+      return { models: FALLBACK_MODELS, authFailed: true, live: false };
+    }
   } catch {
     // fall through
   }
-  return { models: FALLBACK_MODELS, authFailed: false };
+  return { models: FALLBACK_MODELS, authFailed: false, live: false };
 }
 
 const FALLBACK_MODELS = [{ id: "auto", label: "Auto" }];
@@ -173,11 +195,13 @@ export function runProbe(
   cursorBin: string,
   prefix: string[],
   args: string[],
+  env: Readonly<Record<string, string>> = {},
 ): Promise<ProbeResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(cursorBin, [...prefix, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      ...(Object.keys(env).length > 0 ? { env: withUserEnv(env) } : {}),
     });
     let stdout = "";
     let stderr = "";
@@ -209,6 +233,8 @@ async function* runCursorTurn(
   cursorBin: string,
   prefix: string[],
   input: TurnInput,
+  extraArgs: readonly string[],
+  userEnv: Readonly<Record<string, string>>,
 ): AsyncIterable<ProviderEvent> {
   if (input.runtimeMode === "approve" || input.runtimeMode === "auto-edits") {
     yield {
@@ -255,6 +281,7 @@ async function* runCursorTurn(
     input.model,
     ...(input.resumeSessionId ? ["--resume", input.resumeSessionId] : []),
     ...(input.runtimeMode === "full" ? ["--force"] : []),
+    ...extraArgs,
     prompt,
   ];
 
@@ -262,7 +289,7 @@ async function* runCursorTurn(
   try {
     child = spawn(cursorBin, argv, {
       cwd: input.cwd,
-      env: fleetChildEnv(input.threadId),
+      env: fleetChildEnv(input.threadId, withUserEnv(userEnv)),
       stdio: ["ignore", "pipe", "pipe"],
       // On Windows `detached` opens a new console window; process groups are POSIX-only.
       detached: process.platform !== "win32",
