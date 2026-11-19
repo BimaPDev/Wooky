@@ -160,89 +160,363 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+const ACCOUNT_CACHE_NAME = "usage-cursor-account-cache-v2.json";
+const MAX_IDE_DB_BYTES = 64 * 1024 * 1024;
+
+function accountCachePaths(ctx: HistoryReaderContext): string[] {
+  const dirs: string[] = [];
+  const seen = new Set<string>();
+  const add = (dir: string) => {
+    if (dir === "" || seen.has(dir)) return;
+    seen.add(dir);
+    dirs.push(dir);
+  };
+  const ageHome = ctx.env["AGE_HOME"]?.trim();
+  if (ageHome && path.isAbsolute(ageHome)) add(ageHome);
+  add(path.join(ctx.homeDir, ".t3", "userdata"));
+  add(path.join(ctx.homeDir, ".age"));
+  return dirs.map((dir) => path.join(dir, ACCOUNT_CACHE_NAME));
+}
+
+function interned(strings: readonly string[], value: unknown): string | null {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value < strings.length
+  ) {
+    const resolved = strings[value];
+    return typeof resolved === "string" && resolved.length > 0 ? resolved : null;
+  }
+  return null;
+}
+
+function reportedCost(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function fingerprintKey(
+  model: string,
+  at: number,
+  input: number,
+  cacheRead: number,
+  cacheWrite: number,
+  output: number,
+): string {
+  return `cursor:${Math.round(at / 1000)}:${model}:${input}:${cacheRead}:${cacheWrite}:${output}`;
+}
+
+/** Cursor billed-account cache (version 2). Model and session ids may be interned. */
+export function decodeCursorAccountCache(
+  raw: unknown,
+  sinceMs: number,
+  untilMs: number,
+): HistoryRecord[] {
+  if (typeof raw !== "object" || raw === null) return [];
+  const root = raw as Record<string, unknown>;
+  if (root["version"] !== 2) return [];
+  const strings = Array.isArray(root["strings"])
+    ? root["strings"].filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const accounts = root["accounts"];
+  if (typeof accounts !== "object" || accounts === null) return [];
+  const records: HistoryRecord[] = [];
+  for (const account of Object.values(accounts as Record<string, unknown>)) {
+    if (typeof account !== "object" || account === null) continue;
+    const rows = (account as Record<string, unknown>)["records"];
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 8) continue;
+      const at = parseTimestamp(row[0]);
+      const model = interned(strings, row[1]) ?? "default";
+      const session = interned(strings, row[2]) ?? model;
+      const input = tokenCount(row[3]);
+      const cacheRead = tokenCount(row[4]);
+      const cacheWrite = tokenCount(row[5]);
+      const output = tokenCount(row[6]);
+      const cost = reportedCost(row[7]);
+      const explicitKey = interned(strings, row[8]);
+      if (
+        at === null ||
+        input === null ||
+        cacheRead === null ||
+        cacheWrite === null ||
+        output === null
+      ) {
+        continue;
+      }
+      if (at < sinceMs || at >= untilMs) continue;
+      if (input + cacheRead + cacheWrite + output === 0 && cost === undefined) continue;
+      records.push({
+        origin: "cursor",
+        model,
+        sessionKey: session,
+        at,
+        inputTokens: input,
+        cacheReadTokens: cacheRead,
+        cacheWriteTokens: cacheWrite,
+        outputTokens: output,
+        ...(cost === undefined ? {} : { reportedCostUsd: cost }),
+        dedupeKey: explicitKey ?? fingerprintKey(model, at, input, cacheRead, cacheWrite, output),
+      });
+    }
+  }
+  return records;
+}
+
+function ideDatabasePaths(homeDir: string): string[] {
+  return [
+    path.join(
+      homeDir,
+      "Library",
+      "Application Support",
+      "Cursor",
+      "User",
+      "globalStorage",
+      "state.vscdb",
+    ),
+    path.join(homeDir, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
+    path.join(homeDir, "AppData", "Roaming", "Cursor", "User", "globalStorage", "state.vscdb"),
+  ];
+}
+
+const IDE_BUBBLE_SQL =
+  "SELECT key, json_extract(value, '$.tokenCount.inputTokens') AS input, json_extract(value, '$.tokenCount.outputTokens') AS output, json_extract(value, '$.tokenCount.cacheReadTokens') AS cache_read, json_extract(value, '$.tokenCount.cacheWriteTokens') AS cache_write, json_extract(value, '$.createdAt') AS created_at, json_extract(value, '$.modelInfo.modelName') AS model FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'";
+
+export function readCursorIdeDatabase(
+  db: ReadOnlyDb,
+  sinceMs: number,
+  untilMs: number,
+): { records: HistoryRecord[]; skipped: number } {
+  const tables = new Set(
+    db
+      .all("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .flatMap((row) => (typeof row["name"] === "string" ? [row["name"]] : [])),
+  );
+  if (!tables.has("cursorDiskKV")) return { records: [], skipped: 0 };
+  const records: HistoryRecord[] = [];
+  let skipped = 0;
+  for (const row of db.all(IDE_BUBBLE_SQL)) {
+    const key = text(row["key"]);
+    const at = parseTimestamp(row["created_at"]);
+    const input = tokenCount(row["input"]);
+    const output = tokenCount(row["output"]);
+    const cacheRead = tokenCount(row["cache_read"]);
+    const cacheWrite = tokenCount(row["cache_write"]);
+    if (key === null || at === null || input === null || output === null) {
+      skipped += 1;
+      continue;
+    }
+    const read = cacheRead ?? 0;
+    const write = cacheWrite ?? 0;
+    if (input + output + read + write === 0) continue;
+    if (at < sinceMs || at >= untilMs) continue;
+    const session = key.split(":")[1] ?? key;
+    const model = text(row["model"]) ?? "default";
+    records.push({
+      origin: "cursor",
+      model,
+      sessionKey: session,
+      at,
+      inputTokens: input,
+      cacheReadTokens: read,
+      cacheWriteTokens: write,
+      outputTokens: output,
+      dedupeKey: fingerprintKey(model, at, input, read, write, output),
+    });
+  }
+  return { records, skipped };
+}
+
 export function createCursorHistoryReader(options: CursorReaderOptions = {}): HistoryReader {
   const openDatabase = options.openDatabase ?? openReadOnlyDatabase;
   return {
     origin: "cursor",
     async read(ctx: HistoryReaderContext) {
-      const root = path.join(ctx.homeDir, ".cursor", "projects");
-      let found: Awaited<ReturnType<typeof findIndexDatabases>>;
-      try {
-        found = await findIndexDatabases(ctx.fs, root, ctx.signal);
-      } catch (error) {
-        return {
-          records: [],
-          report: {
-            origin: "cursor",
-            status: isMissingError(error) ? "missing" : "failed",
-            files: 0,
-            note: isMissingError(error)
-              ? "No Cursor project history found."
-              : "Cursor project history could not be listed.",
-          } satisfies HistorySourceReport,
-        };
-      }
-
-      const cutoff = ctx.sinceMs - ImportTuning.mtimeSlackMs;
-      const candidates = found.files
-        .filter((file) => file.mtimeMs >= cutoff)
-        .sort((a, b) => b.mtimeMs - a.mtimeMs);
-      const truncated = candidates.length > ImportTuning.filesPerScan;
       const records: HistoryRecord[] = [];
+      const notes: string[] = [];
       let scanned = 0;
-      let unreadable = found.failed;
+      let unreadable = 0;
       let skippedRows = 0;
       let drift = 0;
+      let sawSource = false;
 
-      for (const file of candidates.slice(0, ImportTuning.filesPerScan)) {
+      for (const cachePath of accountCachePaths(ctx)) {
         if (ctx.signal.aborted) break;
+        let stat;
+        try {
+          stat = await ctx.fs.stat(cachePath);
+        } catch (error) {
+          if (!isMissingError(error)) unreadable += 1;
+          continue;
+        }
+        if (!stat.isFile()) continue;
+        sawSource = true;
+        try {
+          const parsed: unknown = JSON.parse(
+            new TextDecoder().decode(await ctx.fs.readFile(cachePath)),
+          );
+          const billed = decodeCursorAccountCache(parsed, ctx.sinceMs, ctx.untilMs);
+          records.push(...billed);
+          scanned += 1;
+        } catch {
+          unreadable += 1;
+        }
+      }
+
+      const billedFingerprints = new Set(
+        records.map((record) =>
+          fingerprintKey(
+            record.model,
+            record.at,
+            record.inputTokens,
+            record.cacheReadTokens,
+            record.cacheWriteTokens,
+            record.outputTokens,
+          ),
+        ),
+      );
+      const billedSessions = new Set(records.map((record) => record.sessionKey));
+      const localNeeded = billedFingerprints.size === 0;
+
+      const root = path.join(ctx.homeDir, ".cursor", "projects");
+      let found: Awaited<ReturnType<typeof findIndexDatabases>> | null = null;
+      if (localNeeded) {
+        try {
+          found = await findIndexDatabases(ctx.fs, root, ctx.signal);
+          sawSource = true;
+        } catch (error) {
+          if (!isMissingError(error)) {
+            unreadable += 1;
+            notes.push("Cursor project history could not be listed.");
+          }
+        }
+      }
+
+      if (localNeeded && found !== null) {
+        unreadable += found.failed;
+        const cutoff = ctx.sinceMs - ImportTuning.mtimeSlackMs;
+        const candidates = found.files
+          .filter((file) => file.mtimeMs >= cutoff)
+          .sort((a, b) => b.mtimeMs - a.mtimeMs);
+        if (candidates.length > ImportTuning.filesPerScan) {
+          notes.push("Some Cursor databases were left out to bound the scan.");
+        }
+        for (const file of candidates.slice(0, ImportTuning.filesPerScan)) {
+          if (ctx.signal.aborted) break;
+          let db: ReadOnlyDb;
+          try {
+            db = openDatabase(file.path);
+          } catch {
+            unreadable += 1;
+            continue;
+          }
+          try {
+            const columns = new Set(
+              db.all("PRAGMA table_info(runs)").flatMap((row) => {
+                const name = text(row["name"]);
+                return name === null ? [] : [name];
+              }),
+            );
+            const plan = planRunsQuery(columns);
+            if (plan === null) {
+              unreadable += 1;
+              continue;
+            }
+            scanned += 1;
+            for (const row of db.all(plan)) {
+              if (ctx.signal.aborted) break;
+              const at = parseTimestamp(row["ts"]);
+              const usage = readUsage(row["usage_json"]);
+              const session = text(row["agent_id"]) ?? text(row["run_id"]);
+              if (usage === "drift") {
+                drift += 1;
+                continue;
+              }
+              if (at === null || usage === null || session === null) {
+                skippedRows += 1;
+                continue;
+              }
+              if (at < ctx.sinceMs || at >= ctx.untilMs) continue;
+              const model = text(row["model"]) ?? "default";
+              const inputTokens = Math.max(0, usage.input - usage.cacheRead - usage.cacheWrite);
+              const runId = text(row["run_id"]);
+              const shared = fingerprintKey(
+                model,
+                at,
+                inputTokens,
+                usage.cacheRead,
+                usage.cacheWrite,
+                usage.output,
+              );
+              if (billedFingerprints.has(shared) || billedSessions.has(session)) continue;
+              const record: HistoryRecord = {
+                origin: "cursor",
+                model,
+                sessionKey: session,
+                at,
+                inputTokens,
+                cacheReadTokens: usage.cacheRead,
+                cacheWriteTokens: usage.cacheWrite,
+                outputTokens: usage.output,
+                dedupeKey: runId === null ? shared : `cursor:${runId}`,
+              };
+              if (usage.reasoning > 0) record.reasoningTokens = usage.reasoning;
+              records.push(record);
+            }
+          } catch {
+            unreadable += 1;
+          } finally {
+            try {
+              db.close();
+            } catch {
+              // Closing a read-only handle failing changes nothing for the scan.
+            }
+          }
+        }
+      }
+
+      for (const idePath of localNeeded ? ideDatabasePaths(ctx.homeDir) : []) {
+        if (ctx.signal.aborted) break;
+        let stat;
+        try {
+          stat = await ctx.fs.stat(idePath);
+        } catch (error) {
+          if (!isMissingError(error)) unreadable += 1;
+          continue;
+        }
+        if (!stat.isFile()) continue;
+        sawSource = true;
+        if (stat.size > MAX_IDE_DB_BYTES) continue;
         let db: ReadOnlyDb;
         try {
-          db = openDatabase(file.path);
+          db = openDatabase(idePath);
         } catch {
           unreadable += 1;
           continue;
         }
         try {
-          const columns = new Set(
-            db.all("PRAGMA table_info(runs)").flatMap((row) => {
-              const name = text(row["name"]);
-              return name === null ? [] : [name];
-            }),
-          );
-          const plan = planRunsQuery(columns);
-          if (plan === null) {
-            unreadable += 1;
-            continue;
-          }
+          const ide = readCursorIdeDatabase(db, ctx.sinceMs, ctx.untilMs);
+          skippedRows += ide.skipped;
           scanned += 1;
-          for (const row of db.all(plan)) {
-            if (ctx.signal.aborted) break;
-            const at = parseTimestamp(row["ts"]);
-            const usage = readUsage(row["usage_json"]);
-            const session = text(row["agent_id"]) ?? text(row["run_id"]);
-            if (usage === "drift") {
-              drift += 1;
+          for (const record of ide.records) {
+            if (
+              billedFingerprints.has(
+                fingerprintKey(
+                  record.model,
+                  record.at,
+                  record.inputTokens,
+                  record.cacheReadTokens,
+                  record.cacheWriteTokens,
+                  record.outputTokens,
+                ),
+              ) ||
+              billedSessions.has(record.sessionKey)
+            ) {
               continue;
             }
-            if (at === null || usage === null || session === null) {
-              skippedRows += 1;
-              continue;
-            }
-            if (at < ctx.sinceMs || at >= ctx.untilMs) continue;
-            const runId = text(row["run_id"]);
-            records.push({
-              origin: "cursor",
-              model: text(row["model"]) ?? "default",
-              sessionKey: session,
-              at,
-              inputTokens: Math.max(0, usage.input - usage.cacheRead - usage.cacheWrite),
-              cacheReadTokens: usage.cacheRead,
-              cacheWriteTokens: usage.cacheWrite,
-              outputTokens: usage.output,
-              ...(usage.reasoning > 0 ? { reasoningTokens: usage.reasoning } : {}),
-              ...(runId === null ? {} : { dedupeKey: `cursor:${runId}` }),
-            });
+            records.push(record);
           }
         } catch {
           unreadable += 1;
@@ -255,13 +529,22 @@ export function createCursorHistoryReader(options: CursorReaderOptions = {}): Hi
         }
       }
 
-      const notes: string[] = [];
       if (ctx.signal.aborted) notes.push("Scan was cancelled.");
       if (unreadable > 0) notes.push(`${unreadable} Cursor databases could not be read.`);
       if (skippedRows > 0) notes.push(`${skippedRows} runs had unreadable usage.`);
       if (drift > 0)
         notes.push(`${drift} runs used an unrecognised token layout and were skipped.`);
-      if (truncated) notes.push("Some Cursor databases were left out to bound the scan.");
+      if (!sawSource) {
+        return {
+          records: [],
+          report: {
+            origin: "cursor",
+            status: "missing",
+            files: 0,
+            note: "No Cursor project history found.",
+          } satisfies HistorySourceReport,
+        };
+      }
       return {
         records,
         report: {

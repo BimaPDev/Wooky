@@ -15,7 +15,7 @@ export const RETENTION_MS = 92 * 24 * 60 * 60 * 1000;
 /** A cache file above this is treated as corrupt and rebuilt, not parsed. */
 export const MAX_CACHE_BYTES = 128 * 1024 * 1024;
 
-const ORIGINS: readonly Origin[] = ["claude", "cursor", "codex", "opencode"];
+const ORIGINS: readonly Origin[] = ["claude", "cursor", "codex", "opencode", "antigravity"];
 const STATUSES = new Set<string>(["ok", "partial", "missing", "failed"]);
 
 /**
@@ -167,6 +167,7 @@ type Tuple = [
   reasoning: number | null,
   reportedCostUsd: number | null,
   dedupeKey: string | null,
+  cacheWrite1h: number | null,
 ];
 
 const encodeRecord = (r: HistoryRecord): Tuple => [
@@ -180,6 +181,7 @@ const encodeRecord = (r: HistoryRecord): Tuple => [
   r.reasoningTokens ?? null,
   r.reportedCostUsd ?? null,
   r.dedupeKey ?? null,
+  r.cacheWrite1hTokens ?? null,
 ];
 
 const isNumber = (value: unknown): value is number =>
@@ -189,9 +191,20 @@ const isNullableString = (value: unknown) => value === null || typeof value === 
 
 /** Hand-checked rather than zod: a cache holds hundreds of thousands of rows. */
 function decodeRecord(origin: Origin, value: unknown): HistoryRecord | null {
-  if (!Array.isArray(value) || value.length !== 10) return null;
-  const [at, model, sessionKey, input, cacheRead, cacheWrite, output, reasoning, reported, key] =
-    value as unknown[];
+  if (!Array.isArray(value) || (value.length !== 10 && value.length !== 11)) return null;
+  const [
+    at,
+    model,
+    sessionKey,
+    input,
+    cacheRead,
+    cacheWrite,
+    output,
+    reasoning,
+    reported,
+    key,
+    cacheWrite1h,
+  ] = value as unknown[];
   if (
     !isNumber(at) ||
     typeof model !== "string" ||
@@ -202,7 +215,8 @@ function decodeRecord(origin: Origin, value: unknown): HistoryRecord | null {
     !isNumber(output) ||
     !isNullableNumber(reasoning) ||
     !isNullableNumber(reported) ||
-    !isNullableString(key)
+    !isNullableString(key) ||
+    (value.length === 11 && !isNullableNumber(cacheWrite1h))
   )
     return null;
   const record: HistoryRecord = {
@@ -218,6 +232,7 @@ function decodeRecord(origin: Origin, value: unknown): HistoryRecord | null {
   if (typeof reasoning === "number") record.reasoningTokens = reasoning;
   if (typeof reported === "number") record.reportedCostUsd = reported;
   if (typeof key === "string") record.dedupeKey = key;
+  if (typeof cacheWrite1h === "number") record.cacheWrite1hTokens = cacheWrite1h;
   return record;
 }
 

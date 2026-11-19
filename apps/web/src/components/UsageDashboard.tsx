@@ -11,6 +11,7 @@ import { visibleCostSegments } from "../lib/usage-cost-by-type.ts";
 import {
   USAGE_SERIES_ORDER,
   collectTurnRows,
+  providerForOrigin,
   turnProvidersFromSources,
   usesImportedHistory,
   type UsageSeriesId,
@@ -48,6 +49,7 @@ const SERIES_META: Record<
   claude: { label: "Claude Code", color: "var(--usage-claude)", markClass: "claude" },
   cursor: { label: "Cursor", color: "var(--usage-cursor)", markClass: "cursor" },
   opencode: { label: "OpenCode", color: "var(--text)" },
+  antigravity: { label: "Antigravity", color: "var(--usage-antigravity)" },
   demo: { label: "Demo", color: "var(--accent)", markClass: "demo" },
 };
 
@@ -331,7 +333,12 @@ export function UsageDashboard() {
 function hiddenFromSeries(hidden: ReadonlySet<UsageSeriesId>): ReadonlySet<ProviderKind> {
   const out = new Set<ProviderKind>();
   for (const id of hidden) {
-    if (id !== "opencode") out.add(id);
+    if (id === "demo") {
+      out.add("demo");
+      continue;
+    }
+    const provider = providerForOrigin(id);
+    if (provider !== null) out.add(provider);
   }
   return out;
 }

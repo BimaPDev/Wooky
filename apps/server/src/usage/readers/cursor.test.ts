@@ -1,7 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import type { HistoryFs, HistoryReaderContext } from "../history-reader.ts";
-import { createCursorHistoryReader, cursorHistoryReader, type ReadOnlyDb } from "./cursor.ts";
+import {
+  createCursorHistoryReader,
+  cursorHistoryReader,
+  decodeCursorAccountCache,
+  readCursorIdeDatabase,
+  type ReadOnlyDb,
+} from "./cursor.ts";
 
 const HOME = "/home/tester";
 const DB = `${HOME}/.cursor/projects/alpha/index.db`;
@@ -10,7 +16,10 @@ const NOW = Date.parse("2026-06-10T12:00:00.000Z");
 const SECRET_PROMPT = "FAKE-PROMPT-please-refactor-the-billing-module";
 const SECRET_KEY = "FAKE-CREDENTIAL-sk-live-000";
 
-function fakeFs(files: Record<string, number>): HistoryFs {
+function fakeFs(
+  files: Record<string, number>,
+  extras: { bodies?: Record<string, string | Uint8Array>; sizes?: Record<string, number> } = {},
+): HistoryFs {
   const dirs = new Map<string, Set<string>>();
   const add = (parent: string, child: string) => {
     const names = dirs.get(parent) ?? new Set<string>();
@@ -27,7 +36,12 @@ function fakeFs(files: Record<string, number>): HistoryFs {
     throw Object.assign(new Error("gone"), { code: "ENOENT" });
   };
   return {
-    readFile: async () => new Uint8Array(),
+    readFile: async (target) => {
+      const body = extras.bodies?.[target];
+      if (typeof body === "string") return new TextEncoder().encode(body);
+      if (body !== undefined) return body;
+      return new Uint8Array();
+    },
     readdir: async (dir) => {
       const names = dirs.get(dir);
       return names ? [...names] : missing();
@@ -35,7 +49,15 @@ function fakeFs(files: Record<string, number>): HistoryFs {
     stat: async (target) => {
       const mtimeMs = files[target];
       if (mtimeMs !== undefined) {
-        return { size: 1, mtimeMs, isFile: () => true, isDirectory: () => false };
+        const body = extras.bodies?.[target];
+        const fromBody =
+          typeof body === "string" ? body.length : body !== undefined ? body.byteLength : 1;
+        return {
+          size: extras.sizes?.[target] ?? fromBody,
+          mtimeMs,
+          isFile: () => true,
+          isDirectory: () => false,
+        };
       }
       if (dirs.has(target)) {
         return { size: 0, mtimeMs: NOW, isFile: () => false, isDirectory: () => true };
@@ -289,5 +311,166 @@ describe("cursor history reader", () => {
     const queries = sql.join("\n");
     expect(queries).not.toMatch(/\*|result|model_params_json|credentials|token\b/i);
     expect(queries).toContain("usage_json");
+  });
+
+  it("reads billed account cache records and keeps the reported cost", async () => {
+    const cachePath = `${HOME}/.t3/userdata/${"usage-cursor-account-cache-v2.json"}`;
+    const at = NOW - DAY;
+    const body = JSON.stringify({
+      version: 2,
+      strings: ["composer-2.5", "sess-billed"],
+      accounts: {
+        acct: {
+          records: [[at, 0, 1, 100, 200, 10, 20, 1.5, "cursor:evt-1"]],
+        },
+      },
+    });
+    const reader = createCursorHistoryReader({
+      openDatabase: () => {
+        throw new Error("should not open local databases when billed records exist");
+      },
+    });
+    const result = await reader.read(
+      ctx(fakeFs({ [cachePath]: NOW, [DB]: NOW }, { bodies: { [cachePath]: body } })),
+    );
+    expect(result.report.status).toBe("ok");
+    expect(result.records).toEqual([
+      {
+        origin: "cursor",
+        model: "composer-2.5",
+        sessionKey: "sess-billed",
+        at,
+        inputTokens: 100,
+        cacheReadTokens: 200,
+        cacheWriteTokens: 10,
+        outputTokens: 20,
+        reportedCostUsd: 1.5,
+        dedupeKey: "cursor:evt-1",
+      },
+    ]);
+  });
+
+  it("skips project runs that duplicate a billed session", async () => {
+    const cachePath = `${HOME}/.t3/userdata/${"usage-cursor-account-cache-v2.json"}`;
+    const at = NOW - DAY;
+    const body = JSON.stringify({
+      version: 2,
+      strings: ["gpt-5", "a1"],
+      accounts: {
+        acct: {
+          records: [[at, 0, 1, 300, 600, 100, 200, 0.4]],
+        },
+      },
+    });
+    const { db } = runsDb([
+      { run_id: "r1", agent_id: "a1", model: "gpt-5", started_at: inWindow, usage },
+    ]);
+    const reader = createCursorHistoryReader({ openDatabase: () => db });
+    const { records } = await reader.read(
+      ctx(fakeFs({ [cachePath]: NOW, [DB]: NOW }, { bodies: { [cachePath]: body } })),
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]?.reportedCostUsd).toBe(0.4);
+    expect(records[0]?.sessionKey).toBe("a1");
+  });
+
+  it("reads composer bubbles from a small IDE database", async () => {
+    const ide = `${HOME}/Library/Application Support/Cursor/User/globalStorage/state.vscdb`;
+    const raw = new DatabaseSync(":memory:");
+    raw.exec("CREATE TABLE cursorDiskKV (key TEXT, value TEXT)");
+    raw.prepare("INSERT INTO cursorDiskKV VALUES (?, ?)").run(
+      "bubbleId:composer-1:bubble-1",
+      JSON.stringify({
+        tokenCount: { inputTokens: 12, outputTokens: 3, cacheReadTokens: 4, cacheWriteTokens: 1 },
+        createdAt: NOW - DAY,
+        modelInfo: { modelName: "composer-2.5" },
+        text: "FAKE-PROMPT-please-ignore",
+      }),
+    );
+    raw.prepare("INSERT INTO cursorDiskKV VALUES (?, ?)").run(
+      "bubbleId:composer-1:empty",
+      JSON.stringify({
+        tokenCount: { inputTokens: 0, outputTokens: 0 },
+        createdAt: NOW - DAY,
+        modelInfo: { modelName: "composer-2.5" },
+      }),
+    );
+    const sql: string[] = [];
+    const db: ReadOnlyDb = {
+      all: (query, params = []) => {
+        sql.push(query);
+        return raw.prepare(query).all(...(params ?? [])) as Record<string, unknown>[];
+      },
+      close: () => raw.close(),
+    };
+    const ideRows = readCursorIdeDatabase(db, NOW - 7 * DAY, NOW + DAY);
+    expect(ideRows.records).toEqual([
+      {
+        origin: "cursor",
+        model: "composer-2.5",
+        sessionKey: "composer-1",
+        at: NOW - DAY,
+        inputTokens: 12,
+        cacheReadTokens: 4,
+        cacheWriteTokens: 1,
+        outputTokens: 3,
+        dedupeKey: `cursor:${Math.round((NOW - DAY) / 1000)}:composer-2.5:12:4:1:3`,
+      },
+    ]);
+    const reader = createCursorHistoryReader({ openDatabase: () => db });
+    const result = await reader.read(ctx(fakeFs({ [ide]: NOW })));
+    expect(result.records).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain("FAKE-PROMPT-please-ignore");
+    expect(sql.join("\n")).not.toMatch(/\*|text|prompt/i);
+  });
+
+  it("does not open an oversized IDE database", async () => {
+    const ide = `${HOME}/Library/Application Support/Cursor/User/globalStorage/state.vscdb`;
+    const reader = createCursorHistoryReader({
+      openDatabase: () => {
+        throw new Error("should not open a huge IDE database");
+      },
+    });
+    const result = await reader.read(
+      ctx(fakeFs({ [ide]: NOW }, { sizes: { [ide]: 65 * 1024 * 1024 } })),
+    );
+    expect(result.records).toEqual([]);
+    expect(result.report.status).toBe("ok");
+  });
+});
+
+describe("decodeCursorAccountCache", () => {
+  it("resolves interned strings and drops zero-token rows without cost", () => {
+    const at = NOW - DAY;
+    const records = decodeCursorAccountCache(
+      {
+        version: 2,
+        strings: ["default", "sess-z"],
+        accounts: {
+          a: {
+            records: [
+              [at, 0, 1, 0, 0, 0, 0, 0],
+              [at, 0, 1, 1, 0, 0, 0, 0.2, "k"],
+            ],
+          },
+        },
+      },
+      NOW - 7 * DAY,
+      NOW + DAY,
+    );
+    expect(records).toEqual([
+      {
+        origin: "cursor",
+        model: "default",
+        sessionKey: "sess-z",
+        at,
+        inputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 0,
+        reportedCostUsd: 0.2,
+        dedupeKey: "k",
+      },
+    ]);
   });
 });

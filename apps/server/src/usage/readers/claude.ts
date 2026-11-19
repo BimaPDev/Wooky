@@ -73,6 +73,8 @@ function parseAssistantLine(line: string, sinceMs: number, untilMs: number): His
 
   const cost = entry.costUSD;
   const reportedCostUsd = typeof cost === "number" && Number.isFinite(cost) ? cost : undefined;
+  const cacheWrite = tokenCount(usageRecord.cache_creation_input_tokens);
+  const cacheWrite1h = cacheWrite1hTokens(usageRecord.cache_creation, cacheWrite);
 
   return {
     origin: "claude",
@@ -81,11 +83,19 @@ function parseAssistantLine(line: string, sinceMs: number, untilMs: number): His
     at,
     inputTokens: tokenCount(usageRecord.input_tokens),
     cacheReadTokens: tokenCount(usageRecord.cache_read_input_tokens),
-    cacheWriteTokens: tokenCount(usageRecord.cache_creation_input_tokens),
+    cacheWriteTokens: Math.max(cacheWrite, cacheWrite1h),
+    ...(cacheWrite1h > 0 ? { cacheWrite1hTokens: cacheWrite1h } : {}),
     outputTokens: tokenCount(usageRecord.output_tokens),
     reportedCostUsd,
     dedupeKey: buildDedupeKey(messageId, requestId),
   };
+}
+
+function cacheWrite1hTokens(split: unknown, cacheWrite: number): number {
+  if (typeof split !== "object" || split === null || Array.isArray(split)) return 0;
+  const tokens = tokenCount((split as Record<string, unknown>).ephemeral_1h_input_tokens);
+  if (tokens <= 0) return 0;
+  return cacheWrite > 0 ? Math.min(tokens, cacheWrite) : tokens;
 }
 
 function isEnoent(error: unknown): boolean {

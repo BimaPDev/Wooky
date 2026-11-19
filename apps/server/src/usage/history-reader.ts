@@ -13,6 +13,8 @@ export interface HistoryRecord {
   inputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** 1-hour cache writes included in `cacheWriteTokens`. Priced higher than 5-minute writes. */
+  cacheWrite1hTokens?: number;
   outputTokens: number;
   reasoningTokens?: number;
   reportedCostUsd?: number;

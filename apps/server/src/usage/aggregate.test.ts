@@ -75,6 +75,14 @@ describe("dedupeRecords", () => {
     dedupeRecords([first, rec({ dedupeKey: "m", outputTokens: 9 })]);
     expect(first.outputTokens).toBe(1);
   });
+
+  it("keeps the max 1-hour cache-write split", () => {
+    const out = dedupeRecords([
+      rec({ dedupeKey: "m", cacheWriteTokens: 10, cacheWrite1hTokens: 4 }),
+      rec({ dedupeKey: "m", cacheWriteTokens: 12, cacheWrite1hTokens: 9 }),
+    ]);
+    expect(out[0]).toMatchObject({ cacheWriteTokens: 12, cacheWrite1hTokens: 9 });
+  });
 });
 
 describe("window filter", () => {
@@ -206,6 +214,13 @@ describe("buckets", () => {
     expect(unknown).toMatchObject({ records: 2, unpricedRecords: 1 });
     expect(unknown?.costUsd).toBeCloseTo(0.25, 9);
     expect(unknown?.costByType.other).toBeCloseTo(0.25, 9);
+  });
+
+  it("prices 1-hour cache writes at 2x input when the table has no 1h rate", () => {
+    const { buckets } = run([
+      rec({ inputTokens: 0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 1_000_000 }),
+    ]);
+    expect(buckets[0]?.costByType.cacheWrite).toBeCloseTo(2, 9);
   });
 
   it("counts distinct sessions per origin over the window and never returns keys", () => {

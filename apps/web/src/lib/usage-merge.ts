@@ -14,6 +14,7 @@ export const USAGE_SERIES_ORDER: UsageSeriesId[] = [
   "claude",
   "cursor",
   "opencode",
+  "antigravity",
   "demo",
 ];
 

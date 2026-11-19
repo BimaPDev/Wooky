@@ -820,6 +820,7 @@ describe("usage.history service", () => {
       ["cursor", "disabled", false],
       ["codex", "disabled", false],
       ["opencode", "disabled", false],
+      ["antigravity", "disabled", false],
     ]);
     expect(host.requests).toEqual([]);
     expect(fakeReaderRuns.size).toBe(0);

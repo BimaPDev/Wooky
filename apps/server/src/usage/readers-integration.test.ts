@@ -33,7 +33,7 @@ const RATES = Object.fromEntries(
 );
 
 const EXPECTED: Record<
-  Origin,
+  Exclude<Origin, "antigravity">,
   {
     inputTokens: number;
     cacheReadTokens: number;

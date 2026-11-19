@@ -108,6 +108,7 @@ describe("collectTurnRows", () => {
 describe("providerForOrigin", () => {
   it("maps opencode to no provider kind", () => {
     expect(providerForOrigin("opencode")).toBeNull();
+    expect(providerForOrigin("antigravity")).toBeNull();
     expect(providerForOrigin("claude")).toBe("claude");
   });
 });

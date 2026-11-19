@@ -11,6 +11,8 @@ export interface ModelRate {
   output: number;
   cacheRead?: number;
   cacheWrite?: number;
+  /** 1-hour cache writes. Falls back to 2× input, then `cacheWrite`. */
+  cacheWrite1h?: number;
 }
 
 /** Keyed by `normalizeModelId`. Plain data, so it can cross to the worker. */
@@ -35,6 +37,7 @@ export type Pricer = (
   cacheWriteTokens: number,
   outputTokens: number,
   reportedCostUsd: number | undefined,
+  cacheWrite1hTokens?: number,
 ) => Priced;
 
 const LITELLM_URL =
@@ -97,6 +100,10 @@ export function normalizeModelId(raw: string): string {
   id = id.replace(/-\d{8}$/, "");
   id = id.replace(/-latest$/, "");
   if (id.startsWith("claude")) id = id.replace(/(\d)\.(\d)/g, "$1-$2");
+  id = id.replace(/^cursor-/, "");
+  id = id.replace(/-thinking(?=-|$)/g, "");
+  id = id.replace(/-(?:none|minimal|low|medium|high|xhigh|max)(?:-fast)?$/, "");
+  id = id.replace(/-fast$/, "");
   return ALIASES[id] ?? id;
 }
 
@@ -107,10 +114,17 @@ function lookupRate(table: RateTable, model: string): ModelRate | undefined {
   return Object.hasOwn(table, plain) ? table[plain] : undefined;
 }
 
-const perMillion = (input: number, output: number, cacheRead?: number, cacheWrite?: number) => {
+const perMillion = (
+  input: number,
+  output: number,
+  cacheRead?: number,
+  cacheWrite?: number,
+  cacheWrite1h?: number,
+) => {
   const rate: ModelRate = { input: input / 1e6, output: output / 1e6 };
   if (cacheRead !== undefined) rate.cacheRead = cacheRead / 1e6;
   if (cacheWrite !== undefined) rate.cacheWrite = cacheWrite / 1e6;
+  if (cacheWrite1h !== undefined) rate.cacheWrite1h = cacheWrite1h / 1e6;
   return rate;
 };
 
@@ -119,15 +133,15 @@ const perMillion = (input: number, output: number, cacheRead?: number, cacheWrit
  * overrides it whenever one is available. Models missing here price as unknown.
  */
 export const BUNDLED_RATES: RateTable = {
-  "claude-opus-4-5": perMillion(5, 25, 0.5, 6.25),
-  "claude-opus-4-1": perMillion(15, 75, 1.5, 18.75),
-  "claude-opus-4": perMillion(15, 75, 1.5, 18.75),
-  "claude-sonnet-4-5": perMillion(3, 15, 0.3, 3.75),
-  "claude-sonnet-4": perMillion(3, 15, 0.3, 3.75),
-  "claude-3-7-sonnet": perMillion(3, 15, 0.3, 3.75),
-  "claude-3-5-sonnet": perMillion(3, 15, 0.3, 3.75),
-  "claude-haiku-4-5": perMillion(1, 5, 0.1, 1.25),
-  "claude-3-5-haiku": perMillion(0.8, 4, 0.08, 1),
+  "claude-opus-4-5": perMillion(5, 25, 0.5, 6.25, 10),
+  "claude-opus-4-1": perMillion(15, 75, 1.5, 18.75, 30),
+  "claude-opus-4": perMillion(15, 75, 1.5, 18.75, 30),
+  "claude-sonnet-4-5": perMillion(3, 15, 0.3, 3.75, 6),
+  "claude-sonnet-4": perMillion(3, 15, 0.3, 3.75, 6),
+  "claude-3-7-sonnet": perMillion(3, 15, 0.3, 3.75, 6),
+  "claude-3-5-sonnet": perMillion(3, 15, 0.3, 3.75, 6),
+  "claude-haiku-4-5": perMillion(1, 5, 0.1, 1.25, 2),
+  "claude-3-5-haiku": perMillion(0.8, 4, 0.08, 1, 1.6),
   "gpt-5": perMillion(1.25, 10, 0.125),
   "gpt-5-codex": perMillion(1.25, 10, 0.125),
   "gpt-5-mini": perMillion(0.25, 2, 0.025),
@@ -144,7 +158,15 @@ export const BUNDLED_RATES: RateTable = {
 /** `Pricer` over a rate table. Lookups are memoised per model string. */
 export function createPricer(table: RateTable): Pricer {
   const memo = new Map<string, ModelRate | null>();
-  return (model, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, reported) => {
+  return (
+    model,
+    inputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    outputTokens,
+    reported,
+    cacheWrite1hTokens = 0,
+  ) => {
     let rate = memo.get(model);
     if (rate === undefined) {
       rate = lookupRate(table, model) ?? null;
@@ -165,9 +187,12 @@ export function createPricer(table: RateTable): Pricer {
     }
     const cacheReadRate = rate.cacheRead ?? rate.input;
     const cacheWriteRate = rate.cacheWrite ?? rate.input;
+    const cacheWrite1hRate = rate.cacheWrite1h ?? rate.input * 2;
+    const oneHour = Math.min(Math.max(0, cacheWrite1hTokens), cacheWriteTokens);
+    const fiveMinute = cacheWriteTokens - oneHour;
     const input = inputTokens * rate.input;
     const cacheRead = cacheReadTokens * cacheReadRate;
-    const cacheWrite = cacheWriteTokens * cacheWriteRate;
+    const cacheWrite = fiveMinute * cacheWriteRate + oneHour * cacheWrite1hRate;
     const output = outputTokens * rate.output;
     return {
       input,
@@ -186,6 +211,7 @@ const LitellmEntry = z.object({
   output_cost_per_token: z.number().nonnegative(),
   cache_read_input_token_cost: z.number().nonnegative().optional(),
   cache_creation_input_token_cost: z.number().nonnegative().optional(),
+  cache_creation_input_token_cost_above_1hr: z.number().nonnegative().optional(),
 });
 
 /** Lower wins when several raw keys normalise to one id: bare ids, then first-party prefixes. */
@@ -217,6 +243,8 @@ export function reduceLitellm(json: unknown): RateTable {
       rate.cacheRead = entry.data.cache_read_input_token_cost;
     if (entry.data.cache_creation_input_token_cost !== undefined)
       rate.cacheWrite = entry.data.cache_creation_input_token_cost;
+    if (entry.data.cache_creation_input_token_cost_above_1hr !== undefined)
+      rate.cacheWrite1h = entry.data.cache_creation_input_token_cost_above_1hr;
     Object.defineProperty(table, id, {
       value: rate,
       enumerable: true,
@@ -237,6 +265,7 @@ const RatesCacheFile = z.object({
       output: z.number(),
       cacheRead: z.number().optional(),
       cacheWrite: z.number().optional(),
+      cacheWrite1h: z.number().optional(),
     }),
   ),
 });
