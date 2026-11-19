@@ -1,9 +1,16 @@
-import type { FileDiff } from "@age/contracts";
-import { useEffect, useState } from "react";
+import type { FileDiff, ReviewNote } from "@age/contracts";
+import { reviewNotesFor } from "@age/domain";
+import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { closeChanges, loadDiff, openChanges } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { Counts, FileDiffView, fileAnchor } from "./DiffView.tsx";
 import { IconClose } from "./Icons.tsx";
+import { MergeControl } from "./review/MergeControl.tsx";
+import { groupNotesByPath } from "./review/notes.ts";
+import { ReviewBar } from "./review/ReviewBar.tsx";
+
+const NO_NOTES: readonly ReviewNote[] = [];
 
 type Load =
   | { state: "loading" }
@@ -14,6 +21,8 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
   const turnId = useStore((state) => state.changes.turnId);
   const focusPath = useStore((state) => state.changes.focusPath);
   const version = useStore((state) => state.diffVersion);
+  const notes = useStore(useShallow((state) => reviewNotesFor(state.model, threadId)));
+  const notesByPath = useMemo(() => groupNotesByPath(notes), [notes]);
   const [load, setLoad] = useState<{ key: string; value: Load } | null>(null);
   const key = `${threadId}:${turnId ?? ""}:${version}`;
 
@@ -100,11 +109,17 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
                 key={`${key}:${file.path}`}
                 file={file}
                 defaultOpen={!focusPath || focusPath === file.path || current.files.length < 6}
+                threadId={threadId}
+                notes={notesByPath.get(file.path) ?? NO_NOTES}
               />
             ))}
           </>
         ) : null}
       </div>
+      <footer className="panel-foot">
+        <MergeControl threadId={threadId} />
+        {notes.length > 0 ? <ReviewBar threadId={threadId} count={notes.length} /> : null}
+      </footer>
     </aside>
   );
 }

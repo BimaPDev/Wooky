@@ -129,6 +129,7 @@ export const fixtureModel: ReadModel = {
       projectId: "p1",
       title: "Paginate the orders list",
       updatedAt: ago(28),
+      worktree: { path: "/Users/demo/.age/worktrees/t1", branch: "age/paginate-orders" },
     }),
     t2: thread({
       id: "t2",
@@ -476,7 +477,37 @@ export const fixtureModel: ReadModel = {
   },
   cooldowns: {},
   groups: {},
-  reviewNotes: {},
+  reviewNotes: {
+    t1: [
+      {
+        id: "rn1",
+        threadId: "t1",
+        path: "src/api/list.ts",
+        line: 5,
+        side: "new",
+        body: "Clamp take to 100. A caller can ask for a page the size of the table.",
+        createdAt: ago(20),
+      },
+      {
+        id: "rn2",
+        threadId: "t1",
+        path: "src/api/list.ts",
+        line: 4,
+        side: "old",
+        body: "This query had no limit. Confirm nothing relied on the full list.",
+        createdAt: ago(19),
+      },
+      {
+        id: "rn3",
+        threadId: "t1",
+        path: "src/api/list.test.ts",
+        line: 3,
+        side: "new",
+        body: "Add a case for a cursor past the last order.",
+        createdAt: ago(18),
+      },
+    ],
+  },
 };
 
 export const fixtureProviders: ProviderStatus[] = [
@@ -905,8 +936,18 @@ function respond(method: RpcMethod, params: unknown): unknown {
     case "fleet.overview":
     case "agents.list":
       return [];
-    case "git.mergePreview":
-      return { targetBranch: "main", ahead: 0, behind: 0, files: [], conflicts: [] };
+    case "git.mergePreview": {
+      const files = (diffs[(params as RpcParams<"git.mergePreview">).threadId] ?? []).map(
+        (file) => ({ path: file.path, additions: file.additions, deletions: file.deletions }),
+      );
+      return {
+        targetBranch: "main",
+        ahead: files.length > 0 ? 2 : 0,
+        behind: 0,
+        files,
+        conflicts: [],
+      };
+    }
     case "agents.spawn":
       return { threadId: "t-fixture-worker" };
     case "agents.wait":
