@@ -1,7 +1,11 @@
 import type { ProviderKind } from "@wooky/contracts";
 import type { ReactNode } from "react";
+import type { UsageSeriesId } from "../lib/usage-merge.ts";
 
-const GLYPHS: Record<ProviderKind, ReactNode> = {
+/** Provider kinds plus Antigravity, which is a usage origin and not a provider. */
+type UsageMarkKind = ProviderKind | "antigravity";
+
+const GLYPHS: Record<UsageMarkKind, ReactNode> = {
   claude: (
     <path
       d="M12 2.5v6M12 15.5v6M2.5 12h6M15.5 12h6M5.3 5.3l4.2 4.2M14.5 14.5l4.2 4.2M18.7 5.3l-4.2 4.2M9.5 14.5l-4.2 4.2"
@@ -52,10 +56,16 @@ const GLYPHS: Record<ProviderKind, ReactNode> = {
     </>
   ),
   demo: <path d="M7 4.5v15l12-7.5z" strokeWidth="1.9" fill="none" />,
+  antigravity: (
+    <>
+      <circle cx="12" cy="6.2" r="2" strokeWidth="1.8" fill="none" />
+      <path d="M5 12.5c1.8 3.4 4.2 5.1 7 5.1s5.2-1.7 7-5.1" strokeWidth="1.8" fill="none" />
+      <path d="M7.2 17.6c1.3 1.6 2.9 2.4 4.8 2.4s3.5-.8 4.8-2.4" strokeWidth="1.8" fill="none" />
+    </>
+  ),
 };
 
-/** A small own-drawn glyph for a provider. Decorative: pair it with the provider's name in text. */
-export function ProviderMark({ kind, size = 14 }: { kind: ProviderKind; size?: number }) {
+function MarkGlyph({ kind, size }: { kind: UsageMarkKind; size: number }) {
   return (
     <svg
       className={`provider-glyph provider-glyph-${kind}`}
@@ -70,5 +80,19 @@ export function ProviderMark({ kind, size = 14 }: { kind: ProviderKind; size?: n
     >
       {GLYPHS[kind]}
     </svg>
+  );
+}
+
+/** A small own-drawn glyph for a provider. Decorative: pair it with the provider's name in text. */
+export function ProviderMark({ kind, size = 14 }: { kind: ProviderKind; size?: number }) {
+  return <MarkGlyph kind={kind} size={size} />;
+}
+
+/** Tinted tile and glyph for a usage series. Antigravity is included; it is not a ProviderKind. */
+export function UsageProviderMark({ kind }: { kind: UsageSeriesId | "acp" }) {
+  return (
+    <span className={`provider-mark provider-${kind}`} aria-hidden="true">
+      <MarkGlyph kind={kind} size={13} />
+    </span>
   );
 }

@@ -21,6 +21,7 @@ import { backend } from "../state/backend.ts";
 import { closeSettings } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { IconCheck, IconChevron, IconClose, IconInfo, IconRefresh } from "./Icons.tsx";
+import { UsageProviderMark } from "./ProviderMark.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import { Modal } from "./Modal.tsx";
 
@@ -42,16 +43,13 @@ const METRIC_OPTIONS: { value: Metric; label: string }[] = [
 
 const LIMITS_PROVIDERS: ProviderKind[] = ["codex", "claude", "cursor", "demo"];
 
-const SERIES_META: Record<
-  UsageSeriesId,
-  { label: string; color: string; markClass?: ProviderKind }
-> = {
-  codex: { label: "Codex", color: "var(--text)", markClass: "codex" },
-  claude: { label: "Claude Code", color: "var(--usage-claude)", markClass: "claude" },
-  cursor: { label: "Cursor", color: "var(--usage-cursor)", markClass: "cursor" },
+const SERIES_META: Record<UsageSeriesId, { label: string; color: string }> = {
+  codex: { label: "Codex", color: "var(--text)" },
+  claude: { label: "Claude Code", color: "var(--usage-claude)" },
+  cursor: { label: "Cursor", color: "var(--usage-cursor)" },
   opencode: { label: "OpenCode", color: "var(--text)" },
   antigravity: { label: "Antigravity", color: "var(--usage-antigravity)" },
-  demo: { label: "Demo", color: "var(--accent)", markClass: "demo" },
+  demo: { label: "Demo", color: "var(--accent)" },
 };
 
 const TYPE_COLORS = {
@@ -431,16 +429,12 @@ function UsageLimitsPanel({
 }
 
 function ProviderLimitsCard({ row }: { row: ProviderLimits }) {
-  const meta =
-    row.provider === "acp"
-      ? { label: "ACP agent", color: "var(--provider-acp)", markClass: row.provider }
-      : SERIES_META[row.provider];
+  const meta = row.provider === "acp" ? { label: "ACP agent" } : SERIES_META[row.provider];
   return (
     <section className="usage-limits-card">
       <header className="usage-limits-card-head">
         <span className="usage-provider-title">
-          <span className="usage-dot" style={{ background: meta.color }} aria-hidden="true" />
-          <span className={`provider-mark provider-${row.provider}`} aria-hidden="true" />
+          <UsageProviderMark kind={row.provider} />
           <span>{meta.label}</span>
           {row.plan ? <span className="muted usage-limits-plan">{row.plan}</span> : null}
         </span>
@@ -578,17 +572,7 @@ function UsageOverview({
                 <div key={provider.id} className="usage-provider-row">
                   <div className="usage-provider-head">
                     <span className="usage-provider-title">
-                      <span
-                        className="usage-dot"
-                        style={{ background: meta.color }}
-                        aria-hidden="true"
-                      />
-                      {meta.markClass ? (
-                        <span
-                          className={`provider-mark provider-${meta.markClass}`}
-                          aria-hidden="true"
-                        />
-                      ) : null}
+                      <UsageProviderMark kind={provider.id} />
                       <span>{meta.label}</span>
                       <span className="muted usage-provider-sessions">
                         {formatCount(provider.sessions)}{" "}
@@ -704,18 +688,7 @@ function UsageOverview({
                       <td>
                         <div className="usage-model-cell">
                           <span className="usage-model-name">
-                            {meta.markClass ? (
-                              <span
-                                className={`provider-mark provider-${meta.markClass}`}
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <span
-                                className="usage-dot"
-                                style={{ background: meta.color }}
-                                aria-hidden="true"
-                              />
-                            )}
+                            <UsageProviderMark kind={model.series} />
                             <span className="mono">{model.name}</span>
                           </span>
                           {bar > 0 ? (
@@ -1058,15 +1031,7 @@ function UsageSeriesFilter({
                 <span className="usage-filter-check" aria-hidden="true">
                   {checked ? <IconCheck /> : null}
                 </span>
-                {meta.markClass ? (
-                  <span className={`provider-mark provider-${meta.markClass}`} aria-hidden="true" />
-                ) : (
-                  <span
-                    className="usage-dot"
-                    style={{ background: meta.color }}
-                    aria-hidden="true"
-                  />
-                )}
+                <UsageProviderMark kind={series} />
                 {meta.label}
               </button>
             );
