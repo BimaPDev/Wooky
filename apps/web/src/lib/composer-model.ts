@@ -1,4 +1,6 @@
-import type { EffortLevel, ProviderStatus } from "@age/contracts";
+import type { DeviceSettings, EffortLevel, ProviderKind, ProviderStatus } from "@age/contracts";
+import { isAvailable } from "../components/labels.ts";
+import { pickerModels } from "../components/providers/helpers.ts";
 
 const SMALL_WORDS = new Set(["gpt", "ai"]);
 
@@ -112,4 +114,36 @@ export function shownEffort(
   if (accepted.length === 0) return undefined;
   if (picked && accepted.includes(picked)) return picked;
   return defaultEffortFor(status, modelId);
+}
+
+export const PROVIDER_SHORT_NAMES: Record<ProviderKind, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+  acp: "ACP",
+  demo: "Demo",
+};
+
+/**
+ * The providers the picker's tab row offers: usable now (installed, not signed out, enabled, and
+ * with at least one model listed). Demo counts only when `showDemo` is set, or when nothing else
+ * is usable. The provider a thread is already on stays, so its current model is never hidden.
+ */
+export function pickerProviders(
+  providers: readonly ProviderStatus[],
+  disabled: ReadonlySet<ProviderKind>,
+  settings: Pick<DeviceSettings, "providers" | "acpAgents"> | null,
+  options: { showDemo: boolean; current: ProviderKind },
+): ProviderStatus[] {
+  const usable = (entry: ProviderStatus) =>
+    isAvailable(entry, disabled) && pickerModels(entry, settings).length > 0;
+  const others = providers.filter((entry) => entry.kind !== "demo" && usable(entry));
+  return providers.filter((entry) => {
+    if (entry.kind === options.current) return true;
+    if (entry.kind === "demo") {
+      return usable(entry) && (options.showDemo || others.length === 0);
+    }
+    return usable(entry);
+  });
 }

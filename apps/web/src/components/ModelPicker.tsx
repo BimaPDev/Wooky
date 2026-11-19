@@ -20,7 +20,15 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { chipModelName, effortLabel, effortsFor, shownEffort } from "../lib/composer-model.ts";
+import {
+  chipModelName,
+  effortLabel,
+  effortsFor,
+  PROVIDER_SHORT_NAMES,
+  pickerProviders,
+  shownEffort,
+} from "../lib/composer-model.ts";
+import { openSettings } from "../state/actions.ts";
 import { NO_DISABLED_PROVIDERS, useStore } from "../state/store.ts";
 import { IconAlert, IconCheckSmall, IconLock, IconPen, IconSearch, IconShield } from "./Icons.tsx";
 import { useMinuteClock } from "./failover/clock.ts";
@@ -150,7 +158,7 @@ export function PopoverChip({
     if (!open || !el || !anchor) return;
     const rect = anchor.getBoundingClientRect();
     const room = placement === "above" ? rect.top : window.innerHeight - rect.bottom;
-    el.style.setProperty("--popover-room", `${Math.max(240, Math.floor(room - 64))}px`);
+    el.style.setProperty("--popover-room", `${Math.max(240, Math.floor(room - 56))}px`);
   }, [open, placement]);
   const popoverClass = [
     "popover",
@@ -412,8 +420,17 @@ function ProviderModelPanel({
     searchRef.current?.focus();
   }, []);
 
-  const tab = providers.some((entry) => entry.kind === chosenTab) ? chosenTab : target.provider;
-  const active = providers.find((entry) => entry.kind === tab) ?? null;
+  const fixture = useStore((state) => state.fixture);
+  const visible = useMemo(
+    () =>
+      pickerProviders(providers, disabled, deviceSettings, {
+        showDemo: fixture || import.meta.env.DEV,
+        current: target.provider,
+      }),
+    [providers, disabled, deviceSettings, fixture, target.provider],
+  );
+  const tab = visible.some((entry) => entry.kind === chosenTab) ? chosenTab : target.provider;
+  const active = visible.find((entry) => entry.kind === tab) ?? null;
   const current = providers.find((entry) => entry.kind === target.provider);
   const needle = query.trim().toLowerCase();
   const models = useMemo(() => {
@@ -465,34 +482,28 @@ function ProviderModelPanel({
         />
       </label>
 
-      <div className="model-tabs" role="tablist" aria-label="Providers">
-        {providers.map((provider) => {
-          const enabled = !disabled.has(provider.kind);
-          const available = isAvailable(provider, disabled);
-          const activeTab = provider.kind === tab;
-          return (
-            <button
-              key={provider.kind}
-              type="button"
-              role="tab"
-              aria-selected={activeTab}
-              aria-label={provider.label}
-              title={
-                !enabled
-                  ? `${provider.label} is disabled in Settings`
-                  : (provider.problem ?? provider.label)
-              }
-              className={
-                activeTab ? "model-tab active" : available ? "model-tab" : "model-tab disabled"
-              }
-              disabled={(!available && !activeTab) || !enabled}
-              onClick={() => setTab(provider.kind)}
-            >
-              <ProviderMark kind={provider.kind} />
-            </button>
-          );
-        })}
-      </div>
+      {visible.length > 1 ? (
+        <div className="model-tabs" role="tablist" aria-label="Providers">
+          {visible.map((provider) => {
+            const activeTab = provider.kind === tab;
+            return (
+              <button
+                key={provider.kind}
+                type="button"
+                role="tab"
+                aria-selected={activeTab}
+                aria-label={provider.label}
+                title={provider.label}
+                className={activeTab ? "model-tab active" : "model-tab"}
+                onClick={() => setTab(provider.kind)}
+              >
+                <ProviderMark kind={provider.kind} />
+                <span>{PROVIDER_SHORT_NAMES[provider.kind]}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div
         className="model-list"
@@ -578,13 +589,23 @@ function ProviderModelPanel({
             </div>
           </div>
         ) : null}
-        <Switch
-          label="Plan first"
-          checked={target.interactionMode === "plan"}
-          disabled={locked || !planSupported}
-          title={planSupported ? undefined : "This provider does not support plan mode"}
-          onChange={(next) => onChange({ interactionMode: next ? "plan" : "default" })}
-        />
+        <div className="picker-switches">
+          <Switch
+            label="Plan first"
+            checked={target.interactionMode === "plan"}
+            disabled={locked || !planSupported}
+            title={planSupported ? undefined : "This provider does not support plan mode"}
+            onChange={(next) => onChange({ interactionMode: next ? "plan" : "default" })}
+          />
+          {target.isolate !== undefined ? (
+            <Switch
+              label="New worktree"
+              title="Work on its own branch and checkout"
+              checked={target.isolate}
+              onChange={(next) => onChange({ isolate: next })}
+            />
+          ) : null}
+        </div>
         <div className="picker-row">
           <span className="picker-row-label" id="picker-runtime-label">
             Runtime
@@ -609,17 +630,12 @@ function ProviderModelPanel({
             })}
           </div>
         </div>
-        {target.isolate !== undefined ? (
-          <Switch
-            label="New worktree"
-            title="Work on its own branch and checkout"
-            checked={target.isolate}
-            onChange={(next) => onChange({ isolate: next })}
-          />
-        ) : null}
+        {locked ? <p className="picker-note">Settings change once the current turn ends.</p> : null}
+      </div>
+      <div className="picker-bottom">
         <button
           type="button"
-          className="picker-action"
+          className="picker-quiet"
           disabled={fanoutDisabled}
           title={fanoutDisabled ? "Type a message first" : undefined}
           onClick={() => {
@@ -629,7 +645,16 @@ function ProviderModelPanel({
         >
           Run on several agents
         </button>
-        {locked ? <p className="picker-note">Settings change once the current turn ends.</p> : null}
+        <button
+          type="button"
+          className="picker-quiet"
+          onClick={() => {
+            close();
+            openSettings("providers");
+          }}
+        >
+          Set up more agents…
+        </button>
       </div>
     </div>
   );
