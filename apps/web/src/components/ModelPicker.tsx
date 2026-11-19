@@ -1,5 +1,14 @@
 import type { ProviderKind, RuntimeMode, Thread } from "@age/contracts";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { configureThread } from "../state/actions.ts";
 import { NO_DISABLED_PROVIDERS, useStore } from "../state/store.ts";
 import { IconCheckSmall, IconLock, IconPen, IconSearch, IconShield } from "./Icons.tsx";
@@ -12,6 +21,7 @@ import {
   targetOf,
 } from "./failover/format.ts";
 import { isAvailable, modelLabel, providerLabels, runtimeModes, shortcut } from "./labels.ts";
+import { pickerModels } from "./providers/helpers.ts";
 
 const modeMeta: Record<RuntimeMode, { icon: () => ReactNode; description: string }> = {
   approve: {
@@ -238,6 +248,7 @@ function ProviderModelPanel({ thread }: { thread: Thread }) {
     (state) => state.deviceSettings?.disabledProviders ?? NO_DISABLED_PROVIDERS,
   );
   const disabled = useMemo(() => new Set(disabledProviders), [disabledProviders]);
+  const deviceSettings = useStore((state) => state.deviceSettings);
   const cooldowns = useStore((state) => state.model.cooldowns);
   const nowMs = useMinuteClock();
   const running = thread.status === "running" || thread.status === "waiting";
@@ -254,13 +265,13 @@ function ProviderModelPanel({ thread }: { thread: Thread }) {
   const active = providers.find((entry) => entry.kind === tab) ?? null;
   const needle = query.trim().toLowerCase();
   const models = useMemo(() => {
-    const list = active?.models ?? [];
+    const list = pickerModels(active ?? undefined, deviceSettings);
     if (!needle) return list;
     return list.filter(
       (model) =>
         model.label.toLowerCase().includes(needle) || model.id.toLowerCase().includes(needle),
     );
-  }, [active, needle]);
+  }, [active, deviceSettings, needle]);
 
   const pick = (kind: ProviderKind, modelId: string) => {
     if (kind === thread.provider && modelId === thread.model) return;
@@ -345,34 +356,42 @@ function ProviderModelPanel({ thread }: { thread: Thread }) {
             const cooldown = cooldowns
               ? cooldownFor(cooldowns, { provider: tab, model: model.id }, nowMs)
               : null;
+            const heading = model.group && model.group !== models[index - 1]?.group;
             return (
-              <button
-                key={model.id}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                className={selected ? "model-row selected" : "model-row"}
-                disabled={running || (active ? !isAvailable(active, disabled) : true)}
-                onClick={() => pick(tab, model.id)}
-              >
-                <span className={`provider-mark provider-${tab}`} aria-hidden="true" />
-                <span className="model-row-copy">
-                  <span className="model-row-title">{model.label}</span>
-                  {cooldown ? (
-                    <span className="model-row-note">
-                      {limitedUntilLabel(cooldown.until, nowMs)}
-                    </span>
-                  ) : null}
-                </span>
-                {selected ? (
-                  <span className="model-row-check" aria-hidden="true">
-                    <IconCheckSmall />
+              <Fragment key={model.id}>
+                {heading ? (
+                  <p className="model-group-heading" role="presentation">
+                    {model.group}
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className={selected ? "model-row selected" : "model-row"}
+                  disabled={running || (active ? !isAvailable(active, disabled) : true)}
+                  onClick={() => pick(tab, model.id)}
+                >
+                  <span className={`provider-mark provider-${tab}`} aria-hidden="true" />
+                  <span className="model-row-copy">
+                    <span className="model-row-title">{model.label}</span>
+                    {model.isDefault ? <span className="model-row-note">Default</span> : null}
+                    {cooldown ? (
+                      <span className="model-row-note">
+                        {limitedUntilLabel(cooldown.until, nowMs)}
+                      </span>
+                    ) : null}
                   </span>
-                ) : (
-                  <span className="model-row-spacer" aria-hidden="true" />
-                )}
-                {hint ? <kbd className="model-kbd">{hint}</kbd> : null}
-              </button>
+                  {selected ? (
+                    <span className="model-row-check" aria-hidden="true">
+                      <IconCheckSmall />
+                    </span>
+                  ) : (
+                    <span className="model-row-spacer" aria-hidden="true" />
+                  )}
+                  {hint ? <kbd className="model-kbd">{hint}</kbd> : null}
+                </button>
+              </Fragment>
             );
           })
         )}

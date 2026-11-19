@@ -1,8 +1,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ApprovalRequest, ProviderEvent, ProviderStatus } from "@age/contracts";
+import type {
+  ApprovalRequest,
+  ProviderEvent,
+  ProviderSettings,
+  ProviderStatus,
+} from "@age/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { fleetChildEnv, prefixSessionPrompt } from "../agent-env.ts";
+import { resolveLaunch, withUserEnv } from "../settings.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import {
   JsonRpcClient,
@@ -49,6 +55,12 @@ const CODEX_MODELS: ReadonlyArray<{ id: string; label: string }> = [
 export interface CodexAdapterOptions {
   codexBin?: string;
   codexArgs?: readonly string[];
+  /**
+   * The user's settings for this provider, read at each probe and turn. `binaryPath` replaces
+   * `codex`. `extraArgs` follow `app-server` on its argv (not on `--version`). `env` is merged
+   * over the child environment.
+   */
+  settings?: () => ProviderSettings | undefined;
 }
 
 class AsyncQueue<T> {
@@ -115,11 +127,13 @@ function probeAuthProblem(authenticated: boolean | null): string | null {
 async function probeCodexAuth(
   command: string,
   launchArgs: readonly string[],
+  env: NodeJS.ProcessEnv,
   timeoutMs: number,
 ): Promise<{ authenticated: boolean | null; problem: string | null }> {
   const client = new JsonRpcClient({
     bin: command,
-    args: launchArgs.length > 0 ? launchArgs : undefined,
+    args: launchArgs,
+    env,
     cwd: process.cwd(),
     onNotification: () => undefined,
     onServerRequest: async (request) => {
@@ -159,17 +173,28 @@ async function probeCodexAuth(
   }
 }
 
-async function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<ProviderStatus> {
+async function probeCodex(
+  bin: string,
+  configuredArgs: readonly string[] | undefined,
+  userArgs: readonly string[],
+  userEnv: Readonly<Record<string, string>>,
+): Promise<ProviderStatus> {
   const base = {
     kind: "codex" as const,
     label: "Codex",
     models: [...CODEX_MODELS],
+    modelsSource: "static" as const,
     capabilities: CODEX_CAPABILITIES,
   };
   const resolved = resolveCommand(bin);
   const command = resolved?.command ?? bin;
-  const versionArgs = [...(resolved?.prefixArgs ?? []), ...(extraArgs ?? []), "--version"];
-  const launchArgs = [...(resolved?.prefixArgs ?? []), ...(extraArgs ?? [])];
+  const env = withUserEnv(userEnv);
+  const versionArgs = [...(resolved?.prefixArgs ?? []), ...(configuredArgs ?? []), "--version"];
+  const launchArgs = [
+    ...(resolved?.prefixArgs ?? []),
+    ...(configuredArgs ?? ["app-server"]),
+    ...userArgs,
+  ];
 
   if (!resolved && process.platform === "win32") {
     return {
@@ -186,8 +211,9 @@ async function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<P
     const { stdout, stderr } = await execFileAsync(command, versionArgs, {
       timeout: PROBE_TIMEOUT_MS,
       windowsHide: true,
+      env,
     });
-    const auth = await probeCodexAuth(command, launchArgs, PROBE_TIMEOUT_MS);
+    const auth = await probeCodexAuth(command, launchArgs, env, PROBE_TIMEOUT_MS);
     return {
       ...base,
       installed: true,
@@ -320,11 +346,17 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
   const cumulativeUsageByThread = createUsageBaselineStore();
 
   const launch = () => {
-    const resolved = resolveCommand(configuredBin);
-    if (!resolved) return { bin: configuredBin, args: configuredArgs };
+    const user = resolveLaunch(options?.settings?.(), configuredBin, "Codex");
+    const resolved = resolveCommand(user.bin);
     return {
-      bin: resolved.command,
-      args: [...resolved.prefixArgs, ...(configuredArgs ?? [])],
+      bin: resolved?.command ?? user.bin,
+      args: [
+        ...(resolved?.prefixArgs ?? []),
+        ...(configuredArgs ?? ["app-server"]),
+        ...user.extraArgs,
+      ],
+      problem: user.problem,
+      env: withUserEnv(user.env),
     };
   };
 
@@ -332,7 +364,8 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
     kind: "codex",
 
     probe(): Promise<ProviderStatus> {
-      return probeCodex(configuredBin, configuredArgs);
+      const user = resolveLaunch(options?.settings?.(), configuredBin, "Codex");
+      return probeCodex(user.bin, configuredArgs, user.extraArgs, user.env);
     },
 
     async *runTurn(input: TurnInput): AsyncIterable<ProviderEvent> {
@@ -371,12 +404,16 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
         }
       };
 
-      const { bin: codexBin, args: codexArgs } = launch();
+      const { bin: codexBin, args: codexArgs, problem, env: userEnv } = launch();
+      if (problem) {
+        yield { type: "done", status: "failed", error: problem };
+        return;
+      }
       const client = new JsonRpcClient({
         bin: codexBin,
         args: codexArgs,
         cwd: input.cwd,
-        env: fleetChildEnv(input.threadId),
+        env: fleetChildEnv(input.threadId, userEnv),
         onNotification: ({ method, params }) => {
           if (method === "turn/started") {
             const started = TurnStartedNotificationSchema.safeParse(params);

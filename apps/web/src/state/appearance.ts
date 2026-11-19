@@ -519,7 +519,10 @@ export function applyColorMode(mode: DeviceSettings["colorMode"]) {
 }
 
 export async function patchDeviceSettings(patch: Partial<DeviceSettings>) {
-  const settings = await backend().call("settings.put", { settings: patch });
+  // `settings.put` parses its patch with `DeviceSettings.partial()`, which still fills defaults
+  // for absent keys and so resets them on the server. Sending every key keeps them.
+  const current = useStore.getState().deviceSettings;
+  const settings = await backend().call("settings.put", { settings: { ...current, ...patch } });
   useStore.setState({ deviceSettings: settings });
   if (patch.colorMode) applyColorMode(settings.colorMode);
   if (patch.activeThemeId !== undefined) {

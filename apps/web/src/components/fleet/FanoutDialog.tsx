@@ -4,6 +4,7 @@ import { closeFanoutDialog, startFanout } from "../../state/actions.ts";
 import { NO_DISABLED_PROVIDERS, useStore } from "../../state/store.ts";
 import { isAvailable, runtimeModes } from "../labels.ts";
 import { Modal } from "../Modal.tsx";
+import { defaultModelFor } from "../providers/helpers.ts";
 import { FANOUT_MAX_TARGETS, FANOUT_MIN_TARGETS, fanoutTargetError } from "./helpers.ts";
 
 interface TargetDraft {
@@ -23,6 +24,7 @@ function FanoutDialogBody({
   dialog: { projectId: string; runtimeMode: RuntimeMode; getPrompt: () => string };
 }) {
   const providers = useStore((state) => state.providers);
+  const deviceSettings = useStore((state) => state.deviceSettings);
   const disabledProviders = useStore(
     (state) => state.deviceSettings?.disabledProviders ?? NO_DISABLED_PROVIDERS,
   );
@@ -44,8 +46,10 @@ function FanoutDialogBody({
         if (i !== index) return target;
         const next = { ...target, ...patch };
         if (patch.provider && patch.provider !== target.provider) {
-          const models = available.find((entry) => entry.kind === patch.provider)?.models ?? [];
-          next.model = models[0]?.id ?? "";
+          next.model = defaultModelFor(
+            available.find((entry) => entry.kind === patch.provider),
+            deviceSettings,
+          );
         }
         return next;
       }),

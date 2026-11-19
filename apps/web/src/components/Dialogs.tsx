@@ -11,6 +11,7 @@ import {
 import { NO_DISABLED_PROVIDERS, useStore, type Dialog } from "../state/store.ts";
 import { isAvailable, runtimeModes } from "./labels.ts";
 import { Modal } from "./Modal.tsx";
+import { defaultModelFor, pickerModels } from "./providers/helpers.ts";
 
 export function Dialogs() {
   const dialog = useStore((state) => state.dialog);
@@ -131,6 +132,7 @@ function ConfirmDialog({ dialog }: { dialog: Extract<Dialog, { kind: "confirm" }
 function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null }) {
   const projects = useStore((state) => state.model.projects);
   const providers = useStore((state) => state.providers);
+  const deviceSettings = useStore((state) => state.deviceSettings);
   const disabledProviders = useStore(
     (state) => state.deviceSettings?.disabledProviders ?? NO_DISABLED_PROVIDERS,
   );
@@ -152,7 +154,8 @@ function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null
   const ids = useId();
 
   const chosen = providers.find((entry) => entry.kind === (provider ?? firstAvailable?.kind));
-  const chosenModel = model ?? chosen?.models[0]?.id ?? "";
+  const modelOptions = pickerModels(chosen, deviceSettings);
+  const chosenModel = model ?? defaultModelFor(chosen, deviceSettings);
   const canCreate = Boolean(projectId && chosen && isAvailable(chosen, disabled) && !busy);
 
   return (
@@ -215,11 +218,11 @@ function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null
             ))}
           </div>
         </fieldset>
-        {chosen && chosen.models.length > 0 ? (
+        {chosen && modelOptions.length > 0 ? (
           <label className="field">
             <span>Model</span>
             <select value={chosenModel} onChange={(event) => setModel(event.target.value)}>
-              {chosen.models.map((entry) => (
+              {modelOptions.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.label}
                 </option>

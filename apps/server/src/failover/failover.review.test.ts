@@ -236,6 +236,7 @@ describe("failover review fixes", () => {
       providers: {
         get: (kind) => (kind === "codex" ? adapter : null),
         list: async () => [status],
+        invalidate: () => undefined,
       },
       dispatch: () => {
         throw new Error("should not dispatch");

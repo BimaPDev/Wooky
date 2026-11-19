@@ -1,6 +1,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ApprovalRequest, ProviderEvent, ProviderStatus } from "@age/contracts";
+import type {
+  ApprovalRequest,
+  ProviderEvent,
+  ProviderSettings,
+  ProviderStatus,
+} from "@age/contracts";
 import {
   query as sdkQuery,
   type CanUseTool,
@@ -12,6 +17,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { fleetChildEnv, instructionsForRole } from "../agent-env.ts";
+import { claudeExtraArgs, resolveLaunch, withUserEnv } from "../settings.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { editPreview } from "./diff.ts";
 import {
@@ -48,11 +54,18 @@ export interface ClaudeAdapterOptions {
   claudeBin?: string;
   /** Passive plan-limit updates from `rate_limit_event` messages during turns. */
   onRateLimit?: (info: SDKRateLimitInfo) => void;
+  /**
+   * The user's settings for this provider, read at each probe and turn. `binaryPath` becomes
+   * `pathToClaudeCodeExecutable`. `extraArgs` go to the SDK's `extraArgs` map, so only long
+   * flags (`--name`, `--name value`, `--name=value`) apply. `env` is merged over the child env.
+   */
+  settings?: () => ProviderSettings | undefined;
 }
 
 export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): ProviderAdapter {
   const runQuery = options.query ?? sdkQuery;
-  const bin = options.claudeBin ?? "claude";
+  const launchFor = () =>
+    resolveLaunch(options.settings?.(), options.claudeBin ?? "claude", "Claude Code");
 
   return {
     kind: "claude",
@@ -64,8 +77,10 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         label: "Claude Code",
         authenticated: null,
         models: MODELS,
+        modelsSource: "static" as const,
         capabilities: CAPABILITIES,
       };
+      const { bin, env } = launchFor();
       const resolved = resolveCommand(bin);
       if (!resolved && process.platform === "win32") {
         return {
@@ -82,6 +97,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
         const { stdout } = await execFileAsync(command, args, {
           timeout: PROBE_TIMEOUT_MS,
           windowsHide: true,
+          ...(Object.keys(env).length > 0 ? { env: withUserEnv(env) } : {}),
         });
         const version = /\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? null;
         const claudeExecutable = resolved?.prefixArgs.length
@@ -89,7 +105,10 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           : (resolved?.command ?? options.claudeBin);
         const auth = await probeClaudeAuth(
           runQuery,
-          claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
+          {
+            ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
+            ...(Object.keys(env).length > 0 ? { env: withUserEnv(env) } : {}),
+          },
           PROBE_TIMEOUT_MS,
         );
         return {
@@ -99,6 +118,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           authenticated: auth.authenticated,
           problem: auth.problem,
           models: auth.models.length > 0 ? auth.models : MODELS,
+          modelsSource: auth.models.length > 0 ? ("live" as const) : ("static" as const),
         };
       } catch (error) {
         if ((error as { code?: unknown }).code === "ENOENT") {
@@ -144,7 +164,13 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
       };
 
       let stderrTail = "";
-      const resolved = resolveCommand(bin);
+      const launch = launchFor();
+      if (launch.problem) {
+        input.signal.removeEventListener("abort", onAbort);
+        yield { type: "done", status: "failed", error: launch.problem };
+        return;
+      }
+      const resolved = resolveCommand(launch.bin);
       const claudeExecutable = resolved?.prefixArgs.length
         ? undefined
         : (resolved?.command ?? options.claudeBin);
@@ -159,7 +185,8 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           : {}),
         ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
         ...permissionOptions(input, emit, input.cwd, lastPlanWritePath),
-        ...fleetQueryOptions(input),
+        ...fleetQueryOptions(input, launch.env),
+        ...(launch.extraArgs.length > 0 ? { extraArgs: claudeExtraArgs(launch.extraArgs) } : {}),
         stderr: (data) => {
           stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
         },
@@ -216,8 +243,11 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
 const ABORTED = Symbol("aborted");
 const WOKEN = Symbol("woken");
 
-function fleetQueryOptions(input: TurnInput): Partial<Options> {
-  const env = fleetChildEnv(input.threadId);
+function fleetQueryOptions(
+  input: TurnInput,
+  userEnv: Readonly<Record<string, string>>,
+): Partial<Options> {
+  const env = fleetChildEnv(input.threadId, withUserEnv(userEnv));
   return {
     ...(env === process.env ? {} : { env }),
     systemPrompt: {
