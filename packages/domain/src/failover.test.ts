@@ -73,7 +73,7 @@ describe("pickFallback", () => {
       available: always,
       failure: rateLimit,
     });
-    expect(picked).toEqual({ provider: "cursor", model: "auto" });
+    expect(picked).toEqual({ provider: "codex", model: "gpt-6.1-sol" });
   });
 
   it("respects a user-defined chain", () => {
@@ -197,7 +197,7 @@ describe("pickFallback", () => {
         available: always,
         failure: rateLimit,
       }),
-    ).toEqual({ provider: "cursor", model: "auto" });
+    ).toEqual({ provider: "claude", model: "opus" });
   });
 });
 

@@ -1,17 +1,18 @@
 import type { ModelTarget, ReadModel, Thread, TurnFailure } from "@age/contracts";
 
 /** Default best-first ranking when the device chain is empty. Model ids match provider adapters. */
+/** Best first. Unavailable or unlisted targets are skipped by the caller's `available`. */
 export const DEFAULT_MODEL_RANKING: readonly ModelTarget[] = [
-  { provider: "cursor", model: "auto" },
-  { provider: "claude", model: "sonnet" },
-  { provider: "codex", model: "gpt-6.1-sol" },
-  { provider: "claude", model: "default" },
-  { provider: "codex", model: "default" },
-  { provider: "claude", model: "haiku" },
-  { provider: "codex", model: "gpt-6-astra" },
   { provider: "claude", model: "opus" },
+  { provider: "codex", model: "gpt-6.1-sol" },
+  { provider: "cursor", model: "grok-4.7" },
   { provider: "claude", model: "fable" },
+  { provider: "cursor", model: "composer-2.5" },
+  { provider: "claude", model: "sonnet" },
   { provider: "codex", model: "gpt-6.1-terra" },
+  { provider: "cursor", model: "auto" },
+  { provider: "codex", model: "gpt-6-astra" },
+  { provider: "claude", model: "haiku" },
   { provider: "codex", model: "gpt-6-luna" },
 ];
 
