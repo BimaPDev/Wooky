@@ -4,7 +4,7 @@
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Tooltip } from "./Tooltip.tsx";
+import { resetTooltipForTests, Tooltip } from "./Tooltip.tsx";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -34,6 +34,7 @@ function enter(anchor: Element) {
 }
 
 beforeEach(() => {
+  resetTooltipForTests();
   vi.useFakeTimers();
   clock += 60_000;
   vi.setSystemTime(clock);
@@ -47,6 +48,7 @@ afterEach(() => {
   root = undefined;
   host = undefined;
   document.body.replaceChildren();
+  resetTooltipForTests();
   vi.useRealTimers();
 });
 
@@ -142,6 +144,99 @@ describe("Tooltip", () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(tip()).toBeNull();
+  });
+
+  it("leaves Escape for other listeners to dismiss the layer underneath", () => {
+    const { button, anchor } = renderTooltip(
+      <Tooltip label="Close">
+        <button type="button" aria-label="Close">
+          ×
+        </button>
+      </Tooltip>,
+    );
+    enter(anchor);
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(tip()).not.toBeNull();
+
+    let documentSaw = false;
+    let windowSaw = false;
+    const onDocument = () => {
+      documentSaw = true;
+    };
+    const onWindow = () => {
+      windowSaw = true;
+    };
+    document.addEventListener("keydown", onDocument);
+    window.addEventListener("keydown", onWindow);
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => {
+      button.dispatchEvent(event);
+    });
+    document.removeEventListener("keydown", onDocument);
+    window.removeEventListener("keydown", onWindow);
+
+    expect(tip()).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+    expect(documentSaw).toBe(true);
+    expect(windowSaw).toBe(true);
+  });
+
+  it("hides the popover when the tooltip closes and when the trigger unmounts", () => {
+    const proto = HTMLElement.prototype;
+    const previousShow = Object.getOwnPropertyDescriptor(proto, "showPopover");
+    const previousHide = Object.getOwnPropertyDescriptor(proto, "hidePopover");
+    const previousMatches = proto.matches;
+    const show = vi.fn<(this: HTMLElement) => void>(function showPopover(this: HTMLElement) {
+      this.toggleAttribute("data-popover-open", true);
+    });
+    const hide = vi.fn<(this: HTMLElement) => void>(function hidePopover(this: HTMLElement) {
+      this.toggleAttribute("data-popover-open", false);
+    });
+    Object.defineProperty(proto, "showPopover", { configurable: true, value: show });
+    Object.defineProperty(proto, "hidePopover", { configurable: true, value: hide });
+    proto.matches = function matches(this: HTMLElement, selectors: string) {
+      if (selectors === ":popover-open") return this.hasAttribute("data-popover-open");
+      return previousMatches.call(this, selectors);
+    } as typeof proto.matches;
+
+    try {
+      const { anchor } = renderTooltip(
+        <Tooltip label="Copy path">
+          <button type="button" aria-label="Copy path">
+            +
+          </button>
+        </Tooltip>,
+      );
+      enter(anchor);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(show).toHaveBeenCalled();
+
+      act(() => {
+        anchor.dispatchEvent(new Event("pointerleave"));
+      });
+      expect(hide).toHaveBeenCalled();
+
+      hide.mockClear();
+      enter(anchor);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      act(() => {
+        root?.unmount();
+      });
+      root = undefined;
+      expect(hide).toHaveBeenCalled();
+    } finally {
+      proto.matches = previousMatches;
+      if (previousShow) Object.defineProperty(proto, "showPopover", previousShow);
+      else Reflect.deleteProperty(proto, "showPopover");
+      if (previousHide) Object.defineProperty(proto, "hidePopover", previousHide);
+      else Reflect.deleteProperty(proto, "hidePopover");
+    }
   });
 
   it("opens immediately when another tooltip closed moments ago", () => {

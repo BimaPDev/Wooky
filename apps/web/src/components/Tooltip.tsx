@@ -16,6 +16,12 @@ const WARM_MS = 500;
 let warmUntil = 0;
 let activeClose: (() => void) | null = null;
 
+/** Drops the shared warm window and the active tooltip. Tests call this between cases. */
+export function resetTooltipForTests(): void {
+  warmUntil = 0;
+  activeClose = null;
+}
+
 type TriggerProps = {
   "aria-label"?: string;
   "aria-describedby"?: string;
@@ -42,6 +48,7 @@ export function Tooltip({
   const id = useId();
   const anchor = useRef<HTMLSpanElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
+  const shownRef = useRef<{ tip: HTMLDivElement | null }>({ tip: null });
   const openRef = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeRef = useRef<() => void>(() => {});
@@ -51,6 +58,7 @@ export function Tooltip({
   // sync: pointer hover and keyboard focus on the tooltip trigger
   useEffect(() => {
     const el = anchor.current;
+    const shown = shownRef.current;
     if (!el) return;
 
     const clear = () => {
@@ -62,6 +70,7 @@ export function Tooltip({
       clear();
       if (openRef.current) warmUntil = Date.now() + WARM_MS;
       openRef.current = false;
+      hideInTopLayer(shown.tip);
       setOpen(false);
       if (activeClose === close) activeClose = null;
     };
@@ -106,6 +115,9 @@ export function Tooltip({
       el.removeEventListener("focusin", onFocusIn);
       el.removeEventListener("focusout", onFocusOut);
       clear();
+      const tip = shown.tip;
+      shown.tip = null;
+      hideInTopLayer(tip);
       if (activeClose === close) activeClose = null;
     };
   }, []);
@@ -115,8 +127,6 @@ export function Tooltip({
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
       closeRef.current();
     };
     const onScroll = () => closeRef.current();
@@ -133,6 +143,7 @@ export function Tooltip({
     const tip = tipRef.current;
     const anchorEl = anchor.current;
     if (!open || !tip || !anchorEl || hint.length === 0) return;
+    shownRef.current.tip = tip;
     showInTopLayer(tip);
     const next = placeTooltip(anchorEl.getBoundingClientRect(), tip.getBoundingClientRect(), {
       width: window.innerWidth,
@@ -140,6 +151,9 @@ export function Tooltip({
     });
     tip.style.top = `${next.top}px`;
     tip.style.left = `${next.left}px`;
+    return () => {
+      hideInTopLayer(tip);
+    };
   }, [open, hint]);
 
   const name = children.props["aria-label"];
@@ -178,5 +192,20 @@ function showInTopLayer(tip: HTMLDivElement) {
     tip.showPopover();
   } catch {
     // Already showing, or this document has no popover stack.
+  }
+}
+
+/** A manual popover stays in the top layer until hidePopover, including after the node unmounts. */
+function hideInTopLayer(tip: HTMLElement | null) {
+  if (!tip || typeof tip.hidePopover !== "function") return;
+  try {
+    if (!tip.matches(":popover-open")) return;
+  } catch {
+    // :popover-open is unsupported here; try to hide anyway.
+  }
+  try {
+    tip.hidePopover();
+  } catch {
+    // Already closed, or this document has no popover stack.
   }
 }
