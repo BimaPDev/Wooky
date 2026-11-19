@@ -87,6 +87,9 @@ function scanForbiddenMarkup(svg: string): void {
   if (svg.includes("\\")) {
     throw new Error("Unsafe SVG: backslashes are not allowed.");
   }
+  if (svg.includes("&#")) {
+    throw new Error("Unsafe SVG: numeric character references are not allowed.");
+  }
   const lower = svg.toLowerCase();
   if (lower.includes("<!doctype")) {
     throw new Error("Unsafe SVG: DOCTYPE is not allowed.");

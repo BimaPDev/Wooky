@@ -296,6 +296,16 @@ describe("wallpaper scenes", () => {
         /backslashes/,
       ],
       [
+        "numeric reference in attribute",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="u&#114;l(https://evil.example/x)"/></svg>',
+        /numeric character references/,
+      ],
+      [
+        "numeric reference in style",
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:u&#x72;l(https://evil.example/x)}</style></svg>',
+        /numeric character references/,
+      ],
+      [
         "CSS url escape",
         '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:u\\72l(https://evil.example)}</style></svg>',
         /backslashes/,
