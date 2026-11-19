@@ -4,6 +4,7 @@ import type {
   DeviceSettings,
   ProviderStatus,
   ReadModel,
+  RuntimeMode,
 } from "@age/contracts";
 import { applyEvent, emptyReadModel } from "@age/domain";
 import { create } from "zustand";
@@ -46,6 +47,10 @@ export interface AppState {
   activeAppearance: AppearanceTheme | null;
   previewAppearance: AppearanceTheme | null;
   dialog: Dialog | null;
+  fleetBoardOpen: boolean;
+  jumpOpen: boolean;
+  compareGroupId: string | null;
+  fanoutDialog: { projectId: string; prompt: string; runtimeMode: RuntimeMode } | null;
   /** null = follow the system preference. */
   theme: Theme | null;
   /** Bumped when a turn finishes, so the Changes panel knows to refetch. */
@@ -90,6 +95,10 @@ export const useStore = create<AppState>(() => ({
   activeAppearance: null,
   previewAppearance: null,
   dialog: null,
+  fleetBoardOpen: false,
+  jumpOpen: false,
+  compareGroupId: null,
+  fanoutDialog: null,
   theme: null,
   diffVersion: 0,
   notice: null,

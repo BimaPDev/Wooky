@@ -17,6 +17,7 @@ import {
   type UsageHistoryResult,
   type UsageWindowDays,
 } from "@age/contracts";
+import { fleetRows } from "@age/domain";
 import {
   looksLikeSvg,
   looksLikeT3code,
@@ -208,6 +209,112 @@ export const fixtureModel: ReadModel = {
       title: "Failover: no switch happened",
       status: "error",
       updatedAt: ago(1),
+    }),
+    "t-coord": thread({
+      id: "t-coord",
+      projectId: "p1",
+      title: "Coordinate the pagination work",
+      role: "coordinator",
+      groupId: "g-orch",
+      updatedAt: ago(8),
+    }),
+    "t-w1": thread({
+      id: "t-w1",
+      projectId: "p1",
+      title: "Draft the API change",
+      role: "worker",
+      parentThreadId: "t-coord",
+      groupId: "g-orch",
+      isolate: true,
+      status: "waiting",
+      updatedAt: ago(1),
+      worktree: { path: "/Users/demo/.age/worktrees/t-w1", branch: "age/draft-api" },
+    }),
+    "t-w2": thread({
+      id: "t-w2",
+      projectId: "p1",
+      title: "Write the tests",
+      provider: "codex",
+      model: "gpt-5.5-codex",
+      role: "worker",
+      parentThreadId: "t-coord",
+      groupId: "g-orch",
+      isolate: true,
+      status: "running",
+      updatedAt: ago(0.4),
+      worktree: { path: "/Users/demo/.age/worktrees/t-w2", branch: "age/write-tests" },
+    }),
+    "t-w3": thread({
+      id: "t-w3",
+      projectId: "p1",
+      title: "Update the README",
+      provider: "demo",
+      model: "demo",
+      role: "worker",
+      parentThreadId: "t-coord",
+      groupId: "g-orch",
+      isolate: true,
+      updatedAt: ago(12),
+      report: {
+        turnId: "uw3",
+        summary: "Documented cursor pagination in the README.",
+        diffStat: { files: 1, additions: 2, deletions: 1 },
+        at: ago(12),
+      },
+      worktree: { path: "/Users/demo/.age/worktrees/t-w3", branch: "age/update-readme" },
+    }),
+    "t-f1": thread({
+      id: "t-f1",
+      projectId: "p1",
+      title: "Claude pagination",
+      role: "worker",
+      groupId: "g-fan",
+      isolate: true,
+      updatedAt: ago(6),
+      report: {
+        turnId: "uf1",
+        summary: "Cursor pagination on listOrders with a test and README note.",
+        diffStat: { files: 3, additions: 15, deletions: 3 },
+        at: ago(6),
+      },
+      worktree: { path: "/Users/demo/.age/worktrees/t-f1", branch: "age/fanout-claude" },
+    }),
+    "t-f2": thread({
+      id: "t-f2",
+      projectId: "p1",
+      title: "Codex pagination",
+      provider: "codex",
+      model: "gpt-5.5-codex",
+      role: "worker",
+      groupId: "g-fan",
+      isolate: true,
+      updatedAt: ago(7),
+      report: {
+        turnId: "uf2",
+        summary: "Offset pagination plus a smaller page size default.",
+        diffStat: { files: 2, additions: 8, deletions: 2 },
+        at: ago(7),
+      },
+      worktree: { path: "/Users/demo/.age/worktrees/t-f2", branch: "age/fanout-codex" },
+    }),
+    "t-f3": thread({
+      id: "t-f3",
+      projectId: "p1",
+      title: "Demo pagination",
+      provider: "demo",
+      model: "demo",
+      role: "worker",
+      groupId: "g-fan",
+      isolate: true,
+      status: "error",
+      updatedAt: ago(9),
+      report: {
+        turnId: "uf3",
+        summary: "Turn failed while editing listOrders.",
+        diffStat: { files: 1, additions: 5, deletions: 2 },
+        at: ago(9),
+      },
+      worktree: { path: "/Users/demo/.age/worktrees/t-f3", branch: "age/fanout-demo" },
     }),
   },
   turns: {
@@ -538,6 +645,23 @@ export const fixtureModel: ReadModel = {
         ],
       }),
     ],
+    "t-coord": [
+      turn({
+        id: "ucoord",
+        threadId: "t-coord",
+        prompt: "Split pagination across workers.",
+        startedAt: ago(20),
+        endedAt: ago(18),
+        items: [
+          {
+            kind: "message",
+            id: "ucoordm",
+            role: "assistant",
+            text: "I spawned workers for the API, tests, and README.",
+          },
+        ],
+      }),
+    ],
     t9: [
       turn({
         id: "u9a",
@@ -598,9 +722,149 @@ export const fixtureModel: ReadModel = {
         },
       }),
     ],
+    "t-w1": [
+      turn({
+        id: "uw1",
+        threadId: "t-w1",
+        prompt: "Draft the API change.",
+        status: "running",
+        startedAt: ago(3),
+        endedAt: null,
+        items: [
+          {
+            kind: "approval",
+            id: "uw1a",
+            requestId: "rw1",
+            tool: "edit",
+            title: "Edit src/api/list.ts",
+            detail: "Add cursor arguments to listOrders.",
+            decision: null,
+          },
+        ],
+      }),
+    ],
+    "t-w2": [
+      turn({
+        id: "uw2",
+        threadId: "t-w2",
+        prompt: "Write the tests.",
+        provider: "codex",
+        model: "gpt-5.5-codex",
+        status: "running",
+        startedAt: ago(2),
+        endedAt: null,
+        items: [
+          {
+            kind: "tool",
+            id: "uw2t",
+            tool: "edit",
+            title: "Edit src/api/list.test.ts",
+            name: "Write",
+            status: "running",
+          },
+        ],
+      }),
+    ],
+    "t-w3": [
+      turn({
+        id: "uw3",
+        threadId: "t-w3",
+        prompt: "Update the README.",
+        provider: "demo",
+        model: "demo",
+        startedAt: ago(14),
+        endedAt: ago(12),
+        changedFiles: ["README.md"],
+        items: [
+          {
+            kind: "message",
+            id: "uw3m",
+            role: "assistant",
+            text: "Documented cursor pagination in the README.",
+          },
+        ],
+      }),
+    ],
+    "t-f1": [
+      turn({
+        id: "uf1",
+        threadId: "t-f1",
+        prompt: "Paginate the orders list three ways.",
+        startedAt: ago(16),
+        endedAt: ago(6),
+        changedFiles: ["src/api/list.ts", "src/api/list.test.ts", "README.md"],
+        items: [
+          {
+            kind: "message",
+            id: "uf1m",
+            role: "assistant",
+            text: "Cursor pagination on listOrders with a test and a README note.",
+          },
+        ],
+      }),
+    ],
+    "t-f2": [
+      turn({
+        id: "uf2",
+        threadId: "t-f2",
+        prompt: "Paginate the orders list three ways.",
+        provider: "codex",
+        model: "gpt-5.5-codex",
+        startedAt: ago(16),
+        endedAt: ago(7),
+        changedFiles: ["src/api/list.ts", "README.md"],
+        items: [
+          {
+            kind: "message",
+            id: "uf2m",
+            role: "assistant",
+            text: "Offset pagination with a default page size of 25.",
+          },
+        ],
+      }),
+    ],
+    "t-f3": [
+      turn({
+        id: "uf3",
+        threadId: "t-f3",
+        prompt: "Paginate the orders list three ways.",
+        provider: "demo",
+        model: "demo",
+        status: "failed",
+        startedAt: ago(16),
+        endedAt: ago(9),
+        error: "The demo agent stopped on a conflicted edit.",
+        changedFiles: ["src/api/list.ts"],
+        items: [
+          {
+            kind: "error",
+            id: "uf3e",
+            message: "The demo agent stopped on a conflicted edit.",
+          },
+        ],
+      }),
+    ],
   },
   cooldowns: { claude: { until: ago(-90), reason: "quota" } },
-  groups: {},
+  groups: {
+    "g-orch": {
+      id: "g-orch",
+      projectId: "p1",
+      kind: "orchestrated",
+      prompt: "Split pagination across workers.",
+      coordinatorThreadId: "t-coord",
+      threadIds: ["t-w1", "t-w2", "t-w3"],
+      createdAt: ago(20),
+    },
+    "g-fan": {
+      id: "g-fan",
+      projectId: "p1",
+      kind: "fanout",
+      prompt: "Paginate the orders list three ways.",
+      threadIds: ["t-f1", "t-f2", "t-f3"],
+      createdAt: ago(16),
+    },
+  },
   reviewNotes: {
     t1: [
       {
@@ -690,6 +954,39 @@ const diffs: Record<string, FileDiff[]> = {
     { path: "src/api/list.test.ts", status: "added", additions: 8, deletions: 0, patch: testPatch },
     { path: "README.md", status: "modified", additions: 2, deletions: 1, patch: readmePatch },
     { path: "docs/logo.png", status: "added", additions: 0, deletions: 0 },
+  ],
+  "t-f1": [
+    {
+      path: "src/api/list.ts",
+      status: "modified",
+      additions: 5,
+      deletions: 2,
+      patch: paginationPatch,
+    },
+    { path: "src/api/list.test.ts", status: "added", additions: 8, deletions: 0, patch: testPatch },
+    { path: "README.md", status: "modified", additions: 2, deletions: 1, patch: readmePatch },
+  ],
+  "t-f2": [
+    {
+      path: "src/api/list.ts",
+      status: "modified",
+      additions: 5,
+      deletions: 2,
+      patch: paginationPatch,
+    },
+    { path: "README.md", status: "modified", additions: 2, deletions: 1, patch: readmePatch },
+  ],
+  "t-f3": [
+    {
+      path: "src/api/list.ts",
+      status: "modified",
+      additions: 5,
+      deletions: 2,
+      patch: paginationPatch,
+    },
+  ],
+  "t-w3": [
+    { path: "README.md", status: "modified", additions: 2, deletions: 1, patch: readmePatch },
   ],
 };
 
@@ -1058,12 +1355,52 @@ function respond(method: RpcMethod, params: unknown): unknown {
     case "usage.history":
       return fixtureUsageHistory((params as RpcParams<"usage.history">).windowDays);
     case "fleet.overview":
+      return [...fleetRows(fixtureModel)];
     case "agents.list":
-      return [];
-    case "git.mergePreview": {
-      const files = (diffs[(params as RpcParams<"git.mergePreview">).threadId] ?? []).map(
-        (file) => ({ path: file.path, additions: file.additions, deletions: file.deletions }),
+      return fleetRows(fixtureModel).filter(
+        (row) => row.parentThreadId === (params as RpcParams<"agents.list">).parentThreadId,
       );
+    case "git.mergePreview": {
+      const threadId = (params as RpcParams<"git.mergePreview">).threadId;
+      if (threadId === "t-f3") {
+        return {
+          targetBranch: "main",
+          ahead: 1,
+          behind: 1,
+          files: [{ path: "src/api/list.ts", additions: 5, deletions: 2 }],
+          conflicts: ["src/api/list.ts"],
+        };
+      }
+      if (threadId === "t-f2") {
+        return {
+          targetBranch: "main",
+          ahead: 2,
+          behind: 0,
+          files: [
+            { path: "src/api/list.ts", additions: 5, deletions: 2 },
+            { path: "README.md", additions: 2, deletions: 1 },
+          ],
+          conflicts: [],
+        };
+      }
+      if (threadId === "t-f1" || threadId.startsWith("t-w") || threadId.startsWith("t-f")) {
+        return {
+          targetBranch: "main",
+          ahead: 3,
+          behind: 0,
+          files: [
+            { path: "src/api/list.ts", additions: 5, deletions: 2 },
+            { path: "src/api/list.test.ts", additions: 8, deletions: 0 },
+            { path: "README.md", additions: 2, deletions: 1 },
+          ],
+          conflicts: [],
+        };
+      }
+      const files = (diffs[threadId] ?? []).map((file) => ({
+        path: file.path,
+        additions: file.additions,
+        deletions: file.deletions,
+      }));
       return {
         targetBranch: "main",
         ahead: files.length > 0 ? 2 : 0,

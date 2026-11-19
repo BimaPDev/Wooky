@@ -3,14 +3,17 @@ import { fuzzyFilter } from "../lib/fuzzy.ts";
 import {
   configureThread,
   openDialog,
+  openFleetBoard,
+  openInSplit,
   pickProjectFolder,
   selectThread,
+  setJumpOpen,
   setPaletteOpen,
   toggleChanges,
 } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { toggleTheme } from "../state/theme.ts";
-import { isAvailable } from "./labels.ts";
+import { isAvailable, shortcut } from "./labels.ts";
 import { Modal } from "./Modal.tsx";
 
 interface PaletteAction {
@@ -50,8 +53,35 @@ function PaletteDialog() {
         hint: "Enter a path instead",
         run: () => openDialog({ kind: "addProject" }),
       },
+      {
+        id: "fleet-board",
+        label: "Open agent board",
+        hint: "Every agent",
+        run: () => {
+          close();
+          openFleetBoard();
+        },
+      },
+      {
+        id: "jump",
+        label: "Jump to thread",
+        hint: shortcut("J"),
+        run: () => {
+          close();
+          setJumpOpen(true);
+        },
+      },
     ];
     if (selected) {
+      list.push({
+        id: "open-split",
+        label: "Open current thread in split",
+        run: () => {
+          close();
+          useStore.setState({ fleetBoardOpen: false, compareGroupId: null });
+          openInSplit(selected);
+        },
+      });
       list.push({
         id: "changes",
         label: "Toggle changes panel",

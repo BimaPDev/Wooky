@@ -15,6 +15,7 @@ import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
 import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";
 import { saveTerminalOpen } from "../lib/shell.ts";
+import { fanoutTargetError } from "../components/fleet/helpers.ts";
 import {
   addPane,
   focusPane,
@@ -27,6 +28,7 @@ import {
 import {
   currentNavFromState,
   navTargetExists,
+  receiveEvent,
   useStore,
   type AppState,
   type Dialog,
@@ -91,6 +93,9 @@ function applyNavTarget(target: ReturnType<typeof currentNavFromState>) {
     navSilent: true,
     selectedThreadId: target.threadId,
     settingsOpen: false,
+    fleetBoardOpen: false,
+    compareGroupId: null,
+    jumpOpen: false,
     changes: { ...state.changes, turnId: null, focusPath: null },
   }));
 }
@@ -101,6 +106,9 @@ export const selectThread = (threadId: string | null) => {
   useStore.setState((state) => ({
     selectedThreadId: threadId,
     settingsOpen: false,
+    fleetBoardOpen: false,
+    compareGroupId: null,
+    jumpOpen: false,
     changes: { ...state.changes, turnId: null, focusPath: null },
   }));
 };
@@ -430,6 +438,122 @@ export const sendReviewNotes = (threadId: string, extra: string) =>
 export const mergeThread = (threadId: string, strategy: MergeStrategy, message: string) =>
   dispatch({ type: "thread.merge", threadId, strategy, ...(message ? { message } : {}) });
 
+export const setJumpOpen = (jumpOpen: boolean) => useStore.setState({ jumpOpen });
+
+export function openFleetBoard() {
+  useStore.setState((state) => ({
+    fleetBoardOpen: true,
+    compareGroupId: null,
+    jumpOpen: false,
+    paletteOpen: false,
+    settingsOpen: false,
+    fanoutDialog: null,
+    changes: { ...state.changes, open: false },
+  }));
+}
+
+export function closeCompare() {
+  useStore.setState({ compareGroupId: null });
+}
+
+export function openCompare(groupId: string) {
+  useStore.setState((state) => ({
+    compareGroupId: groupId,
+    fleetBoardOpen: false,
+    jumpOpen: false,
+    paletteOpen: false,
+    settingsOpen: false,
+    fanoutDialog: null,
+    changes: { ...state.changes, open: false },
+  }));
+}
+
+export function openFleetThread(threadId: string) {
+  selectThread(threadId);
+}
+
+export function openFanoutDialog(input: {
+  projectId: string;
+  prompt: string;
+  runtimeMode: RuntimeMode;
+}) {
+  useStore.setState({ fanoutDialog: input, paletteOpen: false, jumpOpen: false });
+}
+
+export const closeFanoutDialog = () => useStore.setState({ fanoutDialog: null });
+
 export function loadMergePreview(threadId: string): Promise<MergePreview> {
   return backend().call("git.mergePreview", { threadId });
+}
+
+export async function startFanout(input: {
+  projectId: string;
+  prompt: string;
+  targets: { provider: ProviderKind; model: string }[];
+  runtimeMode: RuntimeMode;
+}) {
+  const error = fanoutTargetError(input.targets);
+  if (error) {
+    useStore.setState({ notice: error });
+    return null;
+  }
+  const before = new Set(Object.keys(useStore.getState().model.groups));
+  const ack = await dispatch({ type: "fanout.start", ...input });
+  if (!ack) return null;
+  let groupId = Object.values(useStore.getState().model.groups).find(
+    (group) =>
+      group.kind === "fanout" && !before.has(group.id) && group.projectId === input.projectId,
+  )?.id;
+  if (!groupId && useStore.getState().fixture) {
+    const existing = Object.values(useStore.getState().model.groups)
+      .filter((group) => group.kind === "fanout" && group.projectId === input.projectId)
+      .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    groupId = existing?.id;
+  }
+  if (groupId) {
+    closeFanoutDialog();
+    openCompare(groupId);
+  }
+  return groupId ?? null;
+}
+
+export async function pickFanoutWinner(groupId: string, threadId: string) {
+  const ack = await dispatch({ type: "fanout.pick", groupId, threadId });
+  if (ack && useStore.getState().fixture) {
+    const state = useStore.getState();
+    receiveEvent({
+      type: "group.winnerPicked",
+      groupId,
+      threadId,
+      commandId: crypto.randomUUID(),
+      seq: state.model.seq + 1,
+      at: new Date().toISOString(),
+    });
+  }
+  return ack;
+}
+
+export async function mergeFanoutThread(threadId: string, targetBranch: string) {
+  const ack = await mergeThread(threadId, "squash", "");
+  if (ack && useStore.getState().fixture) {
+    const at = new Date().toISOString();
+    const commandId = crypto.randomUUID();
+    receiveEvent({
+      type: "thread.mergeChanged",
+      threadId,
+      merge: { status: "merging", targetBranch, at },
+      commandId,
+      seq: useStore.getState().model.seq + 1,
+      at,
+    });
+    receiveEvent({
+      type: "thread.mergeChanged",
+      threadId,
+      merge: { status: "merged", targetBranch, commit: "fixture", at },
+      commandId,
+      seq: useStore.getState().model.seq + 1,
+      at,
+    });
+  }
+  return ack;
 }

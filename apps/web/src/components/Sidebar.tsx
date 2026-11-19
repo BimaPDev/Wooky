@@ -1,12 +1,16 @@
-import type { Project, Thread } from "@age/contracts";
-import { memo, useMemo, useState } from "react";
+import type { FleetStatus, Project, Thread, ThreadGroup } from "@age/contracts";
+import { fleetRows } from "@age/domain";
+import { memo, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
   isSettledStatus,
   isWorkingStatus,
   partitionSidebarThreads,
 } from "../lib/sidebar-sections.ts";
 import {
+  openCompare,
   openDialog,
+  openFleetBoard,
+  openInSplit,
   openSettings,
   pickProjectFolder,
   removeProject,
@@ -17,6 +21,7 @@ import {
 } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import {
+  IconBot,
   IconChart,
   IconChevron,
   IconCircleArrowUp,
@@ -33,6 +38,13 @@ import {
 import { InlineRename } from "./InlineRename.tsx";
 import { providerLabels } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
+import {
+  buildSidebarTree,
+  promptPreview,
+  summarizeStatuses,
+  workerCountLabel,
+  type SidebarTreeNode,
+} from "./fleet/helpers.ts";
 
 const statusText = {
   connecting: "Connecting",
@@ -42,8 +54,14 @@ const statusText = {
 } as const;
 
 export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
-  const projects = useStore((state) => state.model.projects);
-  const threads = useStore((state) => state.model.threads);
+  const model = useStore((state) => state.model);
+  const projects = model.projects;
+  const threads = model.threads;
+  const fleetGroups = model.groups;
+  const statusById = useMemo(
+    () => Object.fromEntries(fleetRows(model).map((row) => [row.threadId, row.status])),
+    [model],
+  );
   const selected = useStore((state) => state.selectedThreadId);
   const groupByProject = useStore((state) => state.deviceSettings?.projectGrouping ?? true);
   const status = useStore((state) => state.status);
@@ -54,22 +72,22 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const [settledOpen, setSettledOpen] = useState(false);
 
   const needle = query.trim().toLowerCase();
-  const { working, settled, groups, hasProjects, settledInScroll } = useMemo(() => {
+  const { working, settled, groups, all, hasProjects, settledInScroll } = useMemo(() => {
     const matches = (thread: Thread) =>
       !needle ||
       thread.title.toLowerCase().includes(needle) ||
       (projects[thread.projectId]?.name.toLowerCase().includes(needle) ?? false);
-    const all = Object.values(threads)
+    const matched = Object.values(threads)
       .filter((thread) => projects[thread.projectId] && matches(thread))
       .toSorted(
         (a, b) =>
           Number(b.status === "waiting") - Number(a.status === "waiting") ||
           b.updatedAt.localeCompare(a.updatedAt),
       );
-    const parts = partitionSidebarThreads(all);
+    const parts = partitionSidebarThreads(matched);
     // Expanded Settled lists its own threads, so keep them out of the groups to avoid duplicates.
     const includeSettledInGroups = !settledOpen;
-    const inProjectList = all.filter((thread) => {
+    const inProjectList = matched.filter((thread) => {
       if (isWorkingStatus(thread.status)) return false;
       if (isSettledStatus(thread.status) && !includeSettledInGroups) return false;
       return true;
@@ -85,6 +103,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
       working: parts.working,
       settled: parts.settled,
       groups: byProject,
+      all: matched,
       hasProjects: Object.values(projects).length > 0,
       settledInScroll: includeSettledInGroups,
     };
@@ -130,6 +149,15 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
         <button
           type="button"
           className="icon-button"
+          aria-label="Open agent board"
+          title="Agent board"
+          onClick={openFleetBoard}
+        >
+          <IconBot />
+        </button>
+        <button
+          type="button"
+          className="icon-button"
           aria-label="New thread"
           title="New thread"
           disabled={!hasProjects}
@@ -152,24 +180,23 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
               key={project.id}
               project={project}
               threads={list}
+              allThreads={all.filter((thread) => thread.projectId === project.id)}
+              groups={fleetGroups}
               selected={selected}
               grouped
+              statusById={statusById}
             />
           ))
         ) : (
-          <ul className="thread-list">
-            {groups.flatMap((group) =>
-              group.threads.map((thread) => (
-                <ThreadCard
-                  key={thread.id}
-                  thread={thread}
-                  projectName={projects[thread.projectId]?.name ?? ""}
-                  active={thread.id === selected}
-                  grouped={false}
-                />
-              )),
-            )}
-          </ul>
+          <ThreadTree
+            visible={groups.flatMap((group) => group.threads)}
+            allThreads={all}
+            groups={fleetGroups}
+            selected={selected}
+            grouped={false}
+            projectName={(id) => projects[id]?.name ?? ""}
+            statusById={statusById}
+          />
         )}
       </div>
       {working.length > 0 ? (
@@ -185,16 +212,15 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
             <IconChevron open={workingOpen} />
           </button>
           {workingOpen ? (
-            <ul className="thread-list">
-              {working.map((thread) => (
-                <WorkingRow
-                  key={thread.id}
-                  thread={thread}
-                  projectName={projects[thread.projectId]?.name ?? ""}
-                  active={thread.id === selected}
-                />
-              ))}
-            </ul>
+            <ThreadTree
+              visible={working}
+              allThreads={all}
+              groups={fleetGroups}
+              selected={selected}
+              grouped={false}
+              projectName={(id) => projects[id]?.name ?? ""}
+              statusById={statusById}
+            />
           ) : null}
         </section>
       ) : null}
@@ -211,17 +237,15 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
             <IconChevron open={settledOpen} />
           </button>
           {settledOpen ? (
-            <ul className="thread-list">
-              {settled.map((thread) => (
-                <ThreadCard
-                  key={thread.id}
-                  thread={thread}
-                  projectName={projects[thread.projectId]?.name ?? ""}
-                  active={thread.id === selected}
-                  grouped={false}
-                />
-              ))}
-            </ul>
+            <ThreadTree
+              visible={settled}
+              allThreads={all}
+              groups={fleetGroups}
+              selected={selected}
+              grouped={false}
+              projectName={(id) => projects[id]?.name ?? ""}
+              statusById={statusById}
+            />
           ) : settledInScroll ? null : (
             <p className="sidebar-settled-hint">Expand to browse idle threads.</p>
           )}
@@ -278,13 +302,19 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
 function ProjectGroup({
   project,
   threads,
+  allThreads,
+  groups,
   selected,
   grouped,
+  statusById,
 }: {
   project: Project;
   threads: Thread[];
+  allThreads: Thread[];
+  groups: Record<string, ThreadGroup>;
   selected: string | null;
   grouped: boolean;
+  statusById: Record<string, FleetStatus>;
 }) {
   if (threads.length === 0) return null;
   return (
@@ -313,18 +343,235 @@ function ProjectGroup({
           </button>
         </span>
       </div>
-      <ul className="thread-list">
-        {threads.map((thread) => (
-          <ThreadCard
-            key={thread.id}
-            thread={thread}
-            projectName={project.name}
-            active={thread.id === selected}
-            grouped={grouped}
-          />
-        ))}
-      </ul>
+      <ThreadTree
+        visible={threads}
+        allThreads={allThreads}
+        groups={groups}
+        selected={selected}
+        grouped={grouped}
+        projectName={() => project.name}
+        statusById={statusById}
+      />
     </section>
+  );
+}
+
+function ThreadTree({
+  visible,
+  allThreads,
+  groups,
+  selected,
+  grouped,
+  projectName,
+  statusById,
+}: {
+  visible: Thread[];
+  allThreads: Thread[];
+  groups: Record<string, ThreadGroup>;
+  selected: string | null;
+  grouped: boolean;
+  projectName: (projectId: string) => string;
+  statusById: Record<string, FleetStatus>;
+}) {
+  const nodes = useMemo(
+    () => buildSidebarTree(visible, allThreads, groups),
+    [visible, allThreads, groups],
+  );
+  if (nodes.length === 0) return null;
+  return (
+    <ul className="thread-list">
+      {nodes.map((node) => (
+        <TreeNode
+          key={treeKey(node)}
+          node={node}
+          selected={selected}
+          grouped={grouped}
+          projectName={projectName}
+          statusById={statusById}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function treeKey(node: SidebarTreeNode): string {
+  if (node.kind === "group") return `g:${node.group.id}`;
+  return node.thread.id;
+}
+
+function TreeNode({
+  node,
+  selected,
+  grouped,
+  projectName,
+  statusById,
+}: {
+  node: SidebarTreeNode;
+  selected: string | null;
+  grouped: boolean;
+  projectName: (projectId: string) => string;
+  statusById: Record<string, FleetStatus>;
+}) {
+  if (node.kind === "thread") {
+    return (
+      <ThreadCard
+        thread={node.thread}
+        projectName={projectName(node.thread.projectId)}
+        active={node.thread.id === selected}
+        grouped={grouped}
+      />
+    );
+  }
+  if (node.kind === "coordinator") {
+    return (
+      <CoordinatorNode
+        thread={node.thread}
+        workers={node.workers}
+        selected={selected}
+        grouped={grouped}
+        projectName={projectName}
+        statusById={statusById}
+      />
+    );
+  }
+  return (
+    <FanoutNode
+      group={node.group}
+      threads={node.threads}
+      selected={selected}
+      grouped={grouped}
+      projectName={projectName}
+      statusById={statusById}
+    />
+  );
+}
+
+function CoordinatorNode({
+  thread,
+  workers,
+  selected,
+  grouped,
+  projectName,
+  statusById,
+}: {
+  thread: Thread;
+  workers: Thread[];
+  selected: string | null;
+  grouped: boolean;
+  projectName: (projectId: string) => string;
+  statusById: Record<string, FleetStatus>;
+}) {
+  const waiting = workers.filter((worker) => statusById[worker.id] === "waiting").length;
+  const defaultOpen = waiting > 0 || workers.some((worker) => statusById[worker.id] === "working");
+  const [open, setOpen] = useState(defaultOpen);
+  const splitMenu = useSplitContextMenu(thread.id);
+  return (
+    <li className="fleet-tree-item">
+      <div
+        className={thread.id === selected ? "thread-row active" : "thread-row"}
+        onContextMenu={splitMenu.onContextMenu}
+      >
+        <button
+          type="button"
+          className="icon-button fleet-tree-toggle"
+          aria-expanded={open}
+          aria-label={open ? "Collapse workers" : "Expand workers"}
+          onClick={() => setOpen(!open)}
+        >
+          <IconChevron open={open} />
+        </button>
+        <button
+          type="button"
+          className="thread-button"
+          aria-current={thread.id === selected ? "page" : undefined}
+          onClick={() => selectThread(thread.id)}
+        >
+          <span className="thread-top">
+            {grouped ? null : <ProjectMonogram name={projectName(thread.projectId)} />}
+            <span className="thread-title">{thread.title || "Untitled thread"}</span>
+          </span>
+          <span className="thread-meta">
+            <span className="fleet-tree-badge">{workerCountLabel(workers.length, waiting)}</span>
+            <StatusMark status={thread.status} />
+          </span>
+        </button>
+      </div>
+      {open ? (
+        <ul className="fleet-nest">
+          {workers.map((worker) => (
+            <ThreadCard
+              key={worker.id}
+              thread={worker}
+              projectName={projectName(worker.projectId)}
+              active={worker.id === selected}
+              grouped={grouped}
+            />
+          ))}
+        </ul>
+      ) : null}
+      {splitMenu.node}
+    </li>
+  );
+}
+
+function FanoutNode({
+  group,
+  threads,
+  selected,
+  grouped,
+  projectName,
+  statusById,
+}: {
+  group: ThreadGroup;
+  threads: Thread[];
+  selected: string | null;
+  grouped: boolean;
+  projectName: (projectId: string) => string;
+  statusById: Record<string, FleetStatus>;
+}) {
+  const [open, setOpen] = useState(true);
+  const summary = summarizeStatuses(threads.map((thread) => statusById[thread.id] ?? "idle"));
+  const title = promptPreview(group.prompt);
+  return (
+    <li className="fleet-tree-item">
+      <div className="thread-row">
+        <button
+          type="button"
+          className="icon-button fleet-tree-toggle"
+          aria-expanded={open}
+          aria-label={open ? "Collapse group" : "Expand group"}
+          onClick={() => setOpen(!open)}
+        >
+          <IconChevron open={open} />
+        </button>
+        <button
+          type="button"
+          className="thread-button"
+          aria-label={`Compare ${title}`}
+          onClick={() => openCompare(group.id)}
+        >
+          <span className="thread-top">
+            <span className="thread-title">{title}</span>
+          </span>
+          <span className="thread-meta">
+            <span className="fleet-tree-badge">{summary}</span>
+          </span>
+        </button>
+      </div>
+      {open ? (
+        <ul className="fleet-nest">
+          {threads.map((thread) => (
+            <ThreadCard
+              key={thread.id}
+              thread={thread}
+              projectName={projectName(thread.projectId)}
+              active={thread.id === selected}
+              grouped={grouped}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </li>
   );
 }
 
@@ -340,8 +587,13 @@ const ThreadCard = memo(function ThreadCard({
   grouped: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const splitMenu = useSplitContextMenu(thread.id);
   return (
-    <li className={active ? "thread-row active" : "thread-row"} data-thread-item="">
+    <li
+      className={active ? "thread-row active" : "thread-row"}
+      data-thread-item=""
+      onContextMenu={splitMenu.onContextMenu}
+    >
       {editing ? (
         <InlineRename
           value={thread.title}
@@ -397,47 +649,68 @@ const ThreadCard = memo(function ThreadCard({
           </span>
         </>
       )}
+      {splitMenu.node}
     </li>
   );
 });
 
-function WorkingRow({
-  thread,
-  projectName,
-  active,
-}: {
-  thread: Thread;
-  projectName: string;
-  active: boolean;
-}) {
-  return (
-    <li className={active ? "working-row active" : "working-row"}>
-      <button
-        type="button"
-        className="working-button"
-        aria-current={active ? "page" : undefined}
-        onClick={() => selectThread(thread.id)}
+function useSplitContextMenu(threadId: string): {
+  onContextMenu: (event: MouseEvent) => void;
+  node: ReactNode;
+} {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // sync: dismiss the thread context menu on outside pointer, escape, or scroll
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    const onPointer = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-thread-split-menu]")) {
+        return;
+      }
+      close();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [menu]);
+
+  return {
+    onContextMenu: (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setMenu({ x: event.clientX, y: event.clientY });
+    },
+    node: menu ? (
+      <div
+        className="fleet-context"
+        data-thread-split-menu=""
+        role="menu"
+        style={{ top: menu.y, left: menu.x }}
       >
-        <span className="thread-top">
-          <ProjectMonogram name={projectName} />
-          <span className="thread-title">{thread.title || "Untitled thread"}</span>
-          <span className="working-label">
-            <StatusMark status={thread.status} />
-            {thread.status === "waiting" ? "Waiting" : "Working"}
-          </span>
-        </span>
-        <span className="thread-meta">
-          <span className="thread-time">{relativeTime(thread.updatedAt)}</span>
-          <span
-            className={`provider-badge provider-${thread.provider}`}
-            title={providerLabels[thread.provider]}
-          >
-            {thread.provider.slice(0, 2).toUpperCase()}
-          </span>
-        </span>
-      </button>
-    </li>
-  );
+        <button
+          type="button"
+          className="fleet-context-item"
+          role="menuitem"
+          onClick={() => {
+            useStore.setState({ fleetBoardOpen: false, compareGroupId: null });
+            openInSplit(threadId);
+            setMenu(null);
+          }}
+        >
+          Open in split
+        </button>
+      </div>
+    ) : null,
+  };
 }
 
 function relativeTime(iso: string): string {

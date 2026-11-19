@@ -1,10 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { dismissNotice, pickProjectFolder, setPaletteOpen } from "../state/actions.ts";
 import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
 import { useStore, type Theme } from "../state/store.ts";
 import { syncRootThemeClass } from "../state/theme.ts";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
+import { CompareView } from "./fleet/CompareView.tsx";
+import { CoordinatorStrip } from "./fleet/CoordinatorStrip.tsx";
+import { FanoutDialog } from "./fleet/FanoutDialog.tsx";
+import { FleetBoard } from "./fleet/FleetBoard.tsx";
+import { JumpSwitcher } from "./fleet/JumpSwitcher.tsx";
 import { Dialogs } from "./Dialogs.tsx";
 import { PaneDock } from "./panes/PaneRow.tsx";
 import { splitLayout } from "./panes/layout.ts";
@@ -45,6 +50,8 @@ export function App() {
   const splitActive = useStore(
     (state) => splitLayout(state.panes, (id) => Boolean(state.model.threads[id])) !== null,
   );
+  const fleetBoardOpen = useStore((state) => state.fleetBoardOpen);
+  const compareGroupId = useStore((state) => state.compareGroupId);
   const macDesktop = isMacDesktopShell();
   const desktopShell = isElectronShell();
 
@@ -130,32 +137,14 @@ export function App() {
           <div className={terminalOpen ? "workspace-stack with-terminal" : "workspace-stack"}>
             <div className={bodyClass}>
               <main className="main">
-                {splitActive ? (
-                  <PaneDock />
-                ) : threadId ? (
-                  <>
-                    <ThreadView key={threadId} threadId={threadId} />
-                    <Composer key={`composer-${threadId}`} threadId={threadId} />
-                  </>
-                ) : hasProjects ? (
-                  <p className="empty-state">Pick a thread or start a new one.</p>
-                ) : (
-                  <div className="empty-state-hero">
-                    <p className="empty-state-heading">No projects yet</p>
-                    <p className="empty-state-copy">
-                      Add a project folder to browse threads and start work.
-                    </p>
-                    <button
-                      type="button"
-                      className="button primary"
-                      aria-busy={pickingFolder}
-                      disabled={pickingFolder}
-                      onClick={() => void pickProjectFolder()}
-                    >
-                      Add a project folder
-                    </button>
-                  </div>
-                )}
+                {mainView({
+                  fleetBoardOpen,
+                  compareGroupId,
+                  splitActive,
+                  threadId,
+                  hasProjects,
+                  pickingFolder,
+                })}
                 {notice ? (
                   <div className="notice-bar" role="alert">
                     <span>{notice}</span>
@@ -177,7 +166,54 @@ export function App() {
       </div>
       {settingsOpen ? <Settings /> : null}
       <Palette />
+      <JumpSwitcher />
+      <FanoutDialog />
       <Dialogs />
     </>
+  );
+}
+
+function mainView({
+  fleetBoardOpen,
+  compareGroupId,
+  splitActive,
+  threadId,
+  hasProjects,
+  pickingFolder,
+}: {
+  fleetBoardOpen: boolean;
+  compareGroupId: string | null;
+  splitActive: boolean;
+  threadId: string | null;
+  hasProjects: boolean;
+  pickingFolder: boolean;
+}): ReactNode {
+  if (fleetBoardOpen) return <FleetBoard />;
+  if (compareGroupId) return <CompareView groupId={compareGroupId} />;
+  if (splitActive) return <PaneDock />;
+  if (threadId) {
+    return (
+      <>
+        <CoordinatorStrip threadId={threadId} />
+        <ThreadView key={threadId} threadId={threadId} />
+        <Composer key={`composer-${threadId}`} threadId={threadId} />
+      </>
+    );
+  }
+  if (hasProjects) return <p className="empty-state">Pick a thread or start a new one.</p>;
+  return (
+    <div className="empty-state-hero">
+      <p className="empty-state-heading">No projects yet</p>
+      <p className="empty-state-copy">Add a project folder to browse threads and start work.</p>
+      <button
+        type="button"
+        className="button primary"
+        aria-busy={pickingFolder}
+        disabled={pickingFolder}
+        onClick={() => void pickProjectFolder()}
+      >
+        Add a project folder
+      </button>
+    </div>
   );
 }
