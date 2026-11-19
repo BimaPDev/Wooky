@@ -4935,3 +4935,197 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
     grid-template-columns: 1fr;
   }
 }
+
+/* theme studio */
+
+.theme-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-2);
+  border-radius: var(--radius-xl);
+}
+
+.theme-gallery.drop-target {
+  box-shadow: inset 0 0 0 1px var(--focus);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.theme-gallery-group h4 {
+  margin: 0 0 var(--space-3);
+  padding: 0 var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.theme-library-card.active:hover {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.theme-library-card-body:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.theme-library-card-body:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.theme-card-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 5.5rem;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+
+.theme-card-thumb {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+.theme-card-preview .theme-preview-badge {
+  top: var(--space-1);
+  right: var(--space-1);
+  bottom: auto;
+}
+
+.theme-card-swatch {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  width: 14px;
+  height: 14px;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-0) 70%, transparent);
+}
+
+.theme-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+
+.theme-card-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.theme-import-status {
+  margin: 0;
+  padding: 0 var(--space-1) var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.theme-import-status.error,
+.empty-state.error {
+  color: var(--red);
+}
+
+.theme-studio-editing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.theme-studio-editing-label {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.theme-paste-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: min(32rem, 100%);
+  padding: var(--space-4);
+}
+
+.theme-paste-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.theme-paste-head h3 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.theme-paste-input {
+  width: 100%;
+  min-height: 16rem;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.theme-paste-input:hover {
+  border-color: var(--line-strong);
+}
+
+.theme-paste-input:focus-visible {
+  border-color: var(--focus);
+}
+
+.theme-paste-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.theme-wallpaper-slider {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.toggle:hover {
+  background: var(--bg-hover);
+}
+
+.toggle.on:hover {
+  background: color-mix(in srgb, var(--accent) 82%, var(--bg-3));
+}
+
+.toggle:active {
+  background: var(--bg-active);
+}
+
+.toggle.on:active {
+  background: color-mix(in srgb, var(--accent) 64%, var(--bg-3));
+}
+
+.theme-studio-tab:hover {
+  color: var(--text);
+}
+
+.theme-studio-tab:active {
+  background: var(--bg-active);
+}
+
+.theme-var:active {
+  background: var(--bg-active);
+}
+
+.segmented-item:active {
+  background: var(--bg-active);
+}
