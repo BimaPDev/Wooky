@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelTarget, TurnFailure } from "./failover.ts";
 import { Id, InteractionMode, ProviderKind, QuestionAnswers, RuntimeMode } from "./model.ts";
 
 /**
@@ -76,6 +77,14 @@ export const Command = z.discriminatedUnion("type", [
     turnId: Id,
     /** Absent means true. False rewinds the conversation only and leaves files as they are. */
     restoreFiles: z.boolean().optional(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal("thread.failover"),
+    threadId: Id,
+    to: ModelTarget,
+    failure: TurnFailure,
+    retryPrompt: z.string().min(1),
   }),
 ]);
 export type Command = z.infer<typeof Command>;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FailoverSettings } from "./failover.ts";
 import { ProviderKind } from "./model.ts";
 
 /** Hex color like #rgb or #rrggbb / #rrggbbaa. */
@@ -184,5 +185,6 @@ export const DeviceSettings = z.object({
   importLocalHistory: z.boolean().default(true),
   /** Wallpaper animation. Off stops it; a hidden window and reduced motion stop it too. */
   wallpaperMotion: z.enum(["on", "off"]).default("on"),
+  failover: FailoverSettings,
 });
 export type DeviceSettings = z.infer<typeof DeviceSettings>;

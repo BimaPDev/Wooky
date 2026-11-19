@@ -6,7 +6,7 @@ import type { AgeEvent, ReadModel, Thread, TimelineItem, Turn } from "@age/contr
  * Returns a new object only for the branches that changed (cheap for React).
  */
 export function emptyReadModel(): ReadModel {
-  return { seq: 0, projects: {}, threads: {}, turns: {} };
+  return { seq: 0, projects: {}, threads: {}, turns: {}, cooldowns: {} };
 }
 
 export function applyEvents(model: ReadModel, events: readonly AgeEvent[]): ReadModel {
@@ -233,6 +233,46 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         queue: queue.filter((item) => item.id !== event.queueId),
       });
     }
+
+    case "provider.cooledDown": {
+      const cooldowns = {
+        ...(model.cooldowns ?? {}),
+        [event.key]: { until: event.until, reason: event.reason },
+      };
+      return { ...model, cooldowns };
+    }
+
+    case "provider.cooldownCleared": {
+      const cooldowns = { ...(model.cooldowns ?? {}) };
+      if (!(event.key in cooldowns)) return model;
+      const { [event.key]: _removed, ...rest } = cooldowns;
+      return { ...model, cooldowns: rest };
+    }
+
+    case "thread.failedOver": {
+      const thread = model.threads[event.threadId];
+      if (!thread) return model;
+      const original = thread.failover?.original ?? event.from;
+      return patchThread(model, event.threadId, event.at, {
+        provider: event.to.provider,
+        model: event.to.model,
+        providerSessionId: null,
+        failover: {
+          original,
+          switchedAt: event.at,
+          reason: event.failure.kind,
+          ...(event.failure.resetAt ? { resetAt: event.failure.resetAt } : {}),
+          switches: event.switches,
+        },
+      });
+    }
+
+    case "thread.failoverRestored":
+      return patchThread(model, event.threadId, event.at, {
+        provider: event.to.provider,
+        model: event.to.model,
+        failover: undefined,
+      });
   }
 }
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelTarget, TurnFailure, TurnFailureKind } from "./failover.ts";
 import {
   Id,
   InteractionMode,
@@ -135,6 +136,7 @@ export const AgeEvent = z.discriminatedUnion("type", [
     usage: Usage.nullable(),
     error: z.string().nullable(),
     nativeRef: z.string().nullable().optional(),
+    failure: TurnFailure.optional(),
   }),
   z.object({
     ...meta,
@@ -153,6 +155,29 @@ export const AgeEvent = z.discriminatedUnion("type", [
     threadId: Id,
     queueId: Id,
     reason: z.enum(["started", "removed"]),
+  }),
+  z.object({
+    ...meta,
+    type: z.literal("provider.cooledDown"),
+    key: z.string(),
+    until: IsoTime,
+    reason: TurnFailureKind,
+  }),
+  z.object({ ...meta, type: z.literal("provider.cooldownCleared"), key: z.string() }),
+  z.object({
+    ...meta,
+    type: z.literal("thread.failedOver"),
+    threadId: Id,
+    from: ModelTarget,
+    to: ModelTarget,
+    failure: TurnFailure,
+    switches: z.number().int(),
+  }),
+  z.object({
+    ...meta,
+    type: z.literal("thread.failoverRestored"),
+    threadId: Id,
+    to: ModelTarget,
   }),
 ]);
 export type AgeEvent = z.infer<typeof AgeEvent>;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ThreadFailoverState } from "./failover.ts";
 
 /** Runtimes AGE can drive. AGE never ships its own model or account. */
 export const ProviderKind = z.enum(["claude", "cursor", "codex", "demo"]);
@@ -64,6 +65,7 @@ export const Thread = z.object({
   status: ThreadStatus,
   createdAt: IsoTime,
   updatedAt: IsoTime,
+  failover: ThreadFailoverState.optional(),
 });
 export type Thread = z.infer<typeof Thread>;
 

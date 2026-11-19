@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TurnFailure } from "./failover.ts";
 import { Id, TimelineItem, ToolKind, Usage, UserQuestion } from "./model.ts";
 
 /**
@@ -23,6 +24,7 @@ export const ProviderEvent = z.discriminatedUnion("type", [
     error: z.string().nullable(),
     /** Provider id of the turn's last native message, so a revert can rewind to it. */
     nativeRef: z.string().optional(),
+    failure: TurnFailure.optional(),
   }),
 ]);
 export type ProviderEvent = z.infer<typeof ProviderEvent>;

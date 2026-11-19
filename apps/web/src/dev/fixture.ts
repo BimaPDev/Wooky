@@ -474,6 +474,7 @@ export const fixtureModel: ReadModel = {
       }),
     ],
   },
+  cooldowns: {},
 };
 
 export const fixtureProviders: ProviderStatus[] = [
