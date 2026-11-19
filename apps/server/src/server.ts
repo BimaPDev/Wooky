@@ -61,6 +61,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     builtinAdapters({
       onClaudeRateLimit: (info) => limits.ingestClaudeRateLimit(info),
       providerSettings,
+      deviceSettings: () => themes.getSettings(),
     });
   const registry = createProviderRegistry(adapters, { settings: providerSettings });
   const capabilities = new Map<ProviderKind, ProviderCapabilities>();

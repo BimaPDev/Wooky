@@ -13,9 +13,8 @@ translates one CLI's protocol into `ProviderEvent`s. The client only ever sees
 | `opencode` | The `opencode` CLI                                                                               |
 | `acp`      | One adapter for any [Agent Client Protocol](https://agentclientprotocol.com) agent the user adds |
 
-The server registry knows every kind. This tree ships adapters for Claude, Cursor,
-Codex and Demo only. OpenCode and ACP stay unregistered until their adapter stations
-land. A kind with no adapter is absent from `providers.list`.
+The server registry ships an adapter for every kind. A kind with no adapter is absent
+from `providers.list`.
 
 ## Settings
 
@@ -82,7 +81,22 @@ unchanged. Those ids look like `provider/model`. One of them is `opencode/big-pi
 AGE does not keep a second copy of that catalog: the adapter asks the CLI (`live`) and
 shows `providers.opencode.customModels` beside it (`custom`).
 
-This is not the ACP model-id form below. OpenCode has its own adapter.
+This is not the ACP model-id form below. OpenCode has its own adapter. It runs
+`opencode acp` (or `binaryPath` plus `acp` when that is set) and appends
+`providers.opencode.extraArgs`. `providers.opencode.env` is merged into the child
+environment and is not logged.
+
+The status probe runs `opencode --version`, then `opencode models`. Model ids are
+cached for five minutes. `authenticated` stays null: those two commands do not say
+whether a login is required. A sign-in error in their output is reported as signed out.
+
+After `session/new`, the adapter selects the thread's model with
+`session/set_config_option` when the session advertises a `model` option
+(`{ configId: "model", value: "<id>" }`). If that option is absent it tries
+`session/set_model`. If the agent implements neither, the turn continues on the
+agent's default and says so. `opencode acp` has no `--model` flag. OpenCode 1.19.6
+can create a file in the workspace without sending `session/request_permission`.
+When it does ask, the approval card is the same one the ACP adapter uses.
 
 ## ACP
 
@@ -145,3 +159,64 @@ ACP server.
   "enabled": true
 }
 ```
+
+## What the ACP adapter does
+
+One process per turn. Frames are JSON-RPC 2.0, one JSON object per line. A line
+over 1 MiB is dropped and the next line is read. Every inbound object is checked
+with zod. A line that is not a JSON-RPC 2.0 message is dropped. Unknown
+notification methods, and unknown `session/update` discriminators, are passed to
+the debug channel (`AGE_DEBUG=1` prints them). They do not fail the turn.
+
+The client advertises no filesystem and no terminal capabilities, so the agent
+uses its own tools. `fs/read_text_file` and `fs/write_text_file` are not
+implemented.
+
+A turn calls `initialize` (protocol version 1), then `session/load` when the
+agent advertised `loadSession` and the thread already has a session id. Otherwise
+it calls `session/new`. The session id is stored only when `loadSession` is
+advertised, so an agent that cannot resume gets the handoff transcript on the
+next turn, the same way a provider with no native session does. Loading a session
+replays history; those updates are not copied into the new turn. If `session/load`
+fails, the turn starts a new session and says so.
+
+`session/update` becomes provider events:
+
+| Update                | Event                                                                            |
+| --------------------- | -------------------------------------------------------------------------------- |
+| `agent_message_chunk` | assistant message, then deltas                                                   |
+| `agent_thought_chunk` | reasoning, then deltas                                                           |
+| `tool_call`           | tool item. `execute` is a command, `fetch` is web, `delete` and `move` are edits |
+| `tool_call_update`    | the same tool item, replaced                                                     |
+| `plan`                | a plan                                                                           |
+| `usage_update`        | usage. `used` is reported as input tokens. A USD `cost` is `costUsd`             |
+
+Tool output previews stop at 4 KB.
+
+`session/request_permission` becomes an approval card. Allow maps to `allow_once`
+(or `allow_always` if that is the only allow option). Deny maps to `reject_once`
+(or `reject_always`). Full access picks allow without a card. Auto-edits does the
+same for edits, and still asks for commands. Plan mode always asks. Cancelling the
+turn answers the pending request with `cancelled`, sends `session/cancel`, and
+kills the process group if the prompt has not returned within 3 seconds.
+
+A prompt error whose text matches the shared classifier becomes that failure
+(`rate_limit`, `quota`, `overloaded`, `auth`). ACP's `auth_required` error
+(`-32000`) is `auth`. A crash is a failed turn. Its stderr tail is classified the
+same way.
+
+The status probe, for each enabled agent, checks that `command` resolves and then
+runs `initialize` with a 4 second timeout. The version line is the agent's name
+and version. `authenticated` is true when `authMethods` is empty, and null when
+the agent advertises a login method: initialize lists methods, it does not say
+whether they have been used. Models are the agent's `models` list as
+`<agentId>/<modelId>` with source `custom`, or just `<agentId>` when that list
+is omitted. `providers.acp.extraArgs` are appended after the agent's `args`.
+`providers.acp.env` overrides the agent's `env` on the same key. Neither is logged.
+The fleet variables (`AGE_THREAD_ID`, `AGE_SERVER_URL`, the `age` shim on `PATH`)
+are applied on top, and the coordinator instructions are prefixed to the first
+prompt of a new session.
+
+The server passes the current device settings into both adapters when it builds
+them. Probes and turns read that function, so a settings change is visible on the
+next probe or turn.
