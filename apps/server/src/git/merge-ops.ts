@@ -24,7 +24,7 @@ const AGE_IDENTITY = {
   GIT_COMMITTER_EMAIL: "age@localhost",
 } as const;
 
-const AGE_BRANCH = /^age\/[A-Za-z0-9._/-]+$/;
+const AGE_BRANCH = /^age\/[\w./-]+$/;
 const MARKER_FILE = "age-merge-in-progress";
 const LOCK_FILE = "age-merge.lock";
 const UNPARSABLE_LOCK_STALE_MS = 60_000;

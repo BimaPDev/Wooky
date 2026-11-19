@@ -206,6 +206,14 @@ describe("merge safety: idempotence and refusal", () => {
     await expectCleanRoot(root);
   });
 
+  it("merges a worktree whose thread id has a production-style underscore", async () => {
+    const root = await makeRepo();
+    const wt = await cleanWorker(root, "thread_3f2a9c1e-7b4d-4e8a-9f00-1a2b3c4d5e6f", "real.txt");
+    const res = await git.mergeWorktree(root, wt, "squash", "Worker");
+    expect(res.ok).toBe(true);
+    await expectCleanRoot(root);
+  });
+
   it("treats a squash that stages nothing as merged", async () => {
     const root = await makeRepo();
     const wt = await git.createWorktree(root, "empty1");
