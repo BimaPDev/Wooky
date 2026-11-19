@@ -22,6 +22,15 @@ import {
   threadsSharingWorkspace,
 } from "@age/domain";
 import { cooledDownIfNeeded, expiredCooldownClears } from "../failover/cooldown.ts";
+import {
+  decideFanoutPick,
+  decideFanoutStart,
+  decideReviewAddNote,
+  decideReviewRemoveNote,
+  decideReviewSend,
+  decideThreadMerge,
+  decideThreadSpawn,
+} from "./fleet-decide.ts";
 import { checkpointRef, NO_CHECKPOINT_ITEM, type Effect } from "./effects.ts";
 
 export interface DecideContext {
@@ -136,16 +145,26 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
       return revertTurn(model, command);
     case "thread.failover":
       return threadFailover(model, command, ctx);
-    // Fleet commands are specified in docs/fleet.md. The server station implements them.
     case "thread.spawn":
+      return wrapFleet(command, decideThreadSpawn(model, command, ctx));
     case "fanout.start":
+      return wrapFleet(command, decideFanoutStart(model, command, ctx));
     case "fanout.pick":
+      return wrapFleet(command, decideFanoutPick(model, command, ctx));
     case "thread.merge":
+      return wrapFleet(command, decideThreadMerge(model, command, ctx));
     case "review.addNote":
+      return wrapFleet(command, decideReviewAddNote(model, command, ctx));
     case "review.removeNote":
+      return wrapFleet(command, decideReviewRemoveNote(model, command, ctx));
     case "review.send":
-      return reject("bad_request", "not implemented");
+      return wrapFleet(command, decideReviewSend(model, command, ctx));
   }
+}
+
+function wrapFleet(command: Command, decision: ReturnType<typeof decideThreadSpawn>): Decision {
+  if (!decision.ok) return reject(decision.code, decision.message);
+  return accept(command, decision.events, decision.effects);
 }
 
 function respondToQuestion(model: ReadModel, command: CommandOf<"question.respond">): Decision {

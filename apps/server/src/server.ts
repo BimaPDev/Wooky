@@ -9,6 +9,7 @@ import {
   type ProviderKind,
 } from "@age/contracts";
 import { createEffectRunner } from "./effects/runner.ts";
+import { createFleetService } from "./fleet/service.ts";
 import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
 import type { DecideContext } from "./orchestrator/decide.ts";
@@ -107,6 +108,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   runner.recover();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
+  const fleet = createFleetService({ store, dispatcher, git });
   const terminals = createTerminalManager();
   const history = createHistoryService({
     home: options.home,
@@ -117,7 +119,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const http = createServer(createHttpHandler(options.webDist ?? null));
   const closeSockets = attachWebSocket(
     http,
-    { store, dispatcher, providers, queries, themes, terminals, limits, history },
+    { store, dispatcher, providers, queries, themes, terminals, limits, history, fleet },
     new Set(options.allowedHosts ?? []),
     {
       allowRemotePicker: options.allowRemotePicker === true,

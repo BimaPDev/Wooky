@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { FileDiff, Worktree } from "@age/contracts";
+import { createMergeOps } from "./merge-ops.ts";
 import type { GitService } from "./types.ts";
 
 /** Error raised when a git invocation exits non-zero. Carries the full argv and trimmed stderr. */
@@ -428,6 +429,8 @@ export function createGitService(options?: {
     });
   }
 
+  const merge = createMergeOps({ run, topLevel, withRepoLock, lockKey, baseEnv });
+
   return {
     isRepo,
     createWorktree,
@@ -436,6 +439,9 @@ export function createGitService(options?: {
     restoreCheckpoint,
     diff,
     listFiles,
+    diffBranchStat: merge.diffBranchStat,
+    mergePreview: merge.mergePreview,
+    mergeWorktree: merge.mergeWorktree,
   };
 
   async function listFiles(cwd: string): Promise<string[]> {

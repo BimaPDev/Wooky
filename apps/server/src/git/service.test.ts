@@ -668,3 +668,64 @@ describe("listFiles", () => {
     expect(await search.search({ threadId: "t1", query: "x.js" })).toEqual([]);
   });
 });
+
+describe("merge worktree", () => {
+  it("merges a worktree branch with --no-ff and leaves a dirty root alone", async () => {
+    const root = await makeRepo();
+    const wt = await git.createWorktree(root, "merge-me");
+    await writeFile(join(wt.path, "fleet.txt"), "fleet\n");
+    await raw(wt.path, "add", "fleet.txt");
+    await raw(wt.path, "commit", "-qm", "worker change");
+
+    const preview = await git.mergePreview(root, wt);
+    expect(preview.ahead).toBeGreaterThan(0);
+    expect(preview.files.some((file) => file.path === "fleet.txt")).toBe(true);
+
+    await writeFile(join(root, "dirty.txt"), "dirty\n");
+    const blocked = await git.mergeWorktree(root, wt, "merge", "Worker");
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) throw new Error("expected dirty refusal");
+    expect(blocked.kind).toBe("dirty");
+    expect(await raw(root, "status", "--porcelain")).toContain("dirty.txt");
+
+    await raw(root, "clean", "-fd");
+    const merged = await git.mergeWorktree(root, wt, "merge", "Worker");
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) throw new Error("expected merge");
+    expect(existsSync(join(root, "fleet.txt"))).toBe(true);
+    expect(await raw(root, "log", "-1", "--oneline")).toMatch(/Merge/);
+  });
+
+  it("squash-merges and reports conflicts without leaving the repo mid-merge", async () => {
+    const root = await makeRepo();
+    await writeFile(join(root, "shared.txt"), "base\n");
+    await raw(root, "add", "shared.txt");
+    await raw(root, "commit", "-qm", "base");
+
+    const wt = await git.createWorktree(root, "squash-me");
+    await writeFile(join(wt.path, "shared.txt"), "worker\n");
+    await raw(wt.path, "add", "shared.txt");
+    await raw(wt.path, "commit", "-qm", "worker");
+
+    await writeFile(join(root, "shared.txt"), "main line\n");
+    await raw(root, "add", "shared.txt");
+    await raw(root, "commit", "-qm", "main diverged");
+
+    const conflict = await git.mergeWorktree(root, wt, "merge", "Worker");
+    expect(conflict.ok).toBe(false);
+    if (conflict.ok) throw new Error("expected conflict");
+    expect(conflict.kind).toBe("conflict");
+    expect(await raw(root, "status", "--porcelain")).toBe("");
+
+    const clean = await makeRepo();
+    const cleanWt = await git.createWorktree(clean, "only-worker");
+    await writeFile(join(cleanWt.path, "only.txt"), "one\n");
+    await raw(cleanWt.path, "add", "only.txt");
+    await raw(cleanWt.path, "commit", "-qm", "only");
+    const squashed = await git.mergeWorktree(clean, cleanWt, "squash", "title", "Squash worker");
+    expect(squashed.ok).toBe(true);
+    if (!squashed.ok) throw new Error("expected squash");
+    expect(existsSync(join(clean, "only.txt"))).toBe(true);
+    expect((await raw(clean, "log", "-1", "--pretty=%s")).trim()).toBe("Squash worker");
+  });
+});

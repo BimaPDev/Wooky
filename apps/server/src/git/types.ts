@@ -1,4 +1,4 @@
-import type { FileDiff, Worktree } from "@age/contracts";
+import type { DiffStat, FileDiff, MergePreview, MergeStrategy, Worktree } from "@age/contracts";
 
 /**
  * Git seam. Checkpoints are commits stored under hidden refs
@@ -18,4 +18,24 @@ export interface GitService {
   diff(cwd: string, from: string, to: string | null): Promise<FileDiff[]>;
   /** Tracked and untracked files under cwd, relative, respecting .gitignore. */
   listFiles(cwd: string): Promise<string[]>;
+  /** Numstat summary of commits on `branch` not reachable from the project checkout's HEAD. */
+  diffBranchStat(projectRoot: string, branch: string): Promise<DiffStat | null>;
+  mergePreview(projectRoot: string, worktree: Worktree): Promise<MergePreview>;
+  mergeWorktree(
+    projectRoot: string,
+    worktree: Worktree,
+    strategy: MergeStrategy,
+    title: string,
+    message?: string,
+  ): Promise<MergeWorktreeResult>;
 }
+
+export type MergeWorktreeResult =
+  | { ok: true; commit: string; targetBranch: string }
+  | {
+      ok: false;
+      kind: "dirty" | "conflict" | "failed";
+      message: string;
+      targetBranch?: string;
+      conflicts?: string[];
+    };

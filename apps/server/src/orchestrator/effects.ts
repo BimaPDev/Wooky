@@ -1,4 +1,4 @@
-import type { QuestionAnswers, Worktree } from "@age/contracts";
+import type { MergeStrategy, QuestionAnswers, Worktree } from "@age/contracts";
 
 /** Work the orchestrator asks for. Stored with the events that caused it, run by the effect runner. */
 export type Effect =
@@ -32,6 +32,15 @@ export type Effect =
       turnId: string;
       keepNativeRef: string | null;
       dropTurns: number;
+    }
+  | {
+      kind: "thread.merge";
+      threadId: string;
+      projectRoot: string;
+      worktree: Worktree;
+      strategy: MergeStrategy;
+      title: string;
+      message?: string;
     };
 
 export type StoredEffect = Effect & { id: number };
