@@ -8,6 +8,8 @@ import {
   type DeviceSettings as Settings,
 } from "@age/contracts";
 import { ServiceError } from "../errors.ts";
+import { getBuiltinWallpaperThemes } from "./builtin-wallpapers.ts";
+import { importTheme as parseImport } from "./theme-import.ts";
 
 const SETTINGS_FILE = "settings.json";
 const THEMES_DIR = "themes";
@@ -90,6 +92,10 @@ const BUILTIN: Theme[] = [
   },
 ];
 
+function allBuiltins(): Theme[] {
+  return [...BUILTIN, ...getBuiltinWallpaperThemes()];
+}
+
 function toSummary(theme: Theme, builtin: boolean) {
   const modes: Array<"dark" | "light"> = [theme.appearance];
   const other = theme.appearance === "dark" ? "light" : "dark";
@@ -153,7 +159,7 @@ export function createThemeStore(home: string) {
     const settings = readSettings();
     const seen = new Set<string>();
     const themes: ReturnType<typeof AppearanceThemeSummary.parse>[] = [];
-    for (const theme of BUILTIN) {
+    for (const theme of allBuiltins()) {
       seen.add(theme.id);
       themes.push(toSummary(theme, true));
     }
@@ -170,7 +176,7 @@ export function createThemeStore(home: string) {
   }
 
   function get(id: string): Theme {
-    const builtin = BUILTIN.find((theme) => theme.id === id);
+    const builtin = allBuiltins().find((theme) => theme.id === id);
     if (builtin) return builtin;
     const custom = readCustom(id);
     if (custom) return custom;
@@ -178,7 +184,7 @@ export function createThemeStore(home: string) {
   }
 
   function put(input: Theme): Theme {
-    if (BUILTIN.some((theme) => theme.id === input.id))
+    if (allBuiltins().some((theme) => theme.id === input.id))
       throw new ServiceError("conflict", `Built-in theme "${input.id}" cannot be overwritten.`);
     const theme = AppearanceTheme.parse({ ...input, builtin: false });
     writeFileSync(customPath(theme.id), `${JSON.stringify(theme, null, 2)}\n`, "utf8");
@@ -186,7 +192,7 @@ export function createThemeStore(home: string) {
   }
 
   function remove(id: string): { deleted: boolean } {
-    if (BUILTIN.some((theme) => theme.id === id))
+    if (allBuiltins().some((theme) => theme.id === id))
       throw new ServiceError("conflict", `Built-in theme "${id}" cannot be deleted.`);
     try {
       rmSync(customPath(id));
@@ -208,7 +214,47 @@ export function createThemeStore(home: string) {
     return writeSettings(next);
   }
 
-  return { list, get, put, remove, getSettings, putSettings, themesDir };
+  function activate(id: string): Settings {
+    get(id);
+    return putSettings({ activeThemeId: id });
+  }
+
+  function importFromText(
+    text: string,
+    filename?: string,
+    activateAfter?: boolean,
+  ): ReturnType<typeof parseImport> {
+    let theme: ReturnType<typeof parseImport>["theme"];
+    let format: ReturnType<typeof parseImport>["format"];
+    try {
+      ({ theme, format } = parseImport(text, filename));
+    } catch (error) {
+      throw new ServiceError(
+        "bad_request",
+        error instanceof Error ? error.message : "Could not import theme.",
+      );
+    }
+    if (allBuiltins().some((built) => built.id === theme.id)) {
+      theme = AppearanceTheme.parse({ ...theme, id: `${theme.id}-custom` });
+    }
+    const saved = put(theme);
+    if (activateAfter) putSettings({ activeThemeId: saved.id });
+    return { theme: saved, format };
+  }
+
+  return {
+    list,
+    get,
+    put,
+    remove,
+    getSettings,
+    putSettings,
+    importFromText,
+    activate,
+    themesDir,
+    settingsPath,
+    home,
+  };
 }
 
 export type ThemeStore = ReturnType<typeof createThemeStore>;

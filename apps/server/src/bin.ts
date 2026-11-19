@@ -1,9 +1,21 @@
 import { resolveConfig, USAGE } from "./config.ts";
 import { hydrateLoginShellPath } from "./process/shell-env.ts";
+import { runThemeCli } from "./settings/theme-cli.ts";
 import { startServer } from "./server.ts";
 
 async function main() {
-  const config = resolveConfig(process.argv.slice(2), process.env);
+  const argv = process.argv.slice(2);
+  if (argv[0] === "theme") {
+    try {
+      runThemeCli(argv.slice(1), process.env);
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+    return;
+  }
+
+  const config = resolveConfig(argv, process.env);
   if (config === "help") {
     process.stdout.write(`${USAGE}\n`);
     return;

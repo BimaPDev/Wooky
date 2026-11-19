@@ -213,17 +213,32 @@ describe("wallpaper scenes", () => {
     }
   });
 
+  it("allows filter primitives used by imported glyph wallpapers but not feImage", () => {
+    const filter = (body: string) =>
+      `<svg xmlns="http://www.w3.org/2000/svg"><filter id="f">${body}</filter><rect filter="url(#f)"/></svg>`;
+    expect(() =>
+      assertSafeSvg(
+        filter(
+          '<feMorphology radius="1"/><feComponentTransfer><feFuncA type="table" tableValues="0 1"/></feComponentTransfer>',
+        ),
+      ),
+    ).not.toThrow();
+    expect(() => assertSafeSvg(filter('<feImage href="https://evil.example/x.png"/>'))).toThrow(
+      /feimage/i,
+    );
+  });
+
   it("rejects unsafe SVG payloads in assertSafeSvg", () => {
     const unsafeSamples: Array<[string, string, RegExp]> = [
       [
         "<script>",
         '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
-        /<script>/,
+        /disallowed tag/i,
       ],
       [
         "<SCRIPT> uppercase",
         '<svg xmlns="http://www.w3.org/2000/svg"><SCRIPT>1</SCRIPT></svg>',
-        /<script>/,
+        /disallowed tag/i,
       ],
       [
         "onload=",
@@ -238,22 +253,22 @@ describe("wallpaper scenes", () => {
       [
         "<foreignObject>",
         '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><div>hi</div></foreignObject></svg>',
-        /<foreignObject>/,
+        /disallowed tag/i,
       ],
       [
         'href="https://..."',
         '<svg xmlns="http://www.w3.org/2000/svg"><use href="https://evil.example/x.svg#a"/></svg>',
-        /href/,
+        /href must be a local/,
       ],
       [
         'xlink:href="https://..."',
         '<svg xmlns="http://www.w3.org/2000/svg"><use xlink:href="https://evil.example/x.svg#a"/></svg>',
-        /href/,
+        /href must be a local/,
       ],
       [
         "javascript: href",
         '<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)"><text>x</text></a></svg>',
-        /href/,
+        /disallowed tag/i,
       ],
       [
         "@import",
@@ -263,7 +278,123 @@ describe("wallpaper scenes", () => {
       [
         "external url()",
         '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:url(https://evil.example/a)}</style></svg>',
+        /url\(\) may only/,
+      ],
+      [
+        "animate href",
+        '<svg xmlns="http://www.w3.org/2000/svg"><animate attributeName="href" to="https://evil.example"/></svg>',
+        /SMIL must not animate href/,
+      ],
+      [
+        "iframe srcdoc",
+        '<svg xmlns="http://www.w3.org/2000/svg"><iframe srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;"/></svg>',
+        /disallowed tag/,
+      ],
+      [
+        "CSS @import escape",
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>@im\\70 ort "x.css";</style></svg>',
+        /backslashes/,
+      ],
+      [
+        "numeric reference in attribute",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="u&#114;l(https://evil.example/x)"/></svg>',
+        /numeric character references/,
+      ],
+      [
+        "numeric reference in style",
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:u&#x72;l(https://evil.example/x)}</style></svg>',
+        /numeric character references/,
+      ],
+      [
+        "CSS url escape",
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:u\\72l(https://evil.example)}</style></svg>',
+        /backslashes/,
+      ],
+      [
+        "image-set",
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{background:image-set("https://evil.example/x" 1x)}</style></svg>',
+        /image-set/,
+      ],
+      [
+        "DOCTYPE entity",
+        '<!DOCTYPE svg [<!ENTITY x "bad">]><svg xmlns="http://www.w3.org/2000/svg"></svg>',
+        /DOCTYPE/,
+      ],
+      ["ev:onload", '<svg xmlns="http://www.w3.org/2000/svg" ev:onload="alert(1)"></svg>', /on\*/],
+      [
+        "on:load namespaced",
+        '<svg xmlns="http://www.w3.org/2000/svg" on:load="alert(1)"></svg>',
+        /event-handler/,
+      ],
+      [
+        "on:click unquoted",
+        '<svg xmlns="http://www.w3.org/2000/svg" on:click=alert(1)></svg>',
+        /event-handler/,
+      ],
+      [
+        "fill url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(https://evil.example)"/></svg>',
         /url\(\)/,
+      ],
+      [
+        "stroke url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect stroke="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "mask url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect mask="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "filter attr url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect filter="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "clip-path url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect clip-path="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "marker-end url https",
+        '<svg xmlns="http://www.w3.org/2000/svg"><path marker-end="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "url javascript",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(javascript:alert(1))"/></svg>',
+        /javascript/i,
+      ],
+      [
+        "url data",
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(data:text/html,x)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "xml:base",
+        '<svg xmlns="http://www.w3.org/2000/svg" xml:base="https://evil.example/"></svg>',
+        /base URL/,
+      ],
+      [
+        "base attribute",
+        '<svg xmlns="http://www.w3.org/2000/svg" base="https://evil.example/"></svg>',
+        /base URL/,
+      ],
+      [
+        "set smil clip-path",
+        '<svg xmlns="http://www.w3.org/2000/svg"><set attributeName="clip-path" to="url(https://evil.example)"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "animate smil values url",
+        '<svg xmlns="http://www.w3.org/2000/svg"><animate attributeName="fill" values="url(https://evil.example);red"/></svg>',
+        /url\(\)/,
+      ],
+      [
+        "fake style close",
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{content:"</style"} .b{}</style></svg>',
+        /`<` is not allowed/,
       ],
     ];
 
@@ -274,6 +405,12 @@ describe("wallpaper scenes", () => {
     expect(() =>
       assertSafeSvg(
         '<svg xmlns="http://www.w3.org/2000/svg"><defs><g id="ok"/></defs><use href="#ok" fill="url(#ok)"/></svg>',
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      assertSafeSvg(
+        '<svg xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="20" fill="#7aa2f7"><animate attributeName="opacity" values="1;0.3;1" dur="4s" repeatCount="indefinite"/></circle></svg>',
       ),
     ).not.toThrow();
   });
