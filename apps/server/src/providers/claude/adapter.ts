@@ -11,6 +11,7 @@ import {
   type SDKRateLimitInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 import { resolveCommand } from "../../process/resolve-command.ts";
+import { fleetChildEnv, instructionsForRole } from "../agent-env.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { editPreview } from "./diff.ts";
 import {
@@ -157,6 +158,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           : {}),
         ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
         ...permissionOptions(input, emit, input.cwd, lastPlanWritePath),
+        ...fleetQueryOptions(input),
         stderr: (data) => {
           stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
         },
@@ -212,6 +214,18 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
 
 const ABORTED = Symbol("aborted");
 const WOKEN = Symbol("woken");
+
+function fleetQueryOptions(input: TurnInput): Partial<Options> {
+  const env = fleetChildEnv(input.threadId);
+  return {
+    ...(env === process.env ? {} : { env }),
+    systemPrompt: {
+      type: "preset",
+      preset: "claude_code",
+      append: instructionsForRole(input.role),
+    },
+  };
+}
 
 function buildPrompt(input: TurnInput): string {
   if (!input.handoffContext) return input.prompt;

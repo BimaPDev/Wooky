@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ApprovalRequest, ProviderEvent, ProviderStatus } from "@age/contracts";
 import { resolveCommand } from "../../process/resolve-command.ts";
+import { fleetChildEnv, prefixSessionPrompt } from "../agent-env.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import {
   JsonRpcClient,
@@ -208,8 +209,9 @@ async function probeCodex(bin: string, extraArgs?: readonly string[]): Promise<P
   }
 }
 
-function buildUserPrompt(prompt: string, handoffContext: string | null): string {
-  const handoff = handoffContext?.trim();
+function buildUserPrompt(input: TurnInput): string {
+  const prompt = prefixSessionPrompt(input.prompt, input);
+  const handoff = input.handoffContext?.trim();
   if (!handoff) return prompt;
   return `Earlier conversation in this thread, from another agent:\n\n${handoff}\n\n${prompt}`;
 }
@@ -374,6 +376,7 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
         bin: codexBin,
         args: codexArgs,
         cwd: input.cwd,
+        env: fleetChildEnv(input.threadId),
         onNotification: ({ method, params }) => {
           if (method === "turn/started") {
             const started = TurnStartedNotificationSchema.safeParse(params);
@@ -459,7 +462,7 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
           }
           pushEvents(translator.bindSession(codexThreadId));
 
-          const promptText = buildUserPrompt(input.prompt, input.handoffContext);
+          const promptText = buildUserPrompt(input);
           translator.beginTurn();
           const turnResponse = await client.request(
             "turn/start",

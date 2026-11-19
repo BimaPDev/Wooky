@@ -190,18 +190,28 @@ rest. `agents.result` reads `thread.report` for `summary` and `diffStat`, and
 
 ## `age agents`
 
-Planned CLI, for a coordinator to call from its shell. It speaks the RPC above to the
-local server. No flags beyond what the methods take.
+A coordinator calls this from its shell during a turn. It speaks the RPC above to the
+local server. `spawn` and `list` use `$AGE_THREAD_ID` as `parentThreadId` and exit with
+`AGE_THREAD_ID is not set` when that variable is missing. The server is `$AGE_SERVER_URL`,
+or `AGE_HOME/server.json` when that file names a pid that is still alive. Otherwise the
+command exits with `AGE server is not running`.
 
 ```text
-age agents spawn --provider <kind> --model <id> [--mode approve|auto-edits|full] [--title <text>] <prompt>
-age agents list
-age agents wait [--timeout <ms>] <threadId>...
-age agents result <threadId>
+age agents spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--prompt-file <path>] -- <prompt...>
+age agents list [--json]
+age agents wait [--timeout <seconds>] <threadId>...
+age agents result <threadId> [--json]
 ```
 
-`spawn` and `list` use the coordinator's own thread as `parentThreadId` (the thread whose
-turn is running the command). `spawn` prints the new thread id. `list` prints one row per
-child: id, title, provider, model, status. `wait` prints the finished ids, then exits 0
-when none are pending and exits 2 when any remain. `result` prints the status, the
-summary, the diff stat when present, and the worktree path.
+`--timeout` is seconds, default 600, and is sent as `timeoutMs`. A prompt of `-`, or
+`--prompt-file -`, is read from stdin. `spawn` prints the new thread id. `list` prints one
+row per child: id, status, provider, model, title. `--json` prints the `FleetRow` array.
+`wait` prints one line per id, `<id> finished` or `<id> pending`, then exits 0 when none
+are pending and 2 when any remain. `result` prints the status, the summary, the diff stat
+when present, and the worktree path. `--json` prints the `AgentResult` object.
+
+The server writes `AGE_HOME/server.json` (`url`, `pid`, `startedAt`) and `AGE_HOME/bin/age`
+when it starts, and removes both when it stops. The shim runs this repo's `bin.ts` with
+the same Node the server is running under. Turns on a solo or coordinator thread receive
+`AGE_THREAD_ID`, `AGE_SERVER_URL`, that `bin` directory on `PATH`, and a short note on how
+to delegate. A worker receives a one-line note that it cannot spawn.

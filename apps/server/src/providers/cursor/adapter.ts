@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { ProviderEvent, ProviderStatus } from "@age/contracts";
 import { z } from "zod";
 import { resolveCommand } from "../../process/resolve-command.ts";
+import { fleetChildEnv, prefixSessionPrompt } from "../agent-env.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { createNdjsonSplitter } from "./ndjson.ts";
 import { isAuthFailure, parseAuthFromStatus, parseModelsFromList } from "./probe.ts";
@@ -235,7 +236,7 @@ async function* runCursorTurn(
     return;
   }
 
-  let prompt = input.prompt;
+  let prompt = prefixSessionPrompt(input.prompt, input);
   if (input.handoffContext) {
     prompt = `Earlier conversation in this thread, from another agent:\n\n${input.handoffContext}\n\n---\n\n${prompt}`;
   }
@@ -261,6 +262,7 @@ async function* runCursorTurn(
   try {
     child = spawn(cursorBin, argv, {
       cwd: input.cwd,
+      env: fleetChildEnv(input.threadId),
       stdio: ["ignore", "pipe", "pipe"],
       // On Windows `detached` opens a new console window; process groups are POSIX-only.
       detached: process.platform !== "win32",
