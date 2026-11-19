@@ -29,8 +29,7 @@ export function shouldReportWorker(
   status: "completed" | "interrupted" | "failed",
 ): boolean {
   if (!thread.parentThreadId || thread.role !== "worker") return false;
-  if (status === "interrupted") return false;
-  return true;
+  return status === "completed" || status === "interrupted" || status === "failed";
 }
 
 export function turnSummary(
@@ -42,14 +41,16 @@ export function turnSummary(
 ): string {
   if (status === "failed")
     return (error ?? "The turn failed.").slice(0, FLEET_LIMITS.maxReportSummary);
+  if (status === "interrupted") {
+    return "Turn interrupted.".slice(0, FLEET_LIMITS.maxReportSummary);
+  }
   const turn = (model.turns[threadId] ?? []).find((candidate) => candidate.id === turnId);
   const messages = (turn?.items ?? []).filter(
     (item): item is Extract<typeof item, { kind: "message" }> =>
       item.kind === "message" && item.role === "assistant",
   );
   const text = messages.at(-1)?.text?.trim() ?? "";
-  const summary =
-    text.length > 0 ? text : status === "completed" ? "Turn completed." : "Turn finished.";
+  const summary = text.length > 0 ? text : "Turn completed.";
   return summary.slice(0, FLEET_LIMITS.maxReportSummary);
 }
 

@@ -9,6 +9,7 @@ import {
   type ProviderKind,
 } from "@age/contracts";
 import { createEffectRunner } from "./effects/runner.ts";
+import { createAgentTokenService } from "./fleet/agent-token.ts";
 import { createFleetService } from "./fleet/service.ts";
 import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
@@ -27,6 +28,7 @@ import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
 import { createLimitsService } from "./usage/limits.ts";
+import { setAgentTokenIssuer } from "./providers/agent-env.ts";
 
 export interface ServerOptions {
   home: string;
@@ -109,7 +111,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   runner.recover();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
-  const fleet = createFleetService({ store, dispatcher, git });
+  const agentTokens = createAgentTokenService();
+  const fleet = createFleetService({ store, dispatcher, git, tokens: agentTokens });
   const terminals = createTerminalManager();
   const history = createHistoryService({
     home: options.home,
@@ -145,6 +148,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let unpublish: () => void;
   try {
     unpublish = publishServerPresence(options.home, url);
+    setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
     closeSockets();
     http.close();

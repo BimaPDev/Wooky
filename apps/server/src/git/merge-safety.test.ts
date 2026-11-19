@@ -247,6 +247,18 @@ describe("merge safety: idempotence and refusal", () => {
     expect(res).toMatchObject({ ok: false, kind: "dirty", targetBranch: "main" });
   });
 
+  it("names an untracked file that would be overwritten by merge", async () => {
+    const root = await makeRepo();
+    const wt = await cleanWorker(root, "collision1", "collision.txt");
+    await writeFile(join(root, "collision.txt"), "untracked in root\n");
+    const res = await git.mergeWorktree(root, wt, "merge", "Worker");
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("expected failure");
+    expect(res.kind).toBe("failed");
+    expect(res.message).toMatch(/collision\.txt/);
+    expect(res.message).toMatch(/untracked/i);
+  });
+
   it("rejects a branch that is not an age branch", async () => {
     const root = await makeRepo();
     const res = await git.mergeWorktree(

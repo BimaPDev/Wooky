@@ -102,6 +102,12 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
     case "thread.worktreeBound":
       return patchThread(model, event.threadId, event.at, { worktree: event.worktree });
 
+    case "thread.worktreeFailed":
+      return patchThread(model, event.threadId, event.at, {
+        status: "error",
+        errorMessage: event.message,
+      });
+
     case "turn.started": {
       const turn: Turn = {
         id: event.turnId,

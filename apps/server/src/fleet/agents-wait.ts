@@ -19,22 +19,23 @@ function partition(
   return { finished, pending };
 }
 
-/** Resolves when every thread is done or failed, or when timeoutMs elapses. */
+/** Resolves when every thread is done or failed, or when timeoutMs elapses or the signal aborts. */
 export function waitForAgentThreads(
   store: EventStore,
   threadIds: readonly string[],
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ finished: string[]; pending: string[] }> {
   const initial = partition(store.model, threadIds);
   if (initial.pending.length === 0) return Promise.resolve(initial);
+  if (signal?.aborted) return Promise.resolve(partition(store.model, threadIds));
 
   return new Promise((resolve) => {
     let settled = false;
     const finish = (result: { finished: string[]; pending: string[] }) => {
       if (settled) return;
       settled = true;
-      unsubscribe();
-      clearTimeout(timer);
+      cleanup();
       resolve(result);
     };
 
@@ -44,13 +45,16 @@ export function waitForAgentThreads(
     };
 
     const unsubscribe = store.subscribe(() => check());
-    check();
+    const onAbort = () => finish(partition(store.model, threadIds));
+    const timer = setTimeout(() => finish(partition(store.model, threadIds)), timeoutMs);
 
-    const timer =
-      timeoutMs > 0
-        ? setTimeout(() => {
-            finish(partition(store.model, threadIds));
-          }, timeoutMs)
-        : undefined;
+    const cleanup = () => {
+      unsubscribe();
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    check();
   });
 }

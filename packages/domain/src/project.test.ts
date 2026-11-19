@@ -214,6 +214,41 @@ describe("applyEvent", () => {
     expect(running.threads.t1?.status).toBe("running");
   });
 
+  it("records worktree creation failure on the thread", () => {
+    const base = emptyReadModel();
+    const withThread = applyEvents(base, [
+      ev({
+        type: "thread.created",
+        commandId: "c1",
+        thread: {
+          id: "t1",
+          projectId: "p1",
+          title: "Worker",
+          provider: "demo",
+          model: "demo",
+          runtimeMode: "approve",
+          worktree: null,
+          providerSessionId: null,
+          queue: [],
+          status: "idle",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          role: "worker",
+        },
+      }),
+      ev({
+        type: "thread.worktreeFailed",
+        commandId: null,
+        threadId: "t1",
+        message: "No space left",
+      }),
+    ]);
+    expect(withThread.threads.t1).toMatchObject({
+      status: "error",
+      errorMessage: "No space left",
+    });
+  });
+
   it("drops a project's threads when the project is removed", () => {
     const events = seed();
     events.push(ev({ type: "project.removed", commandId: "c9", projectId: "p1" }));

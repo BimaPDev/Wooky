@@ -233,6 +233,12 @@ export const AgeEvent = z.discriminatedUnion("type", [
     summary: z.string().max(FLEET_LIMITS.maxReportSummary),
     diffStat: DiffStat.optional(),
   }),
+  z.object({
+    ...meta,
+    type: z.literal("thread.worktreeFailed"),
+    threadId: Id,
+    message: z.string().min(1),
+  }),
 ]);
 export type AgeEvent = z.infer<typeof AgeEvent>;
 export type AgeEventType = AgeEvent["type"];

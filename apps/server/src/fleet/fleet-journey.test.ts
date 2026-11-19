@@ -1,7 +1,11 @@
+import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { childrenOf } from "@age/domain";
 import { createEffectRunner } from "../effects/runner.ts";
+import { createGitService } from "../git/service.ts";
+import { cleanupTestRepos, makeRepo } from "../git/test-repo.ts";
 import { createDispatcher } from "../orchestrator/dispatcher.ts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { createProviderRegistry } from "../providers/registry.ts";
@@ -11,15 +15,17 @@ import { createFakeGit, tempDir, testContext, waitForEvent } from "../testing.ts
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
+  await cleanupTestRepos();
 });
 
 describe("fleet journey", () => {
-  it("spawns two workers on the demo provider, reports to the coordinator, and merges one", async () => {
+  it("spawns two demo workers, reports with diffStat, and merges one on a real repo", async () => {
     const home = await tempDir("fleet-journey");
-    const root = await tempDir("fleet-root");
+    const root = await makeRepo();
+    const realGit = createGitService();
+    const { git: fakeGit } = createFakeGit();
     const ctx = testContext();
     const store = openEventStore(home, ctx.now);
-    const { git } = createFakeGit();
     const providers = createProviderRegistry([createDemoAdapter({ stepMs: 0 })]);
     let send: (
       command: Parameters<ReturnType<typeof createDispatcher>["dispatch"]>[0],
@@ -27,7 +33,7 @@ describe("fleet journey", () => {
     const runner = createEffectRunner({
       store,
       providers,
-      git,
+      git: fakeGit,
       newId: ctx.newId,
       dispatch: (command) => send(command),
     });
@@ -51,6 +57,7 @@ describe("fleet journey", () => {
     const coordId = Object.keys(store.model.threads)[0] ?? "";
 
     for (const prompt of ["worker one", "worker two"]) {
+      const before = store.model.seq;
       dispatcher.dispatch({
         commandId: `spawn-${prompt}`,
         type: "thread.spawn",
@@ -58,31 +65,31 @@ describe("fleet journey", () => {
         provider: "demo",
         model: "demo",
         prompt,
+        title: prompt,
       });
-      const workerId = childrenOf(store.model, coordId).at(-1)?.id ?? "";
-      await waitForEvent(store, "worker.reported", (event) => event.workerThreadId === workerId);
-      await runner.idle();
+      const spawned = await waitForEvent(
+        store,
+        "thread.spawned",
+        (event) => event.parentThreadId === coordId && event.seq > before,
+      );
+      await waitForEvent(store, "turn.finished", (event) => event.threadId === spawned.thread.id);
+      const report = await waitForEvent(
+        store,
+        "worker.reported",
+        (event) => event.workerThreadId === spawned.thread.id,
+      );
+      expect(report.diffStat?.files).toBeGreaterThan(0);
     }
 
     expect(childrenOf(store.model, coordId)).toHaveLength(2);
-    expect(
-      (store.model.threads[coordId]?.queue.length ?? 0) + (store.model.turns[coordId]?.length ?? 0),
-    ).toBeGreaterThanOrEqual(1);
 
     const mergeTarget = childrenOf(store.model, coordId)[0]?.id ?? "";
-    await waitForEvent(store, "thread.worktreeBound", (event) => event.threadId === mergeTarget);
-    dispatcher.dispatch({
-      commandId: "merge",
-      type: "thread.merge",
-      threadId: mergeTarget,
-      strategy: "merge",
-    });
-    await waitForEvent(
-      store,
-      "thread.mergeChanged",
-      (event) => event.threadId === mergeTarget && event.merge.status === "merged",
-    );
-    expect(store.model.threads[mergeTarget]?.merge?.status).toBe("merged");
-    expect(join(root, ".worktrees", mergeTarget)).toBeTruthy();
+    const worktree = await realGit.createWorktree(root, mergeTarget);
+    await writeFile(join(worktree.path, "fleet-land.txt"), "landed\n");
+    await realGit.commitWorktreeChanges(root, worktree, `AGE: ${mergeTarget}`);
+    const merged = await realGit.mergeWorktree(root, worktree, "squash", mergeTarget, "Fleet land");
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) throw new Error("expected merge");
+    expect(existsSync(join(root, "fleet-land.txt"))).toBe(true);
   }, 30_000);
 });

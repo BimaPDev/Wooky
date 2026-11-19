@@ -15,6 +15,7 @@ interface MergeOpsDeps {
   withRepoLock: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
   lockKey: (cwd: string) => Promise<string>;
   baseEnv: (extra?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+  commitWorktree?: (worktree: Worktree, message: string) => Promise<void>;
 }
 
 const AGE_IDENTITY = {
@@ -156,8 +157,25 @@ export function createMergeOps(deps: MergeOpsDeps) {
   }
 
   async function isDirty(cwd: string): Promise<boolean> {
-    const { stdout } = await run(["status", "--porcelain"], { cwd });
+    const { stdout } = await run(["status", "--porcelain", "--untracked-files=no"], { cwd });
     return stdout.trim().length > 0;
+  }
+
+  function untrackedOverwrite(stderr: string, stdout: string): string | null {
+    const text = `${stderr}\n${stdout}`;
+    const match = text.match(
+      /(?:untracked working tree files? would be overwritten by merge:\n((?:\t.+\n?)+)|would be overwritten by merge:\n((?:\t.+\n?)+))/,
+    );
+    const block = match?.[1] ?? match?.[2];
+    if (!block) return null;
+    const files = block
+      .split("\n")
+      .map((line) => line.replace(/^\t/, "").trim())
+      .filter((line) => line.length > 0);
+    if (files.length === 0) return null;
+    const listed = files.slice(0, 3).join(", ");
+    const more = files.length > 3 ? ` and ${files.length - 3} more` : "";
+    return `Untracked file would be overwritten by merge: ${listed}${more}.`;
   }
 
   async function conflictPaths(cwd: string): Promise<string[]> {
@@ -320,9 +338,16 @@ export function createMergeOps(deps: MergeOpsDeps) {
     return files > 0 ? { files, additions, deletions } : null;
   }
 
-  async function mergePreview(projectRoot: string, worktree: Worktree): Promise<MergePreview> {
+  async function mergePreview(
+    projectRoot: string,
+    worktree: Worktree,
+    commitMessage?: string,
+  ): Promise<MergePreview> {
     if (!isAgeBranch(worktree.branch)) {
       throw new Error(`Unexpected worktree branch: ${worktree.branch}`);
+    }
+    if (commitMessage && deps.commitWorktree) {
+      await deps.commitWorktree(worktree, commitMessage);
     }
     const top = await topLevel(projectRoot);
     const ref = `refs/heads/${worktree.branch}`;
@@ -406,6 +431,9 @@ export function createMergeOps(deps: MergeOpsDeps) {
         };
       }
       try {
+        if (deps.commitWorktree && title) {
+          await deps.commitWorktree(worktree, `AGE: ${title}`);
+        }
         return await mergeLocked(top, worktree.branch, strategy, title, message);
       } finally {
         await release();
@@ -480,7 +508,9 @@ export function createMergeOps(deps: MergeOpsDeps) {
     const merged = await run(mergeArgs, { cwd: top, allowFail: true });
     if (merged.code !== 0) {
       const paths = await conflictPaths(top);
-      const detail = [merged.stderr, merged.stdout].join("\n").trim() || "Merge failed.";
+      const overwrite = untrackedOverwrite(merged.stderr, merged.stdout);
+      const detail =
+        overwrite ?? ([merged.stderr, merged.stdout].join("\n").trim() || "Merge failed.");
       const rolled = await rollback(top, dir, strategy);
       if (!rolled.ok) return failed(rolled.message);
       if (paths.length > 0) {

@@ -184,6 +184,18 @@ describe("fleet decide", () => {
           createdAt: at,
         },
       },
+      {
+        seq: 4,
+        at,
+        type: "thread.created",
+        commandId: "g",
+        thread: thread({
+          id: "b",
+          groupId: "g1",
+          role: "worker",
+          worktree: { path: "/work/demo/.wt/b", branch: "age/b" },
+        }),
+      },
     ]);
     const decision = decide(
       model,

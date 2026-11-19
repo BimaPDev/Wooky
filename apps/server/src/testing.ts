@@ -90,6 +90,7 @@ export function createFakeGit(options: { changed?: string[] } = {}) {
       }));
     },
     diffBranchStat: async () => ({ files: 1, additions: 2, deletions: 0 }),
+    commitWorktreeChanges: async () => {},
     mergePreview: async () => ({
       targetBranch: "main",
       ahead: 1,

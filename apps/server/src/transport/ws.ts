@@ -43,12 +43,18 @@ interface Services {
   fleet: FleetService;
 }
 
+const MAX_AGENT_WAITS_PER_CONNECTION = 8;
+
 interface Connection {
   readonly remoteAddress: string | undefined;
+  readonly abort: AbortController;
   send(message: ServerMessage): void;
   /** Replaces this connection's event subscription. */
   follow(fromSeq: number): number;
   trackTerminal(sessionId: string): void;
+  agentWaits: number;
+  reserveAgentWait(): void;
+  releaseAgentWait(): void;
 }
 
 type Handlers = {
@@ -144,10 +150,34 @@ function createHandlers(
     "usage.history": (params) => history.get(params),
     "fleet.overview": () => fleet.overview(),
     "git.mergePreview": (params) => fleet.mergePreview(params),
-    "agents.spawn": (params) => fleet.spawn(params),
-    "agents.list": (params) => fleet.list(params),
-    "agents.wait": (params) => fleet.wait(params),
-    "agents.result": (params) => fleet.result(params),
+    "agents.spawn": (params, conn) =>
+      fleet.spawn(params, {
+        remoteAddress: conn.remoteAddress,
+        signal: conn.abort.signal,
+        reserveWait: conn.reserveAgentWait,
+        releaseWait: conn.releaseAgentWait,
+      }),
+    "agents.list": (params, conn) =>
+      fleet.list(params, {
+        remoteAddress: conn.remoteAddress,
+        signal: conn.abort.signal,
+        reserveWait: conn.reserveAgentWait,
+        releaseWait: conn.releaseAgentWait,
+      }),
+    "agents.wait": (params, conn) =>
+      fleet.wait(params, {
+        remoteAddress: conn.remoteAddress,
+        signal: conn.abort.signal,
+        reserveWait: conn.reserveAgentWait,
+        releaseWait: conn.releaseAgentWait,
+      }),
+    "agents.result": (params, conn) =>
+      fleet.result(params, {
+        remoteAddress: conn.remoteAddress,
+        signal: conn.abort.signal,
+        reserveWait: conn.reserveAgentWait,
+        releaseWait: conn.releaseAgentWait,
+      }),
   };
 }
 
@@ -195,9 +225,27 @@ export function attachWebSocket(
     let unsubscribe: (() => void) | null = null;
     let lastSeq = 0;
     const ownedTerminals = new Set<string>();
+    const abort = new AbortController();
+    let agentWaits = 0;
 
     const conn: Connection = {
       remoteAddress: req.socket.remoteAddress,
+      abort,
+      agentWaits: 0,
+      reserveAgentWait() {
+        if (agentWaits >= MAX_AGENT_WAITS_PER_CONNECTION) {
+          throw new ServiceError(
+            "conflict",
+            `At most ${MAX_AGENT_WAITS_PER_CONNECTION} agent waits per connection.`,
+          );
+        }
+        agentWaits += 1;
+        conn.agentWaits = agentWaits;
+      },
+      releaseAgentWait() {
+        agentWaits = Math.max(0, agentWaits - 1);
+        conn.agentWaits = agentWaits;
+      },
       send(message) {
         if (ws.readyState !== WebSocket.OPEN) return;
         ws.send(JSON.stringify(message));
@@ -242,6 +290,7 @@ export function attachWebSocket(
       connections.delete(conn);
       folderPicker.cancel(conn);
       unsubscribe?.();
+      abort.abort();
       for (const sessionId of ownedTerminals) services.terminals.close(sessionId);
       ownedTerminals.clear();
     });

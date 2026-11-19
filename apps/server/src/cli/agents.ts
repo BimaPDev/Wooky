@@ -14,7 +14,7 @@ import { rpcCall } from "./rpc-client.ts";
 
 const USAGE = `Usage: age agents <command>
 
-  spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--prompt-file <path>] -- <prompt...>
+  spawn --provider <kind> --model <id> [--title <text>] [--runtime-mode approve|auto-edits|full] [--key <idempotency>] [--prompt-file <path>] -- <prompt...>
   list [--json]
   wait [--timeout <seconds>] <threadId>...
   result <threadId> [--json]
@@ -82,7 +82,15 @@ async function spawn(
   env: NodeJS.ProcessEnv,
   io: CliIo,
 ): Promise<number> {
-  rejectUnknown(flags, ["provider", "model", "title", "runtime-mode", "prompt-file", "help"]);
+  rejectUnknown(flags, [
+    "provider",
+    "model",
+    "title",
+    "runtime-mode",
+    "key",
+    "prompt-file",
+    "help",
+  ]);
   const providerFlag = flagValue(flags, "provider");
   if (!providerFlag) throw new Error("Missing --provider.");
   const provider = ProviderKind.safeParse(providerFlag);
@@ -98,6 +106,7 @@ async function spawn(
   }
   const title = flagValue(flags, "title");
   const prompt = await resolvePrompt(flags, positionals, io);
+  const key = flagValue(flags, "key");
   const spawned = await call(env, "agents.spawn", {
     parentThreadId: requireParent(env),
     provider: provider.data,
@@ -105,6 +114,8 @@ async function spawn(
     prompt,
     ...(title ? { title } : {}),
     ...(runtimeMode ? { runtimeMode } : {}),
+    ...(key ? { idempotencyKey: key } : {}),
+    ...(env.AGE_AGENT_TOKEN ? { agentToken: env.AGE_AGENT_TOKEN } : {}),
   });
   io.stdout.write(`${spawned.threadId}\n`);
   return 0;
@@ -118,7 +129,10 @@ async function list(
 ): Promise<number> {
   rejectUnknown(flags, ["json", "help"]);
   if (positionals.length > 0) throw new Error("Unexpected argument.");
-  const rows = await call(env, "agents.list", { parentThreadId: requireParent(env) });
+  const rows = await call(env, "agents.list", {
+    parentThreadId: requireParent(env),
+    ...(env.AGE_AGENT_TOKEN ? { agentToken: env.AGE_AGENT_TOKEN } : {}),
+  });
   if (flags.has("json")) {
     io.stdout.write(`${JSON.stringify(rows.map(stableRow), null, 2)}\n`);
     return 0;
@@ -142,7 +156,11 @@ async function wait(
   const waited = await call(
     env,
     "agents.wait",
-    { threadIds: positionals, timeoutMs },
+    {
+      threadIds: positionals,
+      timeoutMs,
+      ...(env.AGE_AGENT_TOKEN ? { agentToken: env.AGE_AGENT_TOKEN } : {}),
+    },
     timeoutMs + RPC_TIMEOUT_MS,
   );
   const pending = new Set(waited.pending);
@@ -161,7 +179,10 @@ async function showResult(
   rejectUnknown(flags, ["json", "help"]);
   const threadId = positionals[0];
   if (!threadId || positionals.length !== 1) throw new Error("result needs one thread id.");
-  const report = await call(env, "agents.result", { threadId });
+  const report = await call(env, "agents.result", {
+    threadId,
+    ...(env.AGE_AGENT_TOKEN ? { agentToken: env.AGE_AGENT_TOKEN } : {}),
+  });
   if (flags.has("json")) {
     io.stdout.write(`${JSON.stringify(stableResult(report), null, 2)}\n`);
     return 0;

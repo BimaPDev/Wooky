@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { FileDiff, Worktree } from "@age/contracts";
+import { commitWorktreeChanges as commitWorktreeImpl } from "./commit-worktree.ts";
 import { createMergeOps } from "./merge-ops.ts";
 import type { GitService } from "./types.ts";
 
@@ -429,7 +430,25 @@ export function createGitService(options?: {
     });
   }
 
-  const merge = createMergeOps({ run, topLevel, withRepoLock, lockKey, baseEnv });
+  async function commitWorktreeChanges(
+    projectRoot: string,
+    worktree: Worktree,
+    message: string,
+  ): Promise<void> {
+    await topLevel(projectRoot);
+    await commitWorktreeImpl(run, baseEnv, worktree, message);
+  }
+
+  const merge = createMergeOps({
+    run,
+    topLevel,
+    withRepoLock,
+    lockKey,
+    baseEnv,
+    commitWorktree: async (worktree, message) => {
+      await commitWorktreeImpl(run, baseEnv, worktree, message);
+    },
+  });
 
   return {
     isRepo,
@@ -440,6 +459,7 @@ export function createGitService(options?: {
     diff,
     listFiles,
     diffBranchStat: merge.diffBranchStat,
+    commitWorktreeChanges,
     mergePreview: merge.mergePreview,
     mergeWorktree: merge.mergeWorktree,
   };
