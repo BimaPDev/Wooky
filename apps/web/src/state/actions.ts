@@ -2,9 +2,11 @@ import type {
   Command,
   FileDiff,
   InteractionMode,
+  ModelTarget,
   ProviderKind,
   QuestionAnswers,
   RuntimeMode,
+  TurnFailure,
 } from "@age/contracts";
 import { threadsSharingWorkspace } from "@age/domain";
 import { patchDeviceSettings } from "./appearance.ts";
@@ -232,6 +234,14 @@ export const configureThread = (
     interactionMode?: InteractionMode;
   },
 ) => dispatch({ type: "thread.configure", threadId, ...patch });
+
+/** Hand the thread to another model and retry the prompt that failed. */
+export const failoverThread = (
+  threadId: string,
+  to: ModelTarget,
+  failure: TurnFailure,
+  retryPrompt: string,
+) => dispatch({ type: "thread.failover", threadId, to, failure, retryPrompt });
 
 export const startTurn = (threadId: string, prompt: string, whenBusy?: "reject" | "queue") =>
   dispatch({

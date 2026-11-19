@@ -5,6 +5,10 @@ import { formatDuration, summarizeTurn } from "../lib/summary.ts";
 import { openChanges, revertTurn } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { IconChevron, IconUndo } from "./Icons.tsx";
+import { FailoverNoticeRow } from "./failover/FailoverNotice.tsx";
+import { FallbackBanner } from "./failover/FallbackBanner.tsx";
+import { failoverNoticeFor } from "./failover/format.ts";
+import { SwitchAndRetry } from "./failover/SwitchAndRetry.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { TimelineEntry } from "./Timeline.tsx";
 
@@ -38,6 +42,7 @@ export function ThreadView({ threadId }: { threadId: string }) {
 
   return (
     <div className="thread-scroll" data-workspace-area="conversation" ref={scroller}>
+      <FallbackBanner threadId={threadId} />
       <div className="thread-content" ref={content}>
         {turnIds.length === 0 ? (
           <p className="empty-state">Send a message to start this thread.</p>
@@ -64,13 +69,24 @@ const TurnView = memo(function TurnView({
   turnId: string;
   isLast: boolean;
 }) {
-  const turn = useStore((state) => state.model.turns[threadId]?.find((t) => t.id === turnId));
+  const [turn, prev, before] = useStore(
+    useShallow((state) => {
+      const list = state.model.turns[threadId] ?? [];
+      const index = list.findIndex((t) => t.id === turnId);
+      return [list[index], list[index - 1], list[index - 2]] as const;
+    }),
+  );
+  const failover = useStore((state) => state.model.threads[threadId]?.failover);
   if (!turn) return null;
+  const notice = failoverNoticeFor(before, prev, turn, failover);
   return (
     <article className="turn" aria-label={`Turn: ${turn.prompt.slice(0, 60)}`}>
-      <div className="prompt" data-user-message-bubble="">
-        {turn.prompt}
-      </div>
+      {notice ? <FailoverNoticeRow notice={notice} /> : null}
+      {notice?.kind === "failedOver" ? null : (
+        <div className="prompt" data-user-message-bubble="">
+          {turn.prompt}
+        </div>
+      )}
       {turn.status === "running" ? (
         <LiveTurn turn={turn} />
       ) : (
@@ -197,6 +213,7 @@ function FinishedTurn({
           {turn.error ?? "The turn failed."}
         </p>
       ) : null}
+      {turn.status === "failed" && isLast && !running ? <SwitchAndRetry turn={turn} /> : null}
       {turn.status === "interrupted" ? (
         <p className="turn-notice">
           {turn.error ?? (isLast ? "Stopped." : "This turn was stopped.")}

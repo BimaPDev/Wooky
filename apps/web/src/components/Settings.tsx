@@ -9,9 +9,11 @@ import {
 } from "../state/actions.ts";
 import { useStore, type SettingsPage } from "../state/store.ts";
 import { AppearanceSettings } from "./AppearanceSettings.tsx";
+import { FailoverSettings } from "./FailoverSettings.tsx";
 import {
   IconBot,
   IconChart,
+  IconCircleArrowUp,
   IconClose,
   IconFolder,
   IconInfo,
@@ -29,6 +31,7 @@ const NAV: { id: SettingsPage; label: string; group: string | null; icon: () => 
   { id: "appearance", label: "Appearance", group: null, icon: IconPalette },
   { id: "usage", label: "Usage", group: null, icon: IconChart },
   { id: "providers", label: "Providers", group: "Agents", icon: IconBot },
+  { id: "failover", label: "Model fallback", group: "Agents", icon: IconCircleArrowUp },
   { id: "projects", label: "Projects", group: "Code", icon: IconFolder },
   { id: "about", label: "About", group: "About", icon: IconInfo },
 ];
@@ -129,6 +132,7 @@ export function Settings() {
               {page === "general" ? <GeneralPage /> : null}
               {page === "appearance" ? <AppearanceSettings /> : null}
               {page === "providers" ? <ProvidersPage /> : null}
+              {page === "failover" ? <FailoverSettings /> : null}
               {page === "projects" ? <ProjectsPage /> : null}
               {page === "about" ? <AboutPage /> : null}
             </div>

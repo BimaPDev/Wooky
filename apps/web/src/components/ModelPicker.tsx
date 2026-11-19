@@ -3,6 +3,14 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import { configureThread } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { IconCheckSmall, IconLock, IconPen, IconSearch, IconShield } from "./Icons.tsx";
+import { useMinuteClock } from "./failover/clock.ts";
+import {
+  cooldownFor,
+  limitedUntilLabel,
+  sameTarget,
+  targetLabel,
+  targetOf,
+} from "./failover/format.ts";
 import { isAvailable, modelLabel, providerLabels, runtimeModes, shortcut } from "./labels.ts";
 
 const modeMeta: Record<RuntimeMode, { icon: () => ReactNode; description: string }> = {
@@ -73,7 +81,20 @@ export function ModelPickerButton({
       onOpenChange={onOpenChange}
     >
       {children}
+      <FallbackTag thread={thread} />
     </PopoverChip>
+  );
+}
+
+/** Marks a thread that runs on a fallback model; the tooltip names the model it started on. */
+function FallbackTag({ thread }: { thread: Thread }) {
+  const providers = useStore((state) => state.providers);
+  const original = thread.failover?.original;
+  if (!original || sameTarget(original, targetOf(thread))) return null;
+  return (
+    <span className="fallback-tag" title={`Original: ${targetLabel(providers, original)}`}>
+      Fallback
+    </span>
   );
 }
 
@@ -215,6 +236,8 @@ function ProviderModelPanel({ thread }: { thread: Thread }) {
   const providers = useStore((state) => state.providers);
   const disabledProviders = useStore((state) => state.deviceSettings?.disabledProviders ?? []);
   const disabled = useMemo(() => new Set(disabledProviders), [disabledProviders]);
+  const cooldowns = useStore((state) => state.model.cooldowns);
+  const nowMs = useMinuteClock();
   const running = thread.status === "running" || thread.status === "waiting";
   const [chosenTab, setTab] = useState<ProviderKind>(thread.provider);
   const [query, setQuery] = useState("");
@@ -317,6 +340,9 @@ function ProviderModelPanel({ thread }: { thread: Thread }) {
           models.map((model, index) => {
             const selected = tab === thread.provider && model.id === thread.model;
             const hint = index < 9 ? shortcut(String(index + 1)) : null;
+            const cooldown = cooldowns
+              ? cooldownFor(cooldowns, { provider: tab, model: model.id }, nowMs)
+              : null;
             return (
               <button
                 key={model.id}
@@ -328,7 +354,14 @@ function ProviderModelPanel({ thread }: { thread: Thread }) {
                 onClick={() => pick(tab, model.id)}
               >
                 <span className={`provider-mark provider-${tab}`} aria-hidden="true" />
-                <span className="model-row-title">{model.label}</span>
+                <span className="model-row-copy">
+                  <span className="model-row-title">{model.label}</span>
+                  {cooldown ? (
+                    <span className="model-row-note">
+                      {limitedUntilLabel(cooldown.until, nowMs)}
+                    </span>
+                  ) : null}
+                </span>
                 {selected ? (
                   <span className="model-row-check" aria-hidden="true">
                     <IconCheckSmall />
