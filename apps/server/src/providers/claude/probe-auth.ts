@@ -1,4 +1,10 @@
-import type { AccountInfo, Options, SDKUserMessage, query } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  AccountInfo,
+  ModelInfo,
+  Options,
+  SDKUserMessage,
+  query,
+} from "@anthropic-ai/claude-agent-sdk";
 
 export const CLAUDE_AUTH_UNKNOWN_NOTE = "Could not verify sign-in.";
 export const CLAUDE_SIGNED_OUT_PROBLEM = "Run `claude auth login`, then refresh.";
@@ -22,10 +28,48 @@ function idleStreamingPrompt(signal: AbortSignal): AsyncIterable<SDKUserMessage>
   };
 }
 
+export type ClaudeModelOption = { id: string; label: string };
+
 export type ClaudeAuthProbeResult = {
   authenticated: boolean | null;
   problem: string | null;
+  /** Models the SDK reports, ordered and including "default". Empty when unavailable. */
+  models: ClaudeModelOption[];
 };
+
+function prettifyModelId(value: string): string {
+  const words = value
+    .replace(/\[(\w+)\]/g, " ($1)")
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) =>
+      word.startsWith("(") ? word.toUpperCase() : word.charAt(0).toUpperCase() + word.slice(1),
+    );
+  return words.join(" ") || value;
+}
+
+/** Plain aliases (default, opus, sonnet...) first, then explicit ids and 1M-context variants. */
+function modelRank(id: string): number {
+  if (id === "default") return 0;
+  return /^[a-z]+$/.test(id) ? 1 : 2;
+}
+
+export function claudeModelOptions(infos: readonly ModelInfo[]): ClaudeModelOption[] {
+  const seen = new Set<string>();
+  const options: ClaudeModelOption[] = [];
+  for (const info of infos) {
+    const id = typeof info.value === "string" ? info.value.trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    options.push({ id, label: info.displayName?.trim() || prettifyModelId(id) });
+  }
+  if (options.length === 0) return [];
+  if (!seen.has("default")) options.push({ id: "default", label: "Default" });
+  return options
+    .map((option, index) => ({ option, index }))
+    .sort((a, b) => modelRank(a.option.id) - modelRank(b.option.id) || a.index - b.index)
+    .map(({ option }) => option);
+}
 
 export function accountAuthenticated(account: AccountInfo | undefined): boolean {
   if (!account) return false;
@@ -58,23 +102,33 @@ export async function probeClaudeAuth(
         abortController: abort,
       },
     });
-    const init = await Promise.race([
-      session.initializationResult(),
-      new Promise<never>((_, reject) => {
-        abort.signal.addEventListener(
-          "abort",
-          () => reject(new Error("Claude auth probe timed out")),
-          { once: true },
-        );
-      }),
-    ]);
+    const active = session;
+    const untilAborted = <T>(work: Promise<T>) =>
+      Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          abort.signal.addEventListener(
+            "abort",
+            () => reject(new Error("Claude auth probe timed out")),
+            { once: true },
+          );
+        }),
+      ]);
+    const init = await untilAborted(active.initializationResult());
     const authenticated = accountAuthenticated(init.account);
+    let models: ClaudeModelOption[] = [];
+    try {
+      models = claudeModelOptions(await untilAborted(active.supportedModels()));
+    } catch {
+      // The model list is a nicety; auth stays valid without it.
+    }
     return {
       authenticated,
       problem: authenticated ? null : CLAUDE_SIGNED_OUT_PROBLEM,
+      models,
     };
   } catch {
-    return { authenticated: null, problem: CLAUDE_AUTH_UNKNOWN_NOTE };
+    return { authenticated: null, problem: CLAUDE_AUTH_UNKNOWN_NOTE, models: [] };
   } finally {
     clearTimeout(timer);
     if (!abort.signal.aborted) abort.abort();

@@ -1,9 +1,10 @@
-import type { AccountInfo, Options, query } from "@anthropic-ai/claude-agent-sdk";
+import type { AccountInfo, ModelInfo, Options, query } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it, vi } from "vitest";
 import {
   CLAUDE_AUTH_UNKNOWN_NOTE,
   CLAUDE_SIGNED_OUT_PROBLEM,
   accountAuthenticated,
+  claudeModelOptions,
   probeClaudeAuth,
 } from "./probe-auth.ts";
 
@@ -38,6 +39,7 @@ function trackIterable(prompt: Params["prompt"]): IterableProbe | null {
 
 function fakeQueryForAuthProbe(
   probe: { account?: AccountInfo; delayMs?: number } | "hang" | "error",
+  models: ModelInfo[] | "throw" | "hang" | "absent" = "absent",
 ) {
   const calls: Params[] = [];
   const iterableProbes: Array<{ abort?: AbortController }> = [];
@@ -87,8 +89,14 @@ function fakeQueryForAuthProbe(
       if (false as boolean) yield undefined;
       await new Promise<never>(() => undefined);
     };
+    const supportedModels = () => {
+      if (models === "throw") return Promise.reject(new Error("models failed"));
+      if (models === "hang") return new Promise(() => undefined);
+      return Promise.resolve(models);
+    };
     const session = Object.assign(gen(), {
       initializationResult,
+      ...(models === "absent" ? {} : { supportedModels }),
       close,
       tracked,
     }) as AuthProbeSession;
@@ -165,7 +173,11 @@ describe("probeClaudeAuth prompt", () => {
   it("lets the prompt iterable finish after a timeout", async () => {
     const { fake, lastSession } = fakeQueryForAuthProbe("hang");
     const result = await probeClaudeAuth(fake, {}, 50);
-    expect(result).toEqual({ authenticated: null, problem: CLAUDE_AUTH_UNKNOWN_NOTE });
+    expect(result).toEqual({
+      authenticated: null,
+      problem: CLAUDE_AUTH_UNKNOWN_NOTE,
+      models: [],
+    });
     await expect(lastSession()?.tracked?.finished).resolves.toBeUndefined();
   });
 });
@@ -176,6 +188,7 @@ describe("probeClaudeAuth auth", () => {
     await expect(probeClaudeAuth(fake, {}, 5_000)).resolves.toEqual({
       authenticated: true,
       problem: null,
+      models: [],
     });
   });
 
@@ -184,6 +197,7 @@ describe("probeClaudeAuth auth", () => {
     await expect(probeClaudeAuth(fake, {}, 5_000)).resolves.toEqual({
       authenticated: true,
       problem: null,
+      models: [],
     });
   });
 
@@ -194,6 +208,7 @@ describe("probeClaudeAuth auth", () => {
     await expect(probeClaudeAuth(fake, {}, 5_000)).resolves.toEqual({
       authenticated: false,
       problem: CLAUDE_SIGNED_OUT_PROBLEM,
+      models: [],
     });
     expect(close).toHaveBeenCalled();
   });
@@ -203,6 +218,7 @@ describe("probeClaudeAuth auth", () => {
     await expect(probeClaudeAuth(fake, {}, 50)).resolves.toEqual({
       authenticated: null,
       problem: CLAUDE_AUTH_UNKNOWN_NOTE,
+      models: [],
     });
     const options = calls[0]?.options as Options;
     expect(options).toMatchObject({ persistSession: false, tools: [] });
@@ -213,6 +229,88 @@ describe("probeClaudeAuth auth", () => {
     await expect(probeClaudeAuth(fake, {}, 5_000)).resolves.toEqual({
       authenticated: null,
       problem: CLAUDE_AUTH_UNKNOWN_NOTE,
+      models: [],
+    });
+  });
+});
+
+const info = (value: string, displayName = ""): ModelInfo => ({
+  value,
+  displayName,
+  description: "",
+});
+
+describe("claudeModelOptions", () => {
+  it("maps value and display name, falling back to a prettified id", () => {
+    expect(claudeModelOptions([info("opus", "Opus"), info("claude-opus-5-5"), info("")])).toEqual([
+      { id: "default", label: "Default" },
+      { id: "opus", label: "Opus" },
+      { id: "claude-opus-5-5", label: "Claude Opus 5 5" },
+    ]);
+  });
+
+  it("orders default, then aliases, then explicit ids and 1M variants, stably", () => {
+    const ids = claudeModelOptions([
+      info("claude-sonnet-5-5"),
+      info("opus[1m]"),
+      info("haiku", "Haiku"),
+      info("default", "Default"),
+      info("claude-opus-5-5"),
+      info("sonnet", "Sonnet"),
+      info("haiku", "Duplicate"),
+    ]).map((model) => model.id);
+    expect(ids).toEqual([
+      "default",
+      "haiku",
+      "sonnet",
+      "claude-sonnet-5-5",
+      "opus[1m]",
+      "claude-opus-5-5",
+    ]);
+  });
+
+  it("labels a 1M variant readably and returns nothing for an empty list", () => {
+    expect(claudeModelOptions([info("opus[1m]")]).find((m) => m.id === "opus[1m]")?.label).toBe(
+      "Opus (1M)",
+    );
+    expect(claudeModelOptions([])).toEqual([]);
+  });
+});
+
+describe("probeClaudeAuth models", () => {
+  const oauth = { account: { tokenSource: "oauth" } };
+
+  it("returns the SDK models from the same idle session", async () => {
+    const { fake, calls } = fakeQueryForAuthProbe(oauth, [
+      info("opus", "Opus"),
+      info("default", "Default"),
+    ]);
+    const result = await probeClaudeAuth(fake, {}, 5_000);
+    expect(calls).toHaveLength(1);
+    expect(result).toEqual({
+      authenticated: true,
+      problem: null,
+      models: [
+        { id: "default", label: "Default" },
+        { id: "opus", label: "Opus" },
+      ],
+    });
+  });
+
+  it("keeps auth and returns no models when supportedModels throws, hangs or is empty", async () => {
+    for (const models of ["throw" as const, "absent" as const, [] as ModelInfo[]]) {
+      const { fake } = fakeQueryForAuthProbe(oauth, models);
+      await expect(probeClaudeAuth(fake, {}, 5_000)).resolves.toEqual({
+        authenticated: true,
+        problem: null,
+        models: [],
+      });
+    }
+    const { fake } = fakeQueryForAuthProbe(oauth, "hang");
+    await expect(probeClaudeAuth(fake, {}, 50)).resolves.toEqual({
+      authenticated: true,
+      problem: null,
+      models: [],
     });
   });
 });
