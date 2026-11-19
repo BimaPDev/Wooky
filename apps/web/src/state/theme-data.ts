@@ -37,6 +37,8 @@ export const BASE_PALETTES: Record<"dark" | "light", Palette> = {
     providerCursor: "#b9b8b3",
     providerCodex: "#8fb3e6",
     providerDemo: "#a7c79a",
+    providerOpencode: "#c6b59a",
+    providerAcp: "#8e9a9e",
   },
   light: {
     bg0: "#f4f3ef",
@@ -67,6 +69,8 @@ export const BASE_PALETTES: Record<"dark" | "light", Palette> = {
     providerCursor: "#55534e",
     providerCodex: "#3d6fb3",
     providerDemo: "#4f7c43",
+    providerOpencode: "#7a6a55",
+    providerAcp: "#4d5c61",
   },
 };
 

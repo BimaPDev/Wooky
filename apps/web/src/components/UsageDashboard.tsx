@@ -421,7 +421,10 @@ function UsageLimitsPanel({
 }
 
 function ProviderLimitsCard({ row }: { row: ProviderLimits }) {
-  const meta = SERIES_META[row.provider];
+  const meta =
+    row.provider === "acp"
+      ? { label: "ACP agent", color: "var(--provider-acp)", markClass: row.provider }
+      : SERIES_META[row.provider];
   return (
     <section className="usage-limits-card">
       <header className="usage-limits-card-head">

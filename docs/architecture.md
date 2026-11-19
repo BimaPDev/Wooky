@@ -64,6 +64,11 @@ read model. Non-git projects run without checkpoints.
 | cursor   | `cursor-agent -p --output-format stream-json --stream-partial-output` | `--resume <chatId>`; approval via runtime mode (`--force` only in `full`) |
 | codex    | `codex app-server` JSON-RPC over stdio                                | approvals are server requests                                             |
 | demo     | scripted, deterministic, free                                         | used by tests and UI work                                                 |
+| opencode | `opencode` CLI                                                        | model ids come from `opencode models`; see [providers.md](providers.md)   |
+| acp      | one JSON-RPC-over-stdio adapter for a user-defined command            | any ACP agent; see [providers.md](providers.md)                           |
+
+Settings, ACP agent ids, and the model-id rules live in [providers.md](providers.md).
+The registry knows the OpenCode and ACP labels and ships no adapter for them yet.
 
 ## Read path
 

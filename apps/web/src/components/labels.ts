@@ -5,6 +5,8 @@ export const providerLabels: Record<ProviderKind, string> = {
   cursor: "Cursor",
   codex: "Codex",
   demo: "Demo",
+  opencode: "OpenCode",
+  acp: "ACP agent",
 };
 
 export const runtimeModes: { id: RuntimeMode; label: string; short: string }[] = [

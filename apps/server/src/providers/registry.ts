@@ -6,6 +6,8 @@ const LABELS: Record<ProviderKind, string> = {
   cursor: "Cursor",
   codex: "Codex",
   demo: "Demo",
+  opencode: "OpenCode",
+  acp: "ACP agent",
 };
 
 export interface ProviderRegistry {

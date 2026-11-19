@@ -1,9 +1,9 @@
-import type {
-  DeviceSettings,
-  ModelTarget,
+import {
   ProviderKind,
-  ProviderStatus,
-  Thread,
+  type DeviceSettings,
+  type ModelTarget,
+  type ProviderStatus,
+  type Thread,
 } from "@age/contracts";
 
 export function buildAvailable(
@@ -28,7 +28,7 @@ export function buildAvailable(
   };
 }
 
-const ALL_KINDS: readonly ProviderKind[] = ["claude", "cursor", "codex", "demo"];
+const ALL_KINDS: readonly ProviderKind[] = ProviderKind.options;
 
 /** Probes each adapter directly so a timed-out registry list does not mark providers uninstalled. */
 export async function probeProvidersFresh(

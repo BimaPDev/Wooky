@@ -150,7 +150,8 @@ export function buildUsageDashboardStats(input: {
   }
 
   for (const turn of visibleTurns) {
-    if (input.hiddenSeries.has(seriesIdForProvider(turn.provider))) continue;
+    const series = seriesIdForProvider(turn.provider);
+    if (series === null || input.hiddenSeries.has(series)) continue;
     const at = Date.parse(turn.endedAt ?? turn.startedAt);
     if (!Number.isFinite(at) || at < sinceMs || at > untilMs) continue;
     const usage = turn.usage;
@@ -159,7 +160,6 @@ export function buildUsageDashboardStats(input: {
     const turnOut = usage.outputTokens ?? 0;
     const turnCached = usage.cachedInputTokens ?? 0;
     const tokens = turnIn + turnOut;
-    const series = seriesIdForProvider(turn.provider);
     addSeries(series, turnCost, tokens);
     addModel(series, turn.model, turnCost, tokens);
     costSlices.push({ ...emptyCostByType(), other: turnCost });

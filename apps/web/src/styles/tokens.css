@@ -111,6 +111,8 @@
   --provider-cursor: #b9b8b3;
   --provider-codex: #8fb3e6;
   --provider-demo: #a7c79a;
+  --provider-opencode: #c6b59a;
+  --provider-acp: #8e9a9e;
 }
 
 :root[data-theme="light"] {
@@ -146,6 +148,8 @@
   --provider-cursor: #55534e;
   --provider-codex: #3d6fb3;
   --provider-demo: #4f7c43;
+  --provider-opencode: #7a6a55;
+  --provider-acp: #4d5c61;
 }
 
 @media (prefers-color-scheme: light) {
@@ -182,6 +186,8 @@
     --provider-cursor: #55534e;
     --provider-codex: #3d6fb3;
     --provider-demo: #4f7c43;
+    --provider-opencode: #7a6a55;
+    --provider-acp: #4d5c61;
   }
 }
 

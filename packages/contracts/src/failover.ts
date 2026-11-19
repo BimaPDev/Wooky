@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderKind } from "./kind.ts";
 
 export const TurnFailureKind = z.enum(["rate_limit", "quota", "overloaded", "auth", "other"]);
 export type TurnFailureKind = z.infer<typeof TurnFailureKind>;
@@ -14,7 +15,7 @@ export const TurnFailure = z.object({
 export type TurnFailure = z.infer<typeof TurnFailure>;
 
 export const ModelTarget = z.object({
-  provider: z.enum(["claude", "cursor", "codex", "demo"]),
+  provider: ProviderKind,
   model: z.string().min(1),
 });
 export type ModelTarget = z.infer<typeof ModelTarget>;

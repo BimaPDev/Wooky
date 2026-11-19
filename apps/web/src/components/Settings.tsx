@@ -522,6 +522,10 @@ function binaryHint(kind: ProviderKind) {
       return "agent";
     case "demo":
       return "built-in";
+    case "opencode":
+      return "opencode";
+    case "acp":
+      return "configured command";
   }
 }
 

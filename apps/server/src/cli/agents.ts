@@ -94,7 +94,7 @@ async function spawn(
   const providerFlag = flagValue(flags, "provider");
   if (!providerFlag) throw new Error("Missing --provider.");
   const provider = ProviderKind.safeParse(providerFlag);
-  if (!provider.success) throw new Error("Provider must be claude, cursor, codex, or demo.");
+  if (!provider.success) throw new Error(`Provider must be ${ProviderKind.options.join(", ")}.`);
   const model = flagValue(flags, "model");
   if (!model) throw new Error("Missing --model.");
   const runtimeFlag = flagValue(flags, "runtime-mode");
