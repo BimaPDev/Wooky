@@ -213,6 +213,21 @@ describe("wallpaper scenes", () => {
     }
   });
 
+  it("allows filter primitives used by imported glyph wallpapers but not feImage", () => {
+    const filter = (body: string) =>
+      `<svg xmlns="http://www.w3.org/2000/svg"><filter id="f">${body}</filter><rect filter="url(#f)"/></svg>`;
+    expect(() =>
+      assertSafeSvg(
+        filter(
+          '<feMorphology radius="1"/><feComponentTransfer><feFuncA type="table" tableValues="0 1"/></feComponentTransfer>',
+        ),
+      ),
+    ).not.toThrow();
+    expect(() => assertSafeSvg(filter('<feImage href="https://evil.example/x.png"/>'))).toThrow(
+      /feimage/i,
+    );
+  });
+
   it("rejects unsafe SVG payloads in assertSafeSvg", () => {
     const unsafeSamples: Array<[string, string, RegExp]> = [
       [
