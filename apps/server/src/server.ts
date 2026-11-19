@@ -21,6 +21,7 @@ import { createQueries } from "./queries.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
 import { createTerminalManager } from "./terminal/session.ts";
+import { publishServerPresence } from "./presence.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
@@ -138,15 +139,26 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
   const { port } = http.address() as AddressInfo;
   const host = options.host.includes(":") ? `[${options.host}]` : options.host;
+  const url = `http://${host}:${port}`;
+  let unpublish: () => void;
+  try {
+    unpublish = publishServerPresence(options.home, url);
+  } catch (error) {
+    closeSockets();
+    http.close();
+    store.close();
+    throw error;
+  }
 
   let closing: Promise<void> | null = null;
   return {
-    url: `http://${host}:${port}`,
+    url,
     port,
     close() {
       // Stop new work first, then drain running turns while open sockets still get their
       // final events, and close the store last.
       closing ??= (async () => {
+        unpublish();
         dispatcher.close();
         const stopped = new Promise<void>((resolve) => http.close(() => resolve()));
         http.closeIdleConnections();

@@ -6,6 +6,7 @@ import type {
   ProviderStatus,
   QuestionAnswers,
   RuntimeMode,
+  ThreadRole,
   UserInputRequest,
 } from "@age/contracts";
 
@@ -40,6 +41,8 @@ export interface TurnInput {
   interactionMode: InteractionMode;
   /** Prior conversation as text when the thread was handed off from another provider. */
   handoffContext: string | null;
+  /** Absent means solo. A worker cannot spawn; every other role may. */
+  role?: ThreadRole;
   signal: AbortSignal;
   /** Resolve an approval card. Only called when runtimeMode requires it. */
   requestApproval: (request: ApprovalRequest) => Promise<"allow" | "deny">;

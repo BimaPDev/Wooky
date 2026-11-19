@@ -24,6 +24,18 @@ if (pidFile) {
   writeFileSync(pidFile, String(process.pid), "utf8");
 }
 
+if (process.env.AGE_FAKE_CODEX_LOG_ENV) {
+  writeFileSync(
+    process.env.AGE_FAKE_CODEX_LOG_ENV,
+    JSON.stringify({
+      AGE_THREAD_ID: process.env.AGE_THREAD_ID ?? null,
+      AGE_SERVER_URL: process.env.AGE_SERVER_URL ?? null,
+      PATH: process.env.PATH ?? "",
+    }),
+    "utf8",
+  );
+}
+
 // Spawn a long-lived grandchild as an ordinary child. It is NOT detached, so
 // killing only this server's pid would orphan (not kill) it: proving the group
 // kill is what takes it down.

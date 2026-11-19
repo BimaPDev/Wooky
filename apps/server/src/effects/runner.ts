@@ -389,6 +389,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         resumeAt,
         interactionMode: turn.interactionMode ?? live.interactionMode ?? "default",
         handoffContext,
+        role: live.role,
         signal,
         requestApproval: async (raw) => {
           if (signal.aborted) return "deny";
