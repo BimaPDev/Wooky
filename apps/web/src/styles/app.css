@@ -6700,9 +6700,8 @@ html[data-wallpaper] .popover.popover-picker {
   padding: 0;
   overflow: hidden;
   border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-2) 96%, transparent);
-  -webkit-backdrop-filter: blur(24px) saturate(1.2);
-  backdrop-filter: blur(24px) saturate(1.2);
+  /* Solid: even 4% transparency let the large draft heading show through. */
+  background: var(--bg-2);
 }
 
 .pk-panel {
