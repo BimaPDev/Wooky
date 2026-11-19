@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import {
+  DeviceSettings,
   FailoverSettings,
   type Command,
   type ProviderCapabilities,
@@ -54,9 +55,13 @@ export interface RunningServer {
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const limits = createLimitsService();
+  let readSettings: () => DeviceSettings = () => DeviceSettings.parse({});
   const adapters =
     options.adapters ??
-    builtinAdapters({ onClaudeRateLimit: (info) => limits.ingestClaudeRateLimit(info) });
+    builtinAdapters({
+      onClaudeRateLimit: (info) => limits.ingestClaudeRateLimit(info),
+      deviceSettings: () => readSettings(),
+    });
   const registry = createProviderRegistry(adapters);
   const capabilities = new Map<ProviderKind, ProviderCapabilities>();
   const demo = registry.get("demo");
@@ -90,6 +95,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const git = options.git ?? createGitService();
   let dispatchCommand: (command: Command) => void = () => {};
   const themes = createThemeStore(options.home);
+  readSettings = () => themes.getSettings();
   const runner = createEffectRunner({
     store,
     providers,
