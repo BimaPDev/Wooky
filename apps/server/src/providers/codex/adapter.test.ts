@@ -453,6 +453,7 @@ describe("createCodexAdapter", () => {
     expect(doneEvents).toEqual([
       expect.objectContaining({ type: "done", status: "interrupted", error: null }),
     ]);
+    expect(doneEvents[0]).not.toHaveProperty("failure");
     expect(received.at(-1)).toEqual(
       expect.objectContaining({ type: "done", status: "interrupted", error: null }),
     );
@@ -653,6 +654,35 @@ describe("createCodexAdapter", () => {
     }
     expect(last.status).toBe("failed");
     expect(last.error).toContain("FATAL: simulated codex panic in worker");
+    expect(last).not.toHaveProperty("failure");
     expect(Buffer.byteLength(last.error ?? "", "utf8")).toBeLessThanOrEqual(4200);
+  });
+
+  it("attaches quota failure when the turn completes with a usage limit", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "usage-limit"],
+    });
+    const events = await collectEvents(adapter.runTurn(baseInput()));
+    const last = events.at(-1);
+    expect(last).toMatchObject({
+      type: "done",
+      status: "failed",
+      failure: { kind: "quota" },
+    });
+  });
+
+  it("attaches quota failure when turn/start returns usage_limit_reached", async () => {
+    const adapter = createCodexAdapter({
+      codexBin: process.execPath,
+      codexArgs: [fakeServerPath, "--scenario", "usage-limit-rpc"],
+    });
+    const events = await collectEvents(adapter.runTurn(baseInput()));
+    const last = events.at(-1);
+    expect(last).toMatchObject({
+      type: "done",
+      status: "failed",
+      failure: { kind: "quota" },
+    });
   });
 });

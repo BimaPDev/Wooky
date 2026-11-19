@@ -2,6 +2,8 @@ import type {
   SDKAssistantMessage,
   SDKMessage,
   SDKPartialAssistantMessage,
+  SDKRateLimitEvent,
+  SDKRateLimitInfo,
   SDKResultError,
   SDKResultSuccess,
   SDKSystemMessage,
@@ -147,6 +149,15 @@ export function resultError(
     uuid: uuid(),
     session_id: SESSION,
   } as unknown as SDKResultError;
+}
+
+export function rateLimitEvent(info: SDKRateLimitInfo): SDKRateLimitEvent {
+  return {
+    type: "rate_limit_event",
+    rate_limit_info: info,
+    uuid: uuid(),
+    session_id: SESSION,
+  } as unknown as SDKRateLimitEvent;
 }
 
 export type { SDKMessage };

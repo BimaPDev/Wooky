@@ -1,4 +1,6 @@
-import type { ProviderEvent, TimelineItem, ToolKind } from "@age/contracts";
+import type { ProviderEvent, TimelineItem, ToolKind, TurnFailure } from "@age/contracts";
+import { asDoneFailure } from "../failure.ts";
+import { classifyCodexFailure } from "./classify.ts";
 import {
   type CodexFileUpdateChange,
   type CodexThreadItem,
@@ -253,7 +255,11 @@ export interface CodexTranslatorOptions {
 export interface CodexTranslator {
   bindSession(sessionId: string): ProviderEvent[];
   translateNotification(method: string, params: unknown): ProviderEvent[];
-  finish(status: "completed" | "interrupted" | "failed", error: string | null): ProviderEvent[];
+  finish(
+    status: "completed" | "interrupted" | "failed",
+    error: string | null,
+    cause?: unknown,
+  ): ProviderEvent[];
   isDone(): boolean;
   getLastError(): string | null;
   getCommandForItem(itemId: string): string | undefined;
@@ -318,10 +324,15 @@ export function createCodexTranslator(options?: CodexTranslatorOptions): CodexTr
   function finish(
     status: "completed" | "interrupted" | "failed",
     error: string | null,
+    cause?: unknown,
   ): ProviderEvent[] {
     if (doneEmitted) return [];
     doneEmitted = true;
-    return [{ type: "done", status, error }];
+    const failure: TurnFailure | undefined =
+      status === "failed"
+        ? asDoneFailure(classifyCodexFailure({ error: cause, errorText: error ?? undefined }))
+        : undefined;
+    return [{ type: "done", status, error, ...(failure ? { failure } : {}) }];
   }
 
   function ensureMessageItem(id: string): ProviderEvent[] {

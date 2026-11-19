@@ -518,11 +518,12 @@ describe("createCodexTranslator", () => {
         error: null,
       },
     });
-    expect(doneEvents).toEqual([
+    expect(doneEvents).toMatchObject([
       {
         type: "done",
         status: "failed",
         error: "Upstream rate limit: retry in 30s",
+        failure: { kind: "rate_limit" },
       },
     ]);
 
@@ -536,6 +537,46 @@ describe("createCodexTranslator", () => {
     ).toEqual([]);
     expect(t.bindSession("thr_late")).toEqual([]);
     expect(t.finish("interrupted", null)).toEqual([]);
+  });
+
+  it("attaches quota failure on a usage-limit turn/completed", () => {
+    const t = createCodexTranslator();
+    const doneEvents = t.translateNotification("turn/completed", {
+      turn: {
+        id: "turn_1",
+        status: "failed",
+        error: {
+          message: "You've hit your usage limit",
+          additionalDetails: "try again in 2 hours",
+        },
+      },
+    });
+    expect(doneEvents).toMatchObject([
+      {
+        type: "done",
+        status: "failed",
+        failure: { kind: "quota" },
+      },
+    ]);
+    for (const ev of doneEvents) expect(() => ProviderEvent.parse(ev)).not.toThrow();
+  });
+
+  it("does not attach failure on interrupt or an ordinary tool error", () => {
+    const interrupted = createCodexTranslator().translateNotification("turn/completed", {
+      turn: { id: "turn_1", status: "interrupted", error: null },
+    });
+    expect(interrupted).toEqual([{ type: "done", status: "interrupted", error: null }]);
+
+    const ordinary = createCodexTranslator().translateNotification("turn/completed", {
+      turn: {
+        id: "turn_1",
+        status: "failed",
+        error: { message: "Tool crashed after 12 attempts" },
+      },
+    });
+    expect(ordinary).toEqual([
+      { type: "done", status: "failed", error: "Tool crashed after 12 attempts" },
+    ]);
   });
 
   describe("plan items", () => {

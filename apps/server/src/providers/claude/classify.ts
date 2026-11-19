@@ -1,5 +1,11 @@
 import type { SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
-import { classifyGenericText, isInterruptText, timingFrom, type TurnFailure } from "../failure.ts";
+import {
+  classifyGenericText,
+  isInterruptText,
+  timingFrom,
+  type TurnFailure,
+  type TurnFailureKind,
+} from "../failure.ts";
 
 const PLAN_WINDOWS = new Set([
   "five_hour",
@@ -76,7 +82,7 @@ function classifyRateLimit(
     ? Math.max(0, Date.parse(resetAt) - now.getTime())
     : timingFrom(errorText, now).retryAfterMs;
   const message = errorText || "Claude AI usage limit reached";
-  const kind =
+  const kind: TurnFailureKind =
     credits || (info.rateLimitType !== undefined && PLAN_WINDOWS.has(info.rateLimitType))
       ? "quota"
       : "rate_limit";

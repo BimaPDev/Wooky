@@ -10,6 +10,7 @@ import { setPlanUserHomeForTests } from "./interaction.ts";
 import {
   assistant,
   init,
+  rateLimitEvent,
   resultSuccess,
   text,
   toolResult,
@@ -360,6 +361,7 @@ describe("abort and failure", () => {
       },
     );
     expect(events.at(-1)).toEqual({ type: "done", status: "interrupted", error: null });
+    expect(events.at(-1)).not.toHaveProperty("failure");
     expectOneDoneLast(events);
     expect(close).toHaveBeenCalled();
   });
@@ -428,6 +430,41 @@ describe("abort and failure", () => {
       status: "failed",
       error: "process exited with code 1",
       nativeRef: expect.any(String),
+    });
+    expect(events.at(-1)).not.toHaveProperty("failure");
+    expectOneDoneLast(events);
+  });
+
+  it("attaches quota failure on a usage-limit result stream", async () => {
+    const { fake } = fakeQuery(async function* () {
+      yield init();
+      yield rateLimitEvent({
+        status: "rejected",
+        rateLimitType: "five_hour",
+        utilization: 100,
+        resetsAt: 1_763_485_200,
+      });
+      yield resultSuccess({ is_error: true, result: "Claude AI usage limit reached|1763485200" });
+    });
+    const events = await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput()));
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      status: "failed",
+      failure: { kind: "quota" },
+    });
+    expectOneDoneLast(events);
+  });
+
+  it("classifies a thrown usage-limit SDK error as quota", async () => {
+    const { fake } = fakeQuery(async function* () {
+      yield init();
+      throw new Error("Claude AI usage limit reached|1763485200");
+    });
+    const events = await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput()));
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      status: "failed",
+      failure: { kind: "quota" },
     });
     expectOneDoneLast(events);
   });

@@ -1,5 +1,7 @@
+import type { ProviderEvent, ToolKind, TurnFailure, Usage } from "@age/contracts";
+import { asDoneFailure } from "../failure.ts";
 import { workspaceRelative } from "../paths.ts";
-import type { ProviderEvent, ToolKind, Usage } from "@age/contracts";
+import { classifyCursorFailure } from "./classify.ts";
 
 const OUTPUT_PREVIEW_MAX = 4 * 1024;
 
@@ -79,33 +81,18 @@ export class CursorTranslator {
       return [{ type: "done", status: "interrupted", error: null }];
     }
     if (exitSignal) {
-      return [
-        {
-          type: "done",
-          status: "failed",
-          error: stderrTail ?? `Process exited on signal ${exitSignal}`,
-        },
-      ];
+      const error = stderrTail ?? `Process exited on signal ${exitSignal}`;
+      return [failedDone(error, { stderr: stderrTail ?? undefined, exitCode })];
     }
     if (exitCode !== null && exitCode !== 0) {
-      return [
-        {
-          type: "done",
-          status: "failed",
-          error: stderrTail ?? `Process exited with code ${exitCode}`,
-        },
-      ];
+      const error = stderrTail ?? `Process exited with code ${exitCode}`;
+      return [failedDone(error, { stderr: stderrTail ?? undefined, exitCode })];
     }
     if (exitCode === 0) {
       return [{ type: "done", status: "completed", error: null }];
     }
-    return [
-      {
-        type: "done",
-        status: "failed",
-        error: stderrTail ?? "Process exited unexpectedly",
-      },
-    ];
+    const error = stderrTail ?? "Process exited unexpectedly";
+    return [failedDone(error, { stderr: stderrTail ?? undefined, exitCode })];
   }
 
   private closeMessageSegment(): void {
@@ -260,13 +247,30 @@ export class CursorTranslator {
     const errorText = isError && typeof event.result === "string" ? event.result : null;
 
     this.doneEmitted = true;
-    out.push({
-      type: "done",
-      status: isError ? "failed" : "completed",
-      error: errorText,
-    });
+    if (isError) {
+      out.push(
+        failedDone(errorText, {
+          errorText: errorText ?? undefined,
+        }),
+      );
+    } else {
+      out.push({ type: "done", status: "completed", error: null });
+    }
     return out;
   }
+}
+
+function failedDone(
+  error: string | null,
+  input: { errorText?: string; stderr?: string; exitCode?: number | null },
+): Extract<ProviderEvent, { type: "done" }> {
+  const failure: TurnFailure | undefined = asDoneFailure(classifyCursorFailure(input));
+  return {
+    type: "done",
+    status: "failed",
+    error,
+    ...(failure ? { failure } : {}),
+  };
 }
 
 function extractAssistantText(event: CursorStreamEvent): string | null {
