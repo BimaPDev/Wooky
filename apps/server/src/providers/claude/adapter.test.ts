@@ -1,5 +1,5 @@
 import type { ApprovalRequest, ProviderEvent, UserInputRequest } from "@age/contracts";
-import type { AccountInfo, Options, query } from "@anthropic-ai/claude-agent-sdk";
+import type { AccountInfo, ModelInfo, Options, query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,7 @@ function fakeQuery(script: Script) {
 
 function fakeQueryForAuthProbe(
   probe: { account?: AccountInfo; delayMs?: number; fail?: boolean } | "hang" | "error",
+  models?: ModelInfo[] | "throw",
 ) {
   const calls: Params[] = [];
   const close = vi.fn<() => void>();
@@ -71,7 +72,11 @@ function fakeQueryForAuthProbe(
       if (false as boolean) yield undefined;
       await new Promise<never>(() => undefined);
     };
-    return Object.assign(gen(), { initializationResult, close });
+    const supportedModels = () =>
+      models === "throw"
+        ? Promise.reject(new Error("models failed"))
+        : Promise.resolve(models ?? []);
+    return Object.assign(gen(), { initializationResult, supportedModels, close });
   }) as unknown as typeof query;
   return { fake, calls, close };
 }
@@ -132,6 +137,14 @@ describe("runTurn options", () => {
     expect(options).not.toHaveProperty("model");
     expect(events.at(-1)).toMatchObject({ type: "done", status: "completed", error: null });
     expect(close).toHaveBeenCalled();
+  });
+
+  it("passes a model id from the dynamic list through unchanged", async () => {
+    for (const model of ["claude-opus-5-5", "opus[1m]"]) {
+      const { fake, calls } = fakeQuery(simple);
+      await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput({ model })));
+      expect(calls[0]?.options).toMatchObject({ model });
+    }
   });
 
   it("passes an explicit model and the configured binary", async () => {
@@ -535,6 +548,38 @@ describe("probe", () => {
     expect(status.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(status.authenticated).toBe(true);
     expect(status.problem).toBeNull();
+  });
+
+  it("lists the models the SDK reports, default first", async () => {
+    const { fake } = fakeQueryForAuthProbe({ account: { tokenSource: "oauth" } }, [
+      { value: "claude-opus-5-5", displayName: "Opus 5.5", description: "" },
+      { value: "opus", displayName: "Opus", description: "" },
+      { value: "default", displayName: "Default (recommended)", description: "" },
+    ]);
+    const status = await createClaudeAdapter({ query: fake, claudeBin: process.execPath }).probe();
+    expect(status.models).toEqual([
+      { id: "default", label: "Default (recommended)" },
+      { id: "opus", label: "Opus" },
+      { id: "claude-opus-5-5", label: "Opus 5.5" },
+    ]);
+  });
+
+  it("falls back to the built-in models when the SDK list is empty or fails", async () => {
+    for (const models of [[] as ModelInfo[], "throw" as const]) {
+      const { fake } = fakeQueryForAuthProbe({ account: { tokenSource: "oauth" } }, models);
+      const status = await createClaudeAdapter({
+        query: fake,
+        claudeBin: process.execPath,
+      }).probe();
+      expect(status.authenticated).toBe(true);
+      expect(status.models.map((model) => model.id)).toEqual([
+        "default",
+        "fable",
+        "opus",
+        "sonnet",
+        "haiku",
+      ]);
+    }
   });
 
   it("reports signed out when the SDK account has no token or API key source", async () => {

@@ -98,6 +98,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           version,
           authenticated: auth.authenticated,
           problem: auth.problem,
+          models: auth.models.length > 0 ? auth.models : MODELS,
         };
       } catch (error) {
         if ((error as { code?: unknown }).code === "ENOENT") {
