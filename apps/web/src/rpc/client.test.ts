@@ -122,6 +122,23 @@ describe("rpc client", () => {
     client.close();
   });
 
+  it("keeps a folder dialog open past the short RPC timeout", async () => {
+    const { client, socket } = setup({ timeoutMs: 500 });
+    socket().open();
+    const call = client.call("fs.pickFolder", {});
+    const settled = call.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    socket().reply(socket().last("fs.pickFolder").id, { path: "/tmp/app", supported: true });
+    await expect(settled).resolves.toEqual({
+      ok: true,
+      value: { path: "/tmp/app", supported: true },
+    });
+    client.close();
+  });
+
   it("queues calls made before the socket opens", async () => {
     const { client, socket } = setup();
     const call = client.call("providers.list", {});

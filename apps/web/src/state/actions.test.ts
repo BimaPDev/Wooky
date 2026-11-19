@@ -1,11 +1,13 @@
-import type { AgeEvent, Thread } from "@age/contracts";
+import type { AgeEvent, RpcMethod, RpcParams, RpcResult, Thread } from "@age/contracts";
 import { emptyReadModel } from "@age/domain";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setBackend } from "./backend.ts";
 import {
   closeSettings,
   navHistoryBack,
   navHistoryForward,
   openSettings,
+  pickProjectFolder,
   selectThread,
   signInOpenedCopy,
 } from "./actions.ts";
@@ -86,5 +88,146 @@ describe("sign-in copy", () => {
     expect(signInOpenedCopy("codex login")).toBe(
       "Opened Terminal to run `codex login`. Finish signing in there, then press Refresh.",
     );
+  });
+});
+
+const calls: Array<{ method: string; params: unknown }> = [];
+
+function unarmedPick(): void {
+  throw new Error("The folder picker gate was not armed.");
+}
+
+function useBackend(respond: (method: RpcMethod, params: unknown) => unknown) {
+  setBackend({
+    call: <M extends RpcMethod>(method: M, params: RpcParams<M>) =>
+      Promise.resolve(respond(method, params)).then((result) => result as RpcResult<M>),
+  });
+}
+
+function installBridge(pickFolder: (() => Promise<string | null>) | null) {
+  if (!pickFolder) {
+    delete (globalThis as { window?: unknown }).window;
+    return;
+  }
+  (globalThis as unknown as { window: { age: AgeShell } }).window = {
+    age: {
+      platform: "darwin",
+      versions: { electron: "0", chrome: "0", node: "24" },
+      pickFolder,
+    },
+  };
+}
+
+describe("pickProjectFolder", () => {
+  beforeEach(() => {
+    calls.length = 0;
+    installBridge(null);
+    useStore.setState({
+      dialog: null,
+      notice: null,
+      pickingFolder: false,
+      paletteOpen: true,
+      model: emptyReadModel(),
+    });
+  });
+
+  afterEach(() => installBridge(null));
+
+  it("adds the folder the desktop bridge returns", async () => {
+    installBridge(async () => "/Users/demo/app");
+    useBackend((method, params) => {
+      calls.push({ method, params });
+      if (method === "dispatch") return { accepted: true, duplicate: false, seq: 1 };
+      throw new Error(`unexpected ${method}`);
+    });
+
+    await pickProjectFolder();
+
+    expect(calls.map((call) => call.method)).toEqual(["dispatch"]);
+    expect(calls[0]?.params).toMatchObject({ type: "project.add", root: "/Users/demo/app" });
+    expect(useStore.getState().dialog).toBeNull();
+    expect(useStore.getState().pickingFolder).toBe(false);
+  });
+
+  it("asks the server when the desktop bridge is absent", async () => {
+    useBackend((method, params) => {
+      calls.push({ method, params });
+      if (method === "fs.pickFolder") return { path: "/Users/demo/rpc", supported: true };
+      if (method === "dispatch") return { accepted: true, duplicate: false, seq: 1 };
+      throw new Error(`unexpected ${method}`);
+    });
+
+    await pickProjectFolder();
+
+    expect(calls.map((call) => call.method)).toEqual(["fs.pickFolder", "dispatch"]);
+    expect(calls[1]?.params).toMatchObject({ type: "project.add", root: "/Users/demo/rpc" });
+  });
+
+  it("opens the path dialog when no native chooser is available", async () => {
+    useBackend((method) => {
+      calls.push({ method, params: {} });
+      if (method === "fs.pickFolder") return { path: null, supported: false };
+      throw new Error(`unexpected ${method}`);
+    });
+
+    await pickProjectFolder();
+
+    expect(useStore.getState().dialog).toEqual({ kind: "addProject" });
+    expect(calls.map((call) => call.method)).toEqual(["fs.pickFolder"]);
+  });
+
+  it("does nothing when the chooser is cancelled", async () => {
+    installBridge(async () => null);
+    useBackend((method) => {
+      calls.push({ method, params: {} });
+      throw new Error(`unexpected ${method}`);
+    });
+
+    await pickProjectFolder();
+
+    expect(calls).toEqual([]);
+    expect(useStore.getState().dialog).toBeNull();
+    expect(useStore.getState().notice).toBeNull();
+  });
+
+  it("shows addProject failures on the notice bar", async () => {
+    useBackend((method) => {
+      if (method === "fs.pickFolder") return { path: "/tmp/app", supported: true };
+      throw new Error("/tmp/app is already a project.");
+    });
+
+    await pickProjectFolder();
+
+    expect(useStore.getState().notice).toBe("/tmp/app is already a project.");
+    expect(useStore.getState().dialog).toBeNull();
+  });
+
+  it("ignores a second request while the chooser is open", async () => {
+    const pending: { resolve: (path: string | null) => void; promise: Promise<string | null> } = {
+      resolve: unarmedPick,
+      promise: Promise.resolve(null),
+    };
+    pending.promise = new Promise((resolve) => {
+      pending.resolve = resolve;
+    });
+    let picks = 0;
+    installBridge(() => {
+      picks += 1;
+      return pending.promise;
+    });
+    useBackend((method, params) => {
+      calls.push({ method, params });
+      return { accepted: true, duplicate: false, seq: 1 };
+    });
+
+    const first = pickProjectFolder();
+    const second = pickProjectFolder();
+    expect(useStore.getState().pickingFolder).toBe(true);
+    expect(picks).toBe(1);
+    pending.resolve("/Users/demo/app");
+    await first;
+    await second;
+    expect(calls).toHaveLength(1);
+    expect(useStore.getState().pickingFolder).toBe(false);
   });
 });

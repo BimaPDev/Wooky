@@ -64,6 +64,11 @@ export const RpcMethods = {
     params: z.object({ query: z.string().optional() }),
     result: z.array(z.object({ path: z.string(), isGitRepo: z.boolean() })),
   },
+  /** Open the operating system's folder chooser on the server's machine. */
+  "fs.pickFolder": {
+    params: z.object({ title: z.string().max(80).optional() }),
+    result: z.object({ path: z.string().nullable(), supported: z.boolean() }),
+  },
   /** Files and directories in a thread's workspace matching query, best first. */
   "fs.searchEntries": {
     params: z.object({

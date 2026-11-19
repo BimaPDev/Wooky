@@ -1,6 +1,8 @@
 import {
   app,
   BrowserWindow,
+  dialog,
+  ipcMain,
   Menu,
   nativeImage,
   session,
@@ -258,9 +260,40 @@ function focusWindow(): void {
   win.focus();
 }
 
+const PICK_FOLDER_CHANNEL = "age:pick-folder";
+let folderPickerRegistered = false;
+
+/** Sheet on the focused window (macOS); a standalone dialog when no window exists. */
+async function pickProjectDirectory(): Promise<string | null> {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const options = {
+    title: "Add project",
+    properties: ["openDirectory", "createDirectory"] as Array<"openDirectory" | "createDirectory">,
+  };
+  const result = win
+    ? await dialog.showOpenDialog(win, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0] ?? null;
+}
+
+function registerFolderPicker(): void {
+  if (folderPickerRegistered) return;
+  folderPickerRegistered = true;
+  ipcMain.handle(PICK_FOLDER_CHANNEL, () => pickProjectDirectory());
+}
+
+function unregisterFolderPicker(): void {
+  if (!folderPickerRegistered) return;
+  folderPickerRegistered = false;
+  ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
+}
+
 function main(): void {
   app.setName("Wooky");
   if (process.platform === "win32") app.setAppUserModelId("Wooky");
+  registerFolderPicker();
+  app.on("will-quit", unregisterFolderPicker);
   app.on("second-instance", focusWindow);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

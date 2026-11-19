@@ -66,6 +66,8 @@ interface Pending {
 }
 
 const OPEN = 1;
+/** The folder dialog waits on the person. Other calls still fail fast. */
+const FOLDER_PICK_TIMEOUT_MS = 10 * 60 * 1000;
 
 export function backoffDelay(attempt: number, baseMs: number, maxMs: number, random: number) {
   const capped = Math.min(maxMs, baseMs * 2 ** attempt);
@@ -185,10 +187,13 @@ export function createRpcClient(options: RpcClientOptions) {
     const id = nextId++;
     const frame = JSON.stringify({ id, method, params });
     return new Promise<RpcResult<M>>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pending.delete(id);
-        reject(new RpcCallError("timeout", `${method} timed out.`));
-      }, timeoutMs);
+      const timer = setTimeout(
+        () => {
+          pending.delete(id);
+          reject(new RpcCallError("timeout", `${method} timed out.`));
+        },
+        method === "fs.pickFolder" ? FOLDER_PICK_TIMEOUT_MS : timeoutMs,
+      );
       const sent = socket !== null && socket.readyState === OPEN;
       pending.set(id, {
         method,

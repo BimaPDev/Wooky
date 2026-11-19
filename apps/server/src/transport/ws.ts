@@ -14,6 +14,7 @@ import {
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
+import { pickFolder } from "../process/folder-picker.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";
 import type { Queries } from "../queries.ts";
 import type { ThemeStore } from "../settings/themes.ts";
@@ -79,6 +80,17 @@ function createHandlers({
     },
     "git.diff": ({ threadId, turnId }) => queries.diff(threadId, turnId),
     "fs.pickable": ({ query }) => queries.pickable(query),
+    "fs.pickFolder": async ({ title }) => {
+      try {
+        return await pickFolder({ title });
+      } catch (error) {
+        if (error instanceof ServiceError) throw error;
+        throw new ServiceError(
+          "unavailable",
+          error instanceof Error ? error.message : "Could not open the folder chooser.",
+        );
+      }
+    },
     "fs.searchEntries": (params) => queries.searchEntries(params),
     "settings.get": () => themes.getSettings(),
     "settings.put": ({ settings }) => themes.putSettings(settings),
