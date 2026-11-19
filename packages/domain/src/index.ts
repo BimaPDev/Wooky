@@ -1,6 +1,11 @@
 export { applyEvent, applyEvents, emptyReadModel } from "./project.ts";
 export {
   activeTurn,
+  childrenOf,
+  fleetRows,
+  formatReviewPrompt,
+  formatWorkerReport,
+  groupThreads,
   handoffTranscript,
   latestPlan,
   nextQueued,
@@ -8,6 +13,7 @@ export {
   pendingQuestions,
   queuedPrompts,
   resumePoint,
+  reviewNotesFor,
   threadsForProject,
   threadsSharingWorkspace,
 } from "./selectors.ts";

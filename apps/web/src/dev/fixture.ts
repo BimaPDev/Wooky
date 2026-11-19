@@ -467,6 +467,8 @@ export const fixtureModel: ReadModel = {
       }),
     ],
   },
+  groups: {},
+  reviewNotes: {},
 };
 
 export const fixtureProviders: ProviderStatus[] = [
@@ -792,6 +794,17 @@ function respond(method: RpcMethod, params: unknown): unknown {
       return { ok: true as const };
     case "usage.history":
       return fixtureUsageHistory((params as RpcParams<"usage.history">).windowDays);
+    case "fleet.overview":
+    case "agents.list":
+      return [];
+    case "git.mergePreview":
+      return { targetBranch: "main", ahead: 0, behind: 0, files: [], conflicts: [] };
+    case "agents.spawn":
+      return { threadId: "t-fixture-worker" };
+    case "agents.wait":
+      return { finished: [], pending: (params as RpcParams<"agents.wait">).threadIds };
+    case "agents.result":
+      return { status: "idle" as const, summary: "" };
     case "usage.limits":
       return [
         {

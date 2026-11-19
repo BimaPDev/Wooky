@@ -5,9 +5,23 @@ import {
   DeviceSettings,
   ThemeImportFormat,
 } from "./appearance.ts";
-import { Command } from "./commands.ts";
+import { Command, ThreadSpawnParams } from "./commands.ts";
 import { AgeEvent } from "./events.ts";
-import { FileDiff, Id, Project, ProviderKind, ProviderStatus, Thread, Turn } from "./model.ts";
+import {
+  DiffStat,
+  FLEET_LIMITS,
+  FileDiff,
+  FleetRow,
+  FleetStatus,
+  Id,
+  Project,
+  ProviderKind,
+  ProviderStatus,
+  ReviewNote,
+  Thread,
+  ThreadGroup,
+  Turn,
+} from "./model.ts";
 import { TerminalPush, TerminalSessionId } from "./terminal.ts";
 import { ProviderLimits, UsageHistoryParams, UsageHistoryResult } from "./usage.ts";
 
@@ -25,8 +39,37 @@ export const ReadModel = z.object({
   threads: z.record(z.string(), Thread),
   /** Turns per thread, oldest first. */
   turns: z.record(z.string(), z.array(Turn)),
+  /** Fan-out and orchestrated groups. Absent on snapshots from before fleet. */
+  groups: z.record(z.string(), ThreadGroup).default({}),
+  /** Review notes keyed by thread, insertion order. Absent on older snapshots. */
+  reviewNotes: z.record(z.string(), z.array(ReviewNote)).default({}),
 });
 export type ReadModel = z.infer<typeof ReadModel>;
+
+/** What `git.mergePreview` returns before a merge is attempted. */
+export const MergePreview = z.object({
+  targetBranch: z.string(),
+  ahead: z.number().int().nonnegative(),
+  behind: z.number().int().nonnegative(),
+  files: z.array(
+    z.object({
+      path: z.string(),
+      additions: z.number().int().nonnegative(),
+      deletions: z.number().int().nonnegative(),
+    }),
+  ),
+  conflicts: z.array(z.string()),
+});
+export type MergePreview = z.infer<typeof MergePreview>;
+
+/** What `agents.result` returns for one worker. */
+export const AgentResult = z.object({
+  status: FleetStatus,
+  summary: z.string().max(FLEET_LIMITS.maxReportSummary),
+  diffStat: DiffStat.optional(),
+  worktreePath: z.string().optional(),
+});
+export type AgentResult = z.infer<typeof AgentResult>;
 
 export const WorkspaceEntry = z.object({
   /** Relative to the thread's workspace, with forward slashes. */
@@ -154,6 +197,45 @@ export const RpcMethods = {
   "usage.history": {
     params: UsageHistoryParams,
     result: UsageHistoryResult,
+  },
+  /**
+   * Every thread the server knows, for the fleet board and `age agents list`.
+   * The same rows are `fleetRows` in `@age/domain`; the RPC exists for the CLI.
+   */
+  "fleet.overview": {
+    params: z.object({}),
+    result: z.array(FleetRow),
+  },
+  /** How a thread's worktree compares with the project's current branch. */
+  "git.mergePreview": {
+    params: z.object({ threadId: Id }),
+    result: MergePreview,
+  },
+  /** `age agents spawn`. Same fields as `thread.spawn`, without a command id. */
+  "agents.spawn": {
+    params: ThreadSpawnParams,
+    result: z.object({ threadId: Id }),
+  },
+  /** `age agents list`. Overview rows whose parent is this coordinator. */
+  "agents.list": {
+    params: z.object({ parentThreadId: Id }),
+    result: z.array(FleetRow),
+  },
+  /** `age agents wait`. Blocks until each thread is done or failed, or the timeout fires. */
+  "agents.wait": {
+    params: z.object({
+      threadIds: z.array(Id),
+      timeoutMs: z.number().int().nonnegative().max(FLEET_LIMITS.maxAgentsWaitMs),
+    }),
+    result: z.object({
+      finished: z.array(Id),
+      pending: z.array(Id),
+    }),
+  },
+  /** `age agents result`. Summary of the worker's latest report. */
+  "agents.result": {
+    params: z.object({ threadId: Id }),
+    result: AgentResult,
   },
 } as const;
 

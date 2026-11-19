@@ -126,6 +126,15 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
       return promoteQueued(model, command, ctx);
     case "turn.revert":
       return revertTurn(model, command);
+    // Fleet commands are specified in docs/fleet.md. The server station implements them.
+    case "thread.spawn":
+    case "fanout.start":
+    case "fanout.pick":
+    case "thread.merge":
+    case "review.addNote":
+    case "review.removeNote":
+    case "review.send":
+      return reject("bad_request", "not implemented");
   }
 }
 

@@ -20,6 +20,115 @@ export type InteractionMode = z.infer<typeof InteractionMode>;
 export const Id = z.string().min(1).max(128);
 export const IsoTime = z.string();
 
+/**
+ * Caps the fleet decider enforces. Schemas that can express a cap use these
+ * numbers so the wire and the decider cannot drift.
+ */
+export const FLEET_LIMITS = {
+  /** Spawn only from a thread that is not itself a worker. */
+  maxDepth: 1,
+  /** Workers of one coordinator whose fleet status is working, waiting, or idle. */
+  maxLiveWorkers: 8,
+  maxFanoutTargets: 6,
+  maxReviewBody: 4000,
+  maxReportSummary: 8000,
+  maxAgentsWaitMs: 600_000,
+} as const;
+
+/** Absent on a thread means solo: the thread has not joined a fleet. */
+export const ThreadRole = z.enum(["solo", "coordinator", "worker"]);
+export type ThreadRole = z.infer<typeof ThreadRole>;
+
+export const MergeStatus = z.enum(["idle", "merging", "merged", "conflict", "failed"]);
+export type MergeStatus = z.infer<typeof MergeStatus>;
+
+/** Latest attempt to merge a thread's worktree branch into the project branch. */
+export const MergeState = z.object({
+  status: MergeStatus,
+  targetBranch: z.string().optional(),
+  /** Commit created on the project branch when the merge succeeded. */
+  commit: z.string().optional(),
+  /** Conflict or failure detail, in one sentence. */
+  message: z.string().optional(),
+  at: IsoTime.optional(),
+});
+export type MergeState = z.infer<typeof MergeState>;
+
+export const ThreadGroupKind = z.enum(["fanout", "orchestrated"]);
+export type ThreadGroupKind = z.infer<typeof ThreadGroupKind>;
+
+/**
+ * Threads that share one prompt. Fan-out has no coordinator. An orchestrated
+ * group names the coordinator that spawned its workers.
+ */
+export const ThreadGroup = z.object({
+  id: Id,
+  projectId: Id,
+  kind: ThreadGroupKind,
+  prompt: z.string(),
+  coordinatorThreadId: Id.optional(),
+  threadIds: z.array(Id),
+  winnerThreadId: Id.optional(),
+  createdAt: IsoTime,
+});
+export type ThreadGroup = z.infer<typeof ThreadGroup>;
+
+export const ReviewSide = z.enum(["old", "new"]);
+export type ReviewSide = z.infer<typeof ReviewSide>;
+
+/** A comment pinned to one diff line. `review.send` turns the thread's notes into one prompt. */
+export const ReviewNote = z.object({
+  id: Id,
+  threadId: Id,
+  path: z.string().min(1),
+  line: z.number().int().min(1),
+  side: ReviewSide,
+  body: z.string().min(1).max(FLEET_LIMITS.maxReviewBody),
+  createdAt: IsoTime,
+});
+export type ReviewNote = z.infer<typeof ReviewNote>;
+
+export const DiffStat = z.object({
+  files: z.number().int().nonnegative(),
+  additions: z.number().int().nonnegative(),
+  deletions: z.number().int().nonnegative(),
+});
+export type DiffStat = z.infer<typeof DiffStat>;
+
+/** Latest report a worker sent its coordinator. Replaced when the next turn finishes. */
+export const WorkerReport = z.object({
+  turnId: Id,
+  summary: z.string().max(FLEET_LIMITS.maxReportSummary),
+  diffStat: DiffStat.optional(),
+  at: IsoTime,
+});
+export type WorkerReport = z.infer<typeof WorkerReport>;
+
+/** Board status. Distinct from ThreadStatus: a finished worker is `done`, not `idle`. */
+export const FleetStatus = z.enum(["working", "waiting", "idle", "done", "failed"]);
+export type FleetStatus = z.infer<typeof FleetStatus>;
+
+export const FleetWaitingOn = z.enum(["approval", "question"]);
+export type FleetWaitingOn = z.infer<typeof FleetWaitingOn>;
+
+/** One row of the fleet board. Computed from the read model; `fleet.overview` returns the same shape. */
+export const FleetRow = z.object({
+  threadId: Id,
+  projectId: Id,
+  title: z.string(),
+  provider: ProviderKind,
+  model: z.string(),
+  /** Always set. A thread that omitted `role` is reported as solo. */
+  role: ThreadRole,
+  groupId: Id.optional(),
+  parentThreadId: Id.optional(),
+  status: FleetStatus,
+  waitingOn: FleetWaitingOn.optional(),
+  lastActivityAt: IsoTime,
+  diffStat: DiffStat.optional(),
+});
+export type FleetRow = z.infer<typeof FleetRow>;
+
 export const Project = z.object({
   id: Id,
   name: z.string(),
@@ -61,6 +170,16 @@ export const Thread = z.object({
   interactionMode: InteractionMode.optional(),
   /** Follow-ups waiting for the running turn, oldest first. */
   queue: z.array(QueuedPrompt).default([]),
+  /** Absent on logs written before fleet. Treat as solo. */
+  role: ThreadRole.optional(),
+  /** Coordinator that spawned this worker. Workers do not spawn further workers. */
+  parentThreadId: Id.optional(),
+  /** Fan-out or orchestrated group this thread belongs to. */
+  groupId: Id.optional(),
+  /** Absent until the first merge attempt. */
+  merge: MergeState.optional(),
+  /** Present after a spawned worker's turn finishes and is reported. */
+  report: WorkerReport.optional(),
   status: ThreadStatus,
   createdAt: IsoTime,
   updatedAt: IsoTime,

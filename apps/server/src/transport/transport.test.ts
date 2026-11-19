@@ -94,7 +94,7 @@ describe("transport", () => {
     expect(await client.call("snapshot")).toEqual({
       id: 1,
       ok: true,
-      result: { seq: 0, projects: {}, threads: {}, turns: {} },
+      result: { seq: 0, projects: {}, threads: {}, turns: {}, groups: {}, reviewNotes: {} },
     });
     expect(await client.call("subscribe", { fromSeq: 0 })).toMatchObject({
       ok: true,

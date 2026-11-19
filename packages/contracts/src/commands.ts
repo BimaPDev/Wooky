@@ -1,5 +1,60 @@
 import { z } from "zod";
-import { Id, InteractionMode, ProviderKind, QuestionAnswers, RuntimeMode } from "./model.ts";
+import {
+  FLEET_LIMITS,
+  Id,
+  InteractionMode,
+  ProviderKind,
+  QuestionAnswers,
+  ReviewSide,
+  RuntimeMode,
+} from "./model.ts";
+
+/** Fields shared by `thread.spawn` and the `agents.spawn` RPC (no commandId). */
+export const ThreadSpawnParams = z.object({
+  parentThreadId: Id,
+  provider: ProviderKind,
+  model: z.string().min(1),
+  /** Omitted: the worker inherits the parent's runtime mode. */
+  runtimeMode: RuntimeMode.optional(),
+  prompt: z.string().min(1),
+  title: z.string().optional(),
+});
+export type ThreadSpawnParams = z.infer<typeof ThreadSpawnParams>;
+
+export const FanoutTarget = z.object({
+  provider: ProviderKind,
+  model: z.string().min(1),
+});
+export type FanoutTarget = z.infer<typeof FanoutTarget>;
+
+export const FanoutStartParams = z.object({
+  projectId: Id,
+  prompt: z.string().min(1),
+  targets: z.array(FanoutTarget).min(1).max(FLEET_LIMITS.maxFanoutTargets),
+  runtimeMode: RuntimeMode,
+  title: z.string().optional(),
+});
+export type FanoutStartParams = z.infer<typeof FanoutStartParams>;
+
+export const MergeStrategy = z.enum(["merge", "squash"]);
+export type MergeStrategy = z.infer<typeof MergeStrategy>;
+
+export const ThreadMergeParams = z.object({
+  threadId: Id,
+  strategy: MergeStrategy,
+  /** Commit message for a squash. A plain merge may omit it. */
+  message: z.string().optional(),
+});
+export type ThreadMergeParams = z.infer<typeof ThreadMergeParams>;
+
+export const ReviewAddNoteParams = z.object({
+  threadId: Id,
+  path: z.string().min(1),
+  line: z.number().int().min(1),
+  side: ReviewSide,
+  body: z.string().min(1).max(FLEET_LIMITS.maxReviewBody),
+});
+export type ReviewAddNoteParams = z.infer<typeof ReviewAddNoteParams>;
 
 /**
  * Commands are intents sent by clients. Every command carries a client-generated
@@ -76,6 +131,25 @@ export const Command = z.discriminatedUnion("type", [
     turnId: Id,
     /** Absent means true. False rewinds the conversation only and leaves files as they are. */
     restoreFiles: z.boolean().optional(),
+  }),
+  /**
+   * Spawn an isolated worker under a solo or coordinator thread and start its first turn.
+   * The parent becomes a coordinator. A worker cannot spawn. At most FLEET_LIMITS.maxLiveWorkers
+   * children may be working, waiting, or idle.
+   */
+  z.object({ ...base, type: z.literal("thread.spawn"), ...ThreadSpawnParams.shape }),
+  /** One prompt, one isolated thread per target, sharing a fan-out group. */
+  z.object({ ...base, type: z.literal("fanout.start"), ...FanoutStartParams.shape }),
+  z.object({ ...base, type: z.literal("fanout.pick"), groupId: Id, threadId: Id }),
+  z.object({ ...base, type: z.literal("thread.merge"), ...ThreadMergeParams.shape }),
+  z.object({ ...base, type: z.literal("review.addNote"), ...ReviewAddNoteParams.shape }),
+  z.object({ ...base, type: z.literal("review.removeNote"), threadId: Id, noteId: Id }),
+  /** Send every note on the thread as one prompt, then clear them. Queued when a turn is running. */
+  z.object({
+    ...base,
+    type: z.literal("review.send"),
+    threadId: Id,
+    extra: z.string().optional(),
   }),
 ]);
 export type Command = z.infer<typeof Command>;
