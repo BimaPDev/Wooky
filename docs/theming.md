@@ -134,24 +134,35 @@ The server classifies `text`:
 
 ### Colour-role mapping
 
-Station S1 fills this table. Every TODO is an AGE target: `canvas`, `accent`, or a
-`colors` role. Do not invent the mapping in the client before that.
-
-| t3code           | AGE                                      |
-| ---------------- | ---------------------------------------- |
-| `version`        | not a colour                             |
-| `name`           | `name`                                   |
-| `appearance`     | `appearance`                             |
-| `colors.canvas`  | TODO                                     |
-| `colors.surface` | TODO                                     |
-| `colors.<other>` | TODO                                     |
-| `variants.light` | `variants.light` (TODO: map each colour) |
-| `variants.dark`  | `variants.dark` (TODO: map each colour)  |
-| `css`            | `css`                                    |
+| t3code                    | AGE                                               |
+| ------------------------- | ------------------------------------------------- |
+| `version`                 | not a colour                                      |
+| `name`                    | `name`                                            |
+| `appearance`              | `appearance`                                      |
+| `colors.canvas`           | `canvas`, `bg0`                                   |
+| `colors.sidebar`          | `bg1`                                             |
+| `colors.surface`          | `bg2`                                             |
+| `colors.surfaceRaised`    | `bg3`                                             |
+| `colors.sidebarRowHover`  | `bgHover`                                         |
+| `colors.sidebarRowActive` | `bgActive`                                        |
+| `colors.border`           | `line`                                            |
+| `colors.input`            | `lineStrong`                                      |
+| `colors.text`             | `text`                                            |
+| `colors.textMuted`        | `text2`                                           |
+| `colors.placeholder`      | `text3`                                           |
+| `colors.iconMuted`        | `text4`                                           |
+| `colors.accent`           | `accent`                                          |
+| `colors.accentForeground` | `accentInk`                                       |
+| `colors.focus`            | `focus`                                           |
+| `colors.warning`          | `amber`                                           |
+| `colors.warningSurface`   | `amberBg`                                         |
+| `colors.error`            | `red`                                             |
+| `colors.errorSurface`     | `redBg`                                           |
+| `variants.light`          | `variants.light` (same role map on `colors`)      |
+| `variants.dark`           | `variants.dark` (same role map on `colors`)       |
+| `css`                     | `css` when it passes AGE rules; otherwise dropped |
 
 ## Command line
-
-Planned. Not implemented in this station.
 
 ```
 age theme set <file>
@@ -161,7 +172,9 @@ age theme off
 ```
 
 `set` imports a file (AGE JSON, t3code JSON or SVG) and activates it. `list` prints
-installed themes. `use` activates one by id. `off` returns to `default`.
+installed theme ids, one per line. `use` activates one by id. `off` returns to `default`.
+These commands write under `AGE_HOME` and do not require a running server; a live server
+pushes the change to connected clients.
 
 A theme or settings change made outside the client, including this CLI, is pushed to
 connected clients:

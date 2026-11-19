@@ -10,12 +10,14 @@ import {
   RpcRequest,
   type RpcResult,
   type ServerMessage,
+  type ThemesPush,
 } from "@age/contracts";
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";
 import type { Queries } from "../queries.ts";
+import { watchThemeFiles } from "../settings/theme-watch.ts";
 import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
 import { openSignInTerminal } from "../terminal/login.ts";
@@ -51,16 +53,10 @@ type Handlers = {
   ) => RpcResult<M> | Promise<RpcResult<M>>;
 };
 
-function createHandlers({
-  store,
-  dispatcher,
-  providers,
-  queries,
-  themes,
-  terminals,
-  limits,
-  history,
-}: Services): Handlers {
+function createHandlers(
+  { store, dispatcher, providers, queries, themes, terminals, limits, history }: Services,
+  notifyThemes: (changedIds: string[]) => void,
+): Handlers {
   return {
     dispatch: (command) => dispatcher.dispatch(command),
     snapshot: () => store.model,
@@ -81,16 +77,32 @@ function createHandlers({
     "fs.pickable": ({ query }) => queries.pickable(query),
     "fs.searchEntries": (params) => queries.searchEntries(params),
     "settings.get": () => themes.getSettings(),
-    "settings.put": ({ settings }) => themes.putSettings(settings),
+    "settings.put": ({ settings }) => {
+      const next = themes.putSettings(settings);
+      if (settings.activeThemeId !== undefined) notifyThemes([]);
+      return next;
+    },
     "themes.list": () => themes.list(),
     "themes.get": ({ id }) => themes.get(id),
-    "themes.put": ({ theme }) => themes.put(theme),
-    "themes.delete": ({ id }) => themes.remove(id),
-    "themes.import": () => {
-      throw new ServiceError("unavailable", "Theme import is not implemented.");
+    "themes.put": ({ theme }) => {
+      const saved = themes.put(theme);
+      notifyThemes([saved.id]);
+      return saved;
     },
-    "themes.activate": () => {
-      throw new ServiceError("unavailable", "Theme activate is not implemented.");
+    "themes.delete": ({ id }) => {
+      const result = themes.remove(id);
+      notifyThemes([id]);
+      return result;
+    },
+    "themes.import": ({ text, filename, activate }) => {
+      const imported = themes.importFromText(text, filename, activate);
+      notifyThemes([imported.theme.id]);
+      return imported;
+    },
+    "themes.activate": ({ id }) => {
+      const settings = themes.activate(id);
+      notifyThemes([]);
+      return settings;
     },
     "terminal.open": ({ cwd, cols, rows }, conn) => {
       const opened = terminals.open({ cwd, cols, rows }, (message) => conn.send(message));
@@ -120,7 +132,22 @@ export function attachWebSocket(
   services: Services,
   allowedHosts: ReadonlySet<string> = new Set(),
 ): () => void {
-  const handlers = createHandlers(services);
+  const connections = new Set<Connection>();
+
+  const broadcastThemes = (message: ThemesPush) => {
+    for (const conn of connections) conn.send(message);
+  };
+
+  const notifyThemes = (changedIds: string[]) => {
+    broadcastThemes({
+      push: "themes",
+      activeThemeId: services.themes.getSettings().activeThemeId,
+      changedIds,
+    });
+  };
+
+  const handlers = createHandlers(services, notifyThemes);
+  const closeThemeWatch = watchThemeFiles(services.themes, broadcastThemes);
   // Theme files may carry an inline background image (capped at 6 MB in the contract).
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
 
@@ -163,6 +190,8 @@ export function attachWebSocket(
       },
     };
 
+    connections.add(conn);
+
     ws.on("message", async (data) => {
       const request = RpcRequest.safeParse(parseJson(String(data)));
       if (!request.success) {
@@ -177,6 +206,7 @@ export function attachWebSocket(
       }
     });
     ws.on("close", () => {
+      connections.delete(conn);
       unsubscribe?.();
       for (const sessionId of ownedTerminals) services.terminals.close(sessionId);
       ownedTerminals.clear();
@@ -185,6 +215,7 @@ export function attachWebSocket(
   }
 
   return () => {
+    closeThemeWatch();
     for (const client of wss.clients) client.close(1001, "Server is shutting down");
     wss.close();
     services.terminals.closeAll();

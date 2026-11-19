@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "name": "Orbit",
+  "appearance": "dark",
+  "colors": {
+    "canvas": "#070b14",
+    "sidebar": "#04070d",
+    "surface": "#0d1320",
+    "surfaceRaised": "#111827",
+    "sidebarRowHover": "#0d1320",
+    "sidebarRowActive": "#151e30",
+    "border": "#1c2538",
+    "input": "#273249",
+    "text": "#e8edf5",
+    "textMuted": "#96a3b8",
+    "placeholder": "#74829a",
+    "iconMuted": "#7f8ca3",
+    "accent": "#ff8a3d",
+    "accentForeground": "#1a0d02",
+    "focus": "#ff8a3d",
+    "warning": "#ffc14d",
+    "warningSurface": "#2a2410",
+    "error": "#ff6b6b",
+    "errorSurface": "#2a1216"
+  },
+  "variants": {
+    "light": {
+      "canvas": "#f5f5f2",
+      "surface": "#ffffff",
+      "surfaceRaised": "#fafaf8",
+      "sidebar": "#ecece7",
+      "sidebarRowHover": "#e2e2dc",
+      "sidebarRowActive": "#d9d9d2",
+      "border": "#dcdcd6",
+      "input": "#c9c9c1",
+      "text": "#11151c",
+      "textMuted": "#535b68",
+      "placeholder": "#6b7380",
+      "iconMuted": "#626a77",
+      "accent": "#c2410c",
+      "accentForeground": "#ffffff",
+      "focus": "#c2410c",
+      "warning": "#b7791f",
+      "warningSurface": "#f8efdc",
+      "error": "#c81e1e",
+      "errorSurface": "#fbe4e4"
+    }
+  },
+  "css": ".safe { color: var(--text); }"
+}

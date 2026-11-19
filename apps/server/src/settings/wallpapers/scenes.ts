@@ -721,44 +721,7 @@ export function buildWallpaperScenes(): WallpaperScene[] {
 
 export const WALLPAPER_SCENES: WallpaperScene[] = buildWallpaperScenes();
 
-const SCRIPT_TAG_RE = /<\s*\/?\s*(?:[a-z0-9_-]+:)?script\b/i;
-const FOREIGN_OBJECT_RE = /<\s*\/?\s*(?:[a-z0-9_-]+:)?foreignObject\b/i;
-const EVENT_HANDLER_RE = /(?:^|[\s/])on[a-z][a-z0-9_-]*\s*=/i;
-const HREF_ATTR_RE = /\b(?:xlink:)?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]*))/gi;
-const LOCAL_FRAGMENT_RE = /^#[A-Za-z_][A-Za-z0-9_.:-]*$/;
-const CSS_IMPORT_RE = /@import/i;
-const CSS_URL_START_RE = /\burl\s*\(/gi;
-const CSS_URL_LOCAL_FRAGMENT_RE =
-  /^\s*(?:#[A-Za-z_][A-Za-z0-9_.:-]*|"#[A-Za-z_][A-Za-z0-9_.:-]*"|'#[A-Za-z_][A-Za-z0-9_.:-]*')\s*\)/;
-
-export function assertSafeSvg(svg: string): void {
-  if (SCRIPT_TAG_RE.test(svg)) {
-    throw new Error("Unsafe SVG: <script> tags are not allowed.");
-  }
-  if (FOREIGN_OBJECT_RE.test(svg)) {
-    throw new Error("Unsafe SVG: <foreignObject> tags are not allowed.");
-  }
-  if (EVENT_HANDLER_RE.test(svg)) {
-    throw new Error("Unsafe SVG: event-handler attributes (on*) are not allowed.");
-  }
-  if (CSS_IMPORT_RE.test(svg)) {
-    throw new Error("Unsafe SVG: @import rules are not allowed.");
-  }
-
-  for (const match of svg.matchAll(HREF_ATTR_RE)) {
-    const target = (match[1] ?? match[2] ?? match[3] ?? "").trim();
-    if (!LOCAL_FRAGMENT_RE.test(target)) {
-      throw new Error(`Unsafe SVG: external or invalid href "${target}".`);
-    }
-  }
-
-  for (const match of svg.matchAll(CSS_URL_START_RE)) {
-    const afterOpenParen = svg.slice(match.index + match[0].length);
-    if (!CSS_URL_LOCAL_FRAGMENT_RE.test(afterOpenParen)) {
-      throw new Error("Unsafe SVG: url() may only reference local #id fragments.");
-    }
-  }
-}
+export { assertSafeSvg } from "./svg-safety.ts";
 
 export function toDataUrl(svg: string): string {
   const base64 = Buffer.from(svg, "utf8").toString("base64");
