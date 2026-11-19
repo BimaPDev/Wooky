@@ -34,6 +34,19 @@ import { ProviderLimits, UsageHistoryParams, UsageHistoryResult } from "./usage.
  * The server is authoritative. Clients send commands and render pushed events.
  */
 
+/** Bytes per attached file. Base64 of this fits the socket's 8 MB frame limit. */
+export const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const ATTACHMENT_MAX_BASE64 = Math.ceil(ATTACHMENT_MAX_BYTES / 3) * 4;
+
+export const Attachment = z.object({
+  id: Id,
+  name: z.string(),
+  /** Absolute path on the server's machine. Agents read the file from here. */
+  path: z.string(),
+  size: z.number().int().nonnegative(),
+});
+export type Attachment = z.infer<typeof Attachment>;
+
 export const ReadModel = z.object({
   /** Sequence of the last event applied to this snapshot. */
   seq: z.number().int().nonnegative(),
@@ -224,6 +237,19 @@ export const RpcMethods = {
   "git.mergePreview": {
     params: z.object({ threadId: Id }),
     result: MergePreview,
+  },
+  /** Save a file the user attached in the composer. The prompt then names its path. */
+  "attachments.put": {
+    params: z.object({
+      name: z.string().min(1).max(255),
+      dataBase64: z.string().max(ATTACHMENT_MAX_BASE64),
+    }),
+    result: Attachment,
+  },
+  /** Delete an attachment the user removed before sending. */
+  "attachments.remove": {
+    params: z.object({ id: Id }),
+    result: z.object({ removed: z.boolean() }),
   },
   /** `age agents spawn`. Same fields as `thread.spawn`, without a command id. */
   "agents.spawn": {

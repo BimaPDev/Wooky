@@ -20,6 +20,7 @@ import { createProviderRegistry } from "./providers/registry.ts";
 import type { ProviderAdapter } from "./providers/types.ts";
 import type { FolderPicker } from "./process/folder-picker.ts";
 import { createQueries } from "./queries.ts";
+import { createAttachmentStore } from "./attachments.ts";
 import { createScratchService } from "./scratch.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
@@ -131,7 +132,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const http = createServer(createHttpHandler(options.webDist ?? null));
   const closeSockets = attachWebSocket(
     http,
-    { store, dispatcher, providers, queries, themes, terminals, limits, history, fleet, scratch },
+    {
+      store,
+      dispatcher,
+      providers,
+      queries,
+      themes,
+      terminals,
+      limits,
+      history,
+      fleet,
+      scratch,
+      attachments: createAttachmentStore(options.home),
+    },
     new Set(options.allowedHosts ?? []),
     {
       allowRemotePicker: options.allowRemotePicker === true,

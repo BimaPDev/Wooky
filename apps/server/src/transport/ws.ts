@@ -14,6 +14,7 @@ import {
 } from "@age/contracts";
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
+import type { AttachmentStore } from "../attachments.ts";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
 import { createFolderPicker, type FolderPicker } from "../process/folder-picker.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";
@@ -43,6 +44,7 @@ interface Services {
   history: HistoryService;
   fleet: FleetService;
   scratch: ScratchService;
+  attachments: AttachmentStore;
 }
 
 const MAX_AGENT_WAITS_PER_CONNECTION = 8;
@@ -78,6 +80,7 @@ function createHandlers(
     history,
     fleet,
     scratch,
+    attachments,
   }: Services,
   notifyThemes: (changedIds: string[]) => void,
   folderPicker: FolderPicker,
@@ -115,6 +118,8 @@ function createHandlers(
     },
     "fs.searchEntries": (params) => queries.searchEntries(params),
     "projects.scratch": () => scratch.ensure(),
+    "attachments.put": (params) => attachments.put(params),
+    "attachments.remove": ({ id }) => attachments.remove(id),
     "settings.get": () => themes.getSettings(),
     "settings.put": ({ settings }) => {
       const next = themes.putSettings(settings);

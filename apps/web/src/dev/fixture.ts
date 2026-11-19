@@ -1593,6 +1593,14 @@ function respond(method: RpcMethod, params: unknown): unknown {
       return { finished: [], pending: (params as RpcParams<"agents.wait">).threadIds };
     case "agents.result":
       return { status: "idle" as const, summary: "" };
+    case "attachments.put": {
+      const { name, dataBase64 } = params as RpcParams<"attachments.put">;
+      const id = crypto.randomUUID();
+      const size = Math.floor((dataBase64.length * 3) / 4);
+      return { id, name, path: `/Users/demo/.age/attachments/${id}/${name}`, size };
+    }
+    case "attachments.remove":
+      return { removed: true };
     case "usage.limits":
       return [
         {

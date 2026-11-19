@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   Command,
   EffortLevel,
   FileDiff,
@@ -336,6 +337,32 @@ export function patchNewThread(patch: Partial<NewThreadDraft>) {
       projectId: defaultDraftProject(state.model.projects, state.draftPrefs.projectId),
     };
     return { newThread: { ...base, ...patch } };
+  });
+}
+
+/** Saves a composer attachment on the server. Throws with a message the chip can show. */
+export async function uploadAttachment(file: File): Promise<Attachment> {
+  return backend().call("attachments.put", {
+    name: file.name || "pasted",
+    dataBase64: await fileBase64(file),
+  });
+}
+
+export function discardAttachment(id: string) {
+  void backend()
+    .call("attachments.remove", { id })
+    .catch(() => undefined);
+}
+
+function fileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const url = String(reader.result);
+      resolve(url.slice(url.indexOf(",") + 1));
+    });
+    reader.addEventListener("error", () => reject(new Error("Could not read the file.")));
+    reader.readAsDataURL(file);
   });
 }
 

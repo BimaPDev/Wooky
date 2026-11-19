@@ -1,4 +1,4 @@
-import type { InteractionMode } from "@age/contracts";
+import { ATTACHMENT_MAX_BYTES, type InteractionMode } from "@age/contracts";
 import { useId, useRef, useState, type ReactNode } from "react";
 import {
   composerMenuDismissalForDraft,
@@ -11,22 +11,28 @@ import {
   type SlashCommandId,
 } from "../lib/composer-trigger.ts";
 import {
+  formatBytes,
+  promptWithAttachments,
+  readyAttachments,
+  type ComposerAttachment,
+} from "../lib/attachments.ts";
+import {
   configureThread,
+  discardAttachment,
   interruptTurn,
-  openFanoutDialog,
   openNewThread,
   startTurn,
+  uploadAttachment,
 } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { ComposerMenuPanel, useComposerMenu } from "./ComposerMenu.tsx";
-import { IconMic, IconPaperclip, IconSend, IconStop } from "./Icons.tsx";
+import { IconClose, IconMic, IconPaperclip, IconSend, IconStop } from "./Icons.tsx";
 import {
   ModelChip,
   RuntimeIndicator,
   type PickerPatch,
   type PickerTarget,
 } from "./ModelPicker.tsx";
-import { moveFocus, PopoverChip, usePopoverClose } from "./Popover.tsx";
 import { QueuedPrompts } from "./QueuedPrompts.tsx";
 
 export function Composer({ threadId }: { threadId: string }) {
@@ -57,13 +63,6 @@ export function Composer({ threadId }: { threadId: string }) {
       onSend={async (prompt, whenBusy) => Boolean(await startTurn(threadId, prompt, whenBusy))}
       onStop={() => void interruptTurn(threadId)}
       onNewThread={() => openNewThread(thread.projectId)}
-      onFanout={(getPrompt) =>
-        openFanoutDialog({
-          projectId: thread.projectId,
-          runtimeMode: thread.runtimeMode,
-          getPrompt,
-        })
-      }
     />
   );
 }
@@ -83,7 +82,6 @@ export interface ComposerFormProps {
   onSend: (prompt: string, whenBusy?: "queue") => Promise<boolean>;
   onStop?: () => void;
   onNewThread: () => void;
-  onFanout: (getPrompt: () => string) => void;
 }
 
 /** The composer: text, attach, model chip, mic and send, with the runtime mode in a line below. */
@@ -100,7 +98,6 @@ export function ComposerForm({
   onSend,
   onStop,
   onNewThread,
-  onFanout,
 }: ComposerFormProps) {
   const providers = useStore((state) => state.providers);
   const [draft, setDraft] = useState("");
@@ -109,7 +106,10 @@ export function ComposerForm({
   const [menuIndex, setMenuIndex] = useState(0);
   const [menuDismissedFor, setMenuDismissedFor] = useState<string | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const area = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const dropped = useRef(new Set<string>());
   const listId = useId();
 
   const {
@@ -130,36 +130,73 @@ export function ComposerForm({
   const planModeSupported =
     providers.find((entry) => entry.kind === target.provider)?.capabilities?.planMode === true;
 
+  const uploading = attachments.some((item) => item.status === "uploading");
+  const saved = readyAttachments(attachments);
+  const canSend = (draft.trim() !== "" || saved.length > 0) && !uploading;
+
+  const attach = (files: readonly File[]) => {
+    for (const file of files) {
+      const key = crypto.randomUUID();
+      const name = file.name || "pasted";
+      if (file.size > ATTACHMENT_MAX_BYTES) {
+        const limit = formatBytes(ATTACHMENT_MAX_BYTES);
+        setAttachments((items) => [
+          ...items,
+          { key, name, status: "failed", error: `Larger than ${limit}` },
+        ]);
+        continue;
+      }
+      setAttachments((items) => [...items, { key, name, status: "uploading" }]);
+      uploadAttachment(file).then(
+        (attachment) => {
+          if (dropped.current.delete(key)) {
+            discardAttachment(attachment.id);
+            return;
+          }
+          setAttachments((items) =>
+            items.map((item) =>
+              item.key === key ? { key, name, status: "ready", attachment } : item,
+            ),
+          );
+        },
+        (error: unknown) =>
+          setAttachments((items) =>
+            items.map((item) =>
+              item.key === key
+                ? {
+                    key,
+                    name,
+                    status: "failed",
+                    error: error instanceof Error ? error.message : "Upload failed",
+                  }
+                : item,
+            ),
+          ),
+      );
+    }
+  };
+
+  const detach = (item: ComposerAttachment) => {
+    if (item.status === "ready") discardAttachment(item.attachment.id);
+    if (item.status === "uploading") dropped.current.add(item.key);
+    setAttachments((items) => items.filter((entry) => entry.key !== item.key));
+    area.current?.focus();
+  };
+
   const send = async () => {
-    const prompt = draft.trim();
-    if (!prompt || sending) return;
+    if (!canSend || sending) return;
     if (busy && !queueSend) return;
+    const prompt = promptWithAttachments(draft, saved);
     setSending(true);
     const taken = await onSend(prompt, queueSend ? "queue" : undefined);
     setSending(false);
     if (taken) {
+      setAttachments([]);
       setDraft("");
       setCaret(0);
       setMenuDismissedFor(null);
       if (area.current) area.current.style.height = "";
     }
-  };
-
-  const insertMention = () => {
-    const el = area.current;
-    if (!el) return;
-    const start = el.selectionStart ?? draft.length;
-    const end = el.selectionEnd ?? draft.length;
-    const next = `${draft.slice(0, start)}@${draft.slice(end)}`;
-    setDraft(next);
-    setMenuDismissedFor(null);
-    requestAnimationFrame(() => {
-      el.focus();
-      const nextCaret = start + 1;
-      el.setSelectionRange(nextCaret, nextCaret);
-      setCaret(nextCaret);
-      fitHeight(el);
-    });
   };
 
   const setMode = (interactionMode: InteractionMode) => {
@@ -269,7 +306,43 @@ export function ComposerForm({
             }}
           />
         ) : null}
-        <div className="composer-box">
+        <div
+          className="composer-box"
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+          }}
+          onDrop={(event) => {
+            if (event.dataTransfer.files.length === 0) return;
+            event.preventDefault();
+            attach([...event.dataTransfer.files]);
+          }}
+        >
+          {attachments.length > 0 ? (
+            <ul className="composer-attachments" aria-label="Attachments">
+              {attachments.map((item) => (
+                <li key={item.key} className="attachment-chip" data-status={item.status}>
+                  <span className="attachment-chip-name" title={item.name}>
+                    {item.name}
+                  </span>
+                  <span className="attachment-chip-meta">
+                    {item.status === "uploading"
+                      ? "Uploading"
+                      : item.status === "failed"
+                        ? item.error
+                        : formatBytes(item.attachment.size)}
+                  </span>
+                  <button
+                    type="button"
+                    className="attachment-chip-remove"
+                    aria-label={`Remove ${item.name}`}
+                    onClick={() => detach(item)}
+                  >
+                    <IconClose />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <textarea
             ref={area}
             rows={2}
@@ -289,6 +362,12 @@ export function ComposerForm({
               fitHeight(el);
             }}
             onSelect={(event) => syncCaret(event.currentTarget)}
+            onPaste={(event) => {
+              const files = [...event.clipboardData.files];
+              if (files.length === 0) return;
+              event.preventDefault();
+              attach(files);
+            }}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) {
                 return;
@@ -337,23 +416,26 @@ export function ComposerForm({
           />
           <div className="composer-toolbar">
             <div className="composer-toolbar-start">
-              <PopoverChip
+              <button
+                type="button"
                 className="composer-icon-btn"
-                label="Add"
-                ariaLabel="Add context"
-                title="Add context"
-                size="small"
-                panel={
-                  <AddMenu
-                    canTag={threadId !== null}
-                    canFanout={draft.trim() !== ""}
-                    onTag={insertMention}
-                    onFanout={() => onFanout(() => (area.current?.value ?? "").trim())}
-                  />
-                }
+                aria-label="Attach files"
+                title="Attach files"
+                onClick={() => fileInput.current?.click()}
               >
                 <IconPaperclip />
-              </PopoverChip>
+              </button>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                hidden
+                tabIndex={-1}
+                onChange={(event) => {
+                  attach([...(event.currentTarget.files ?? [])]);
+                  event.currentTarget.value = "";
+                }}
+              />
             </div>
             <div className="composer-toolbar-end">
               <ModelChip
@@ -383,7 +465,7 @@ export function ComposerForm({
                   type="submit"
                   className="send-button"
                   aria-label={queueSend ? "Queue message" : "Send"}
-                  disabled={!draft.trim() || sending || (busy && !queueSend)}
+                  disabled={!canSend || sending || (busy && !queueSend)}
                 >
                   <IconSend />
                 </button>
@@ -400,55 +482,6 @@ export function ComposerForm({
           onChange={onChange}
         />
       </div>
-    </div>
-  );
-}
-
-function AddMenu({
-  canTag,
-  canFanout,
-  onTag,
-  onFanout,
-}: {
-  canTag: boolean;
-  canFanout: boolean;
-  onTag: () => void;
-  onFanout: () => void;
-}) {
-  const close = usePopoverClose();
-  return (
-    <div className="runtime-menu" role="menu" aria-label="Add context" onKeyDown={moveFocus}>
-      <button
-        type="button"
-        role="menuitem"
-        className="runtime-option"
-        disabled={!canTag}
-        autoFocus
-        title={canTag ? undefined : "Files can be tagged once the thread starts"}
-        onClick={() => {
-          close();
-          onTag();
-        }}
-      >
-        <span className="runtime-option-copy">
-          <span className="runtime-option-title">Tag a file or folder</span>
-        </span>
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        className="runtime-option"
-        disabled={!canFanout}
-        title={canFanout ? undefined : "Type a message first"}
-        onClick={() => {
-          close();
-          onFanout();
-        }}
-      >
-        <span className="runtime-option-copy">
-          <span className="runtime-option-title">Run on several agents</span>
-        </span>
-      </button>
     </div>
   );
 }

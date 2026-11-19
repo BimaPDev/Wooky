@@ -2326,6 +2326,71 @@ button.tool-line:active {
   opacity: 0.45;
 }
 
+.composer-icon-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-3) 0;
+  list-style: none;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 280px;
+  height: 28px;
+  padding: 0 4px 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-1);
+  font-size: var(--text-sm);
+}
+
+.attachment-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip-meta {
+  flex: none;
+  color: var(--text-4);
+}
+
+.attachment-chip[data-status="failed"] .attachment-chip-meta {
+  color: var(--red);
+}
+
+.attachment-chip-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-4);
+  flex: none;
+}
+
+.attachment-chip-remove:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.attachment-chip-remove:active {
+  transform: scale(0.92);
+}
+
 .send-button {
   display: inline-grid;
   place-items: center;

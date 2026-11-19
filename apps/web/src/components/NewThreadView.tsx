@@ -6,13 +6,7 @@ import {
   visibleProjects,
   type NewThreadDraft,
 } from "../lib/new-thread.ts";
-import {
-  ensureScratchProject,
-  openFanoutDialog,
-  patchNewThread,
-  pickProjectFolder,
-  sendNewThread,
-} from "../state/actions.ts";
+import { patchNewThread, pickProjectFolder, sendNewThread } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { ComposerForm } from "./Composer.tsx";
 import { IconChevron, IconCheckSmall, IconFolder } from "./Icons.tsx";
@@ -184,13 +178,6 @@ function DraftComposer() {
       onChange={(patch) => patchNewThread(patch)}
       onSend={(prompt) => sendNewThread(prompt)}
       onNewThread={() => undefined}
-      onFanout={(getPrompt) => {
-        void (async () => {
-          const projectId = resolved.projectId ?? (await ensureScratchProject());
-          if (projectId)
-            openFanoutDialog({ projectId, runtimeMode: resolved.runtimeMode, getPrompt });
-        })();
-      }}
     />
   );
 }
