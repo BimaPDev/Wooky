@@ -1,7 +1,7 @@
 import { AGE_WS_PATH } from "@age/contracts";
 import { emptyReadModel } from "@age/domain";
 import { createFixtureBackend } from "../dev/fixture.ts";
-import { loadDeviceSettings } from "../state/appearance.ts";
+import { handleThemesPush, loadDeviceSettings } from "../state/appearance.ts";
 import { refreshProviders } from "../state/actions.ts";
 import { setBackend } from "../state/backend.ts";
 import { receiveTerminal } from "../state/terminal.ts";
@@ -40,6 +40,9 @@ export function startConnection() {
     onSnapshot: receiveSnapshot,
     onEvent: receiveEvent,
     onTerminal: receiveTerminal,
+    onThemes: (push) => {
+      void handleThemesPush(push);
+    },
     onStatus: (status) => {
       useStore.setState({ status });
       if (status === "open" && firstOpen) {

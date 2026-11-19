@@ -91,7 +91,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const firstProjectId = Object.values(projects)[0]?.id ?? null;
 
   return (
-    <nav className="sidebar" aria-label="Projects and threads">
+    <nav className="sidebar" data-workspace-area="sidebar" aria-label="Projects and threads">
       <div className={macDesktop ? "sidebar-head desktop-traffic-inset" : "sidebar-head"}>
         <button
           type="button"

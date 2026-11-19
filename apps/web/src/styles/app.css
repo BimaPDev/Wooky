@@ -13,6 +13,7 @@ body,
 
 html {
   --titlebar-height: env(titlebar-area-height, 0px);
+  background: var(--bg-0);
 }
 
 html.wco {
@@ -4557,6 +4558,91 @@ button.tool-line:active {
 .modal.palette {
   background: color-mix(in srgb, var(--bg-2) var(--glass-opacity, 80%), transparent);
   backdrop-filter: blur(20px) saturate(1.15);
+}
+
+/* -- Wallpaper layer and frosted panels --------------- */
+
+.wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  contain: strict;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.wallpaper-image,
+.wallpaper-tile,
+.wallpaper-veil {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.wallpaper-image {
+  display: block;
+}
+
+.wallpaper-tile {
+  background-repeat: repeat;
+  background-position: top left;
+  background-size: auto;
+}
+
+.wallpaper-veil {
+  background: var(--bg-0);
+}
+
+html[data-wallpaper] body,
+html[data-wallpaper] .shell,
+html[data-wallpaper] .topbar,
+html[data-wallpaper] .workspace-body,
+html[data-wallpaper] .main,
+html[data-wallpaper] .panel,
+html[data-wallpaper] .terminal-pane,
+html[data-wallpaper] .settings-shell,
+html[data-wallpaper] .settings-main,
+html[data-wallpaper] .usage-shell,
+html[data-wallpaper] .usage-topbar {
+  background: transparent;
+}
+
+html[data-wallpaper] .sidebar,
+html[data-wallpaper] [data-workspace-area="sidebar"],
+html[data-wallpaper] .terminal-dock,
+html[data-wallpaper] .settings-nav {
+  background: color-mix(in srgb, var(--bg-0) var(--surface-opacity, 82%), transparent);
+}
+
+html[data-wallpaper] .workspace,
+html[data-wallpaper] .modal.app-route-modal {
+  background: color-mix(in srgb, var(--bg-1) var(--surface-opacity, 82%), transparent);
+}
+
+html[data-wallpaper] .composer-box,
+html[data-wallpaper] .popover,
+html[data-wallpaper] .composer-menu,
+html[data-wallpaper] .usage-filter-menu,
+html[data-wallpaper] .usage-info-popover,
+html[data-wallpaper] .modal:not(.app-route-modal) {
+  background: color-mix(in srgb, var(--bg-2) var(--surface-opacity, 82%), transparent);
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  html[data-wallpaper] .sidebar,
+  html[data-wallpaper] [data-workspace-area="sidebar"],
+  html[data-wallpaper] .workspace,
+  html[data-wallpaper] .composer-box,
+  html[data-wallpaper] .popover,
+  html[data-wallpaper] .composer-menu,
+  html[data-wallpaper] .usage-filter-menu,
+  html[data-wallpaper] .usage-info-popover,
+  html[data-wallpaper] .modal {
+    -webkit-backdrop-filter: blur(var(--panel-blur, 0px));
+    backdrop-filter: blur(var(--panel-blur, 0px));
+  }
 }
 
 /* -- Theme studio ------------------------------------- */
