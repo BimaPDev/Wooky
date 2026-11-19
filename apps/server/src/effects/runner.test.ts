@@ -1520,7 +1520,8 @@ describe("failover effect runner", () => {
     expect(retry?.prompt).toBe(prompt);
     expect(prompts).toEqual([prompt, prompt]);
     expect(h.store.model.cooldowns.claude?.reason).toBe("rate_limit");
-    expect(h.store.model.threads[threadId]?.failover?.switches).toBe(1);
+    // The retry completed, so the per-prompt switch budget is back to 0.
+    expect(h.store.model.threads[threadId]?.failover?.switches).toBe(0);
   });
 
   it("stops at max switches and records cooldown only", async () => {

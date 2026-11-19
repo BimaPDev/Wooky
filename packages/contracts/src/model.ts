@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ThreadFailoverState } from "./failover.ts";
+import { ThreadFailoverState, TurnFailure } from "./failover.ts";
 
 /** Runtimes AGE can drive. AGE never ships its own model or account. */
 export const ProviderKind = z.enum(["claude", "cursor", "codex", "demo"]);
@@ -182,6 +182,8 @@ export const Turn = z.object({
   changedFiles: z.array(z.string()),
   usage: Usage.nullable(),
   error: z.string().nullable(),
+  /** Classified failure (rate limit, quota, ...) when the provider reported one. */
+  failure: TurnFailure.optional(),
   /** Provider id of the turn's last native message; where a rewound session resumes. */
   nativeRef: z.string().nullable().optional(),
   interactionMode: InteractionMode.optional(),
