@@ -204,6 +204,7 @@ function fleetStatus(
   if (approvals.length > 0 || questions.length > 0) {
     return { status: "waiting", waitingOn: approvals.length > 0 ? "approval" : "question" };
   }
+  if (thread.status === "error") return { status: "failed" };
   if (activeTurn(model, thread.id)) return { status: "working" };
   const last = model.turns[thread.id]?.at(-1);
   if (last?.status === "failed") return { status: "failed" };

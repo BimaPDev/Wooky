@@ -669,7 +669,46 @@ describe("listFiles", () => {
   });
 });
 
+describe("commitWorktreeChanges", () => {
+  it("commits uncommitted worker edits so preview and diff stat see them", async () => {
+    const root = await makeRepo();
+    const wt = await git.createWorktree(root, "uncommitted");
+    await writeFile(join(wt.path, "worker-only.txt"), "from worker\n");
+
+    await git.commitWorktreeChanges(root, wt, "AGE: Worker title");
+    const preview = await git.mergePreview(root, wt, "AGE: Worker title");
+    expect(preview.files.some((file) => file.path === "worker-only.txt")).toBe(true);
+
+    const branchStat = await git.diffBranchStat(root, wt.branch);
+    expect(branchStat?.files).toBeGreaterThan(0);
+
+    const merged = await git.mergeWorktree(root, wt, "squash", "Worker title", "Land worker");
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) throw new Error("expected squash merge");
+    expect(existsSync(join(root, "worker-only.txt"))).toBe(true);
+  });
+
+  it("is a no-op when the worktree is clean", async () => {
+    const root = await makeRepo();
+    const wt = await git.createWorktree(root, "clean-wt");
+    await expect(git.commitWorktreeChanges(root, wt, "AGE: x")).resolves.toBeUndefined();
+  });
+});
+
 describe("merge worktree", () => {
+  it("does not treat untracked files in the project root as dirty", async () => {
+    const root = await makeRepo();
+    const wt = await git.createWorktree(root, "with-untracked-root");
+    await writeFile(join(wt.path, "land.txt"), "land\n");
+    await git.commitWorktreeChanges(root, wt, "AGE: land");
+
+    await writeFile(join(root, "stray-untracked.txt"), "stray\n");
+    const merged = await git.mergeWorktree(root, wt, "squash", "land", "squash land");
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) throw new Error("expected merge despite untracked root file");
+    expect(existsSync(join(root, "land.txt"))).toBe(true);
+  });
+
   it("merges a worktree branch with --no-ff and leaves a dirty root alone", async () => {
     const root = await makeRepo();
     const wt = await git.createWorktree(root, "merge-me");
@@ -681,14 +720,14 @@ describe("merge worktree", () => {
     expect(preview.ahead).toBeGreaterThan(0);
     expect(preview.files.some((file) => file.path === "fleet.txt")).toBe(true);
 
-    await writeFile(join(root, "dirty.txt"), "dirty\n");
+    await writeFile(join(root, "seed.txt"), "dirty tracked\n");
+    await raw(root, "add", "seed.txt");
     const blocked = await git.mergeWorktree(root, wt, "merge", "Worker");
     expect(blocked.ok).toBe(false);
     if (blocked.ok) throw new Error("expected dirty refusal");
     expect(blocked.kind).toBe("dirty");
-    expect(await raw(root, "status", "--porcelain")).toContain("dirty.txt");
 
-    await raw(root, "clean", "-fd");
+    await raw(root, "reset", "--hard");
     const merged = await git.mergeWorktree(root, wt, "merge", "Worker");
     expect(merged.ok).toBe(true);
     if (!merged.ok) throw new Error("expected merge");

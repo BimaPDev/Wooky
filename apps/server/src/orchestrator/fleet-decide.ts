@@ -203,6 +203,11 @@ export function decideFanoutPick(
   if (!group) return notFound("group", command.groupId);
   if (!group.threadIds.includes(command.threadId))
     return reject("bad_request", "That thread is not in this group.");
+  const thread = model.threads[command.threadId];
+  if (!thread) return notFound("thread", command.threadId);
+  if (!thread.worktree || thread.status === "error") {
+    return reject("bad_request", "That thread has no worktree to pick.");
+  }
   return {
     ok: true,
     events: [{ type: "group.winnerPicked", groupId: command.groupId, threadId: command.threadId }],

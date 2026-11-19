@@ -1446,10 +1446,12 @@ function respond(method: RpcMethod, params: unknown): unknown {
       return fixtureUsageHistory((params as RpcParams<"usage.history">).windowDays);
     case "fleet.overview":
       return [...fleetRows(fixtureModel)];
-    case "agents.list":
-      return fleetRows(fixtureModel).filter(
-        (row) => row.parentThreadId === (params as RpcParams<"agents.list">).parentThreadId,
+    case "agents.list": {
+      const parent = (params as RpcParams<"agents.list">).parentThreadId;
+      return fleetRows(fixtureModel).filter((row) =>
+        parent ? row.parentThreadId === parent : true,
       );
+    }
     case "git.mergePreview": {
       const threadId = (params as RpcParams<"git.mergePreview">).threadId;
       if (threadId === "t-f3") {

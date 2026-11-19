@@ -20,7 +20,13 @@ export interface GitService {
   listFiles(cwd: string): Promise<string[]>;
   /** Numstat summary of commits on `branch` not reachable from the project checkout's HEAD. */
   diffBranchStat(projectRoot: string, branch: string): Promise<DiffStat | null>;
-  mergePreview(projectRoot: string, worktree: Worktree): Promise<MergePreview>;
+  /** Stage and commit dirty worktree changes on its branch; no-op when clean. */
+  commitWorktreeChanges(projectRoot: string, worktree: Worktree, message: string): Promise<void>;
+  mergePreview(
+    projectRoot: string,
+    worktree: Worktree,
+    commitMessage?: string,
+  ): Promise<MergePreview>;
   mergeWorktree(
     projectRoot: string,
     worktree: Worktree,

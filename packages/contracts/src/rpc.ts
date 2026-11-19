@@ -80,6 +80,10 @@ export const WorkspaceEntry = z.object({
 });
 export type WorkspaceEntry = z.infer<typeof WorkspaceEntry>;
 
+const AgentsAuthFields = {
+  agentToken: z.string().min(1).optional(),
+};
+
 export const RpcMethods = {
   /** Record a command. Ack means the intent was saved, not that the work finished. */
   dispatch: {
@@ -220,19 +224,23 @@ export const RpcMethods = {
   },
   /** `age agents spawn`. Same fields as `thread.spawn`, without a command id. */
   "agents.spawn": {
-    params: ThreadSpawnParams,
+    params: ThreadSpawnParams.extend({
+      ...AgentsAuthFields,
+      idempotencyKey: z.string().min(1).max(128).optional(),
+    }),
     result: z.object({ threadId: Id }),
   },
   /** `age agents list`. Overview rows whose parent is this coordinator. */
   "agents.list": {
-    params: z.object({ parentThreadId: Id }),
+    params: z.object({ parentThreadId: Id.optional(), ...AgentsAuthFields }),
     result: z.array(FleetRow),
   },
   /** `age agents wait`. Blocks until each thread is done or failed, or the timeout fires. */
   "agents.wait": {
     params: z.object({
       threadIds: z.array(Id),
-      timeoutMs: z.number().int().nonnegative().max(FLEET_LIMITS.maxAgentsWaitMs),
+      timeoutMs: z.number().int().min(1000).max(FLEET_LIMITS.maxAgentsWaitMs),
+      ...AgentsAuthFields,
     }),
     result: z.object({
       finished: z.array(Id),
@@ -241,7 +249,7 @@ export const RpcMethods = {
   },
   /** `age agents result`. Summary of the worker's latest report. */
   "agents.result": {
-    params: z.object({ threadId: Id }),
+    params: z.object({ threadId: Id, ...AgentsAuthFields }),
     result: AgentResult,
   },
 } as const;

@@ -5,12 +5,18 @@ interface AgentRuntime {
   serverUrl: string;
   /** Absolute path of the `age` shim on PATH. */
   ageBin: string;
+  issueToken?: (threadId: string) => string;
 }
 
 let runtime: AgentRuntime | null = null;
 
 export function setAgentRuntime(next: AgentRuntime | null): void {
   runtime = next;
+}
+
+export function setAgentTokenIssuer(issue: ((threadId: string) => string) | null): void {
+  if (!runtime) return;
+  runtime = { ...runtime, ...(issue ? { issueToken: issue } : { issueToken: undefined }) };
 }
 
 export function currentAgentRuntime(): AgentRuntime | null {
@@ -31,10 +37,14 @@ export function agentEnv(input: {
   const current = env.PATH ?? env.Path ?? "";
   const binDir = dirname(input.ageBin);
   const path = current.length > 0 ? `${binDir}${delimiter}${current}` : binDir;
+  const issued =
+    currentAgentRuntime()?.issueToken?.(input.threadId) ??
+    (env.AGE_AGENT_TOKEN as string | undefined);
   return {
     AGE_THREAD_ID: input.threadId,
     AGE_SERVER_URL: input.serverUrl,
     PATH: path,
+    ...(issued ? { AGE_AGENT_TOKEN: issued } : {}),
   };
 }
 

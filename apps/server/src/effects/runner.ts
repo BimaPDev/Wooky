@@ -19,6 +19,7 @@ import {
   workerAlreadyReported,
   workerDiffStat,
 } from "../fleet/worker-report.ts";
+import { rebuildMissingWorkerReports } from "../fleet/rebuild-reports.ts";
 import type { GitService } from "../git/types.ts";
 import {
   checkpointRef,
@@ -117,6 +118,14 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           await ensureWorktree(effect.threadId, effect.projectRoot);
         } catch (error) {
           console.error(`Could not create a worktree for ${effect.threadId}`, error);
+          append([
+            {
+              type: "thread.worktreeFailed",
+              commandId: null,
+              threadId: effect.threadId,
+              message: messageOf(error),
+            },
+          ]);
         }
         return;
       case "worktree.remove":
@@ -662,6 +671,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     const mergeMerging = store.model.threads[effect.threadId]?.merge;
     const targetBranch = mergeMerging?.targetBranch;
     try {
+      await git.commitWorktreeChanges(effect.projectRoot, effect.worktree, `AGE: ${effect.title}`);
       const result = await git.mergeWorktree(
         effect.projectRoot,
         effect.worktree,
@@ -729,6 +739,13 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     if (!parentId) return;
     const project = store.model.projects[thread.projectId];
     const summary = turnSummary(store.model, threadId, turnId, status, error);
+    if (thread.worktree && project) {
+      try {
+        await git.commitWorktreeChanges(project.root, thread.worktree, `AGE: ${thread.title}`);
+      } catch (cause) {
+        console.error(`Could not commit worker changes for ${threadId}`, cause);
+      }
+    }
     const diffStat =
       thread.worktree && project
         ? await workerDiffStat(git, project.root, thread.worktree.branch)
@@ -847,6 +864,11 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           now: now(),
         });
       }
+      void rebuildMissingWorkerReports({ store, git })
+        .then((events) => {
+          if (events.length > 0) append(events);
+        })
+        .catch((cause) => console.error("Could not rebuild worker reports", cause));
     },
     idle,
     pendingRequests: () => approvals.size + questions.size,

@@ -18,6 +18,7 @@ export function createNoopGitService(): GitService {
     diff: unavailable("diff"),
     listFiles: unavailable("list files"),
     diffBranchStat: async () => null,
+    commitWorktreeChanges: async () => {},
     mergePreview: emptyPreview,
     mergeWorktree: async (_projectRoot: string, _worktree: Worktree, _strategy: MergeStrategy) =>
       mergeFail(),

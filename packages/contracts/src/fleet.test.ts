@@ -118,6 +118,15 @@ describe("fleet wire shapes", () => {
       RpcMethods["agents.wait"].params.safeParse({ threadIds: ["w"], timeoutMs: 600_001 }).success,
     ).toBe(false);
     expect(
+      RpcMethods["agents.wait"].params.safeParse({ threadIds: ["w"], timeoutMs: 0 }).success,
+    ).toBe(false);
+    expect(
+      RpcMethods["agents.wait"].params.safeParse({ threadIds: ["w"], timeoutMs: 999 }).success,
+    ).toBe(false);
+    expect(
+      RpcMethods["agents.wait"].params.safeParse({ threadIds: ["w"], timeoutMs: 1000 }).success,
+    ).toBe(true);
+    expect(
       ThreadSpawnParams.safeParse({
         parentThreadId: "p",
         provider: "demo",

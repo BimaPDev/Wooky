@@ -181,6 +181,8 @@ export const Thread = z.object({
   merge: MergeState.optional(),
   /** Present after a spawned worker's turn finishes and is reported. */
   report: WorkerReport.optional(),
+  /** Set when worktree creation fails for an isolated thread. */
+  errorMessage: z.string().optional(),
   status: ThreadStatus,
   createdAt: IsoTime,
   updatedAt: IsoTime,
