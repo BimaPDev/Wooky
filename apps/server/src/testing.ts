@@ -2,7 +2,14 @@ import { mkdirSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgeEvent, AgeEventOf, AgeEventType, FileDiff, Worktree } from "@age/contracts";
+import {
+  FailoverSettings,
+  type AgeEvent,
+  type AgeEventOf,
+  type AgeEventType,
+  type FileDiff,
+  type Worktree,
+} from "@age/contracts";
 import type { GitService } from "./git/types.ts";
 import type { DecideContext } from "./orchestrator/decide.ts";
 import type { EventStore } from "./store/event-store.ts";
@@ -14,12 +21,15 @@ export function tempDir(label: string): Promise<string> {
 /** Deterministic ids and clock for tests. */
 export function testContext(
   capabilities: DecideContext["capabilities"] = () => undefined,
+  failoverSettings = FailoverSettings.parse({}),
 ): DecideContext {
   let counter = 0;
   return {
     now: () => "2026-01-01T00:00:00.000Z",
     newId: (prefix) => `${prefix}-${++counter}`,
     capabilities,
+    hasProvider: () => true,
+    failoverSettings,
   };
 }
 

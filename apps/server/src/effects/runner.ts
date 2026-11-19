@@ -3,6 +3,7 @@ import {
   ProviderEvent,
   UserInputRequest,
   type Command,
+  type DeviceSettings,
   type PendingEvent,
   type QuestionAnswers,
   type ReadModel,
@@ -19,7 +20,9 @@ import {
 } from "../orchestrator/effects.ts";
 import type { ProviderRegistry } from "../providers/registry.ts";
 import type { TurnInput } from "../providers/types.ts";
+import { maybeFailoverAfterTurn } from "../failover/policy.ts";
 import type { EventStore } from "../store/event-store.ts";
+import type { LimitsService } from "../usage/limits.ts";
 
 export interface EffectRunner {
   enqueue(effects: readonly StoredEffect[]): void;
@@ -44,6 +47,9 @@ interface RunnerDeps {
   coalesceMs?: number;
   /** Starts a queued prompt. Injected so the runner does not import the dispatcher. */
   dispatch?: (command: Command) => void;
+  deviceSettings?: () => DeviceSettings;
+  limits?: LimitsService;
+  now?: () => string;
 }
 
 type Decision = "allow" | "deny";
@@ -63,7 +69,17 @@ const RECOVERABLE: ReadonlySet<Effect["kind"]> = new Set([
  * already occupying its thread's queue.
  */
 export function createEffectRunner(deps: RunnerDeps): EffectRunner {
-  const { store, providers, git, newId, coalesceMs = 30, dispatch } = deps;
+  const {
+    store,
+    providers,
+    git,
+    newId,
+    coalesceMs = 30,
+    dispatch,
+    deviceSettings,
+    limits,
+    now = () => new Date().toISOString(),
+  } = deps;
   const tails = new Map<string, Promise<void>>();
   const inflight = new Set<Promise<void>>();
   const controllers = new Map<string, AbortController>();
@@ -313,6 +329,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     let error: string | null = null;
     let usage: Usage | null = null;
     let nativeRef: string | undefined;
+    let failure: Extract<ProviderEvent, { type: "done" }>["failure"];
     let cwd: string | null = null;
     let checkpoints = false;
 
@@ -534,6 +551,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         status = done.status;
         error = done.error;
         nativeRef = done.nativeRef;
+        failure = done.failure;
       } else if (signal.aborted) {
         status = "interrupted";
       } else {
@@ -574,6 +592,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       usage,
       error,
       ...(nativeRef === undefined ? {} : { nativeRef }),
+      ...(failure ? { failure } : {}),
     };
     try {
       emit([finished]);
@@ -591,6 +610,26 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     }
     const recorded = store.model.turns[threadId]?.find((candidate) => candidate.id === turnId);
     if (recorded?.status === "completed") promoteHead(threadId);
+    if (deviceSettings && dispatch) {
+      const committed = store
+        .eventsAfter(0)
+        .findLast(
+          (event): event is Extract<typeof event, { type: "turn.finished" }> =>
+            event.type === "turn.finished" && event.turnId === turnId,
+        );
+      if (committed) {
+        void maybeFailoverAfterTurn({
+          model: store.model,
+          finished: committed,
+          settings: deviceSettings(),
+          listProviders: () => providers.list(),
+          dispatch,
+          recordCooldown: (events) => append(events),
+          limits,
+          now: now(),
+        }).catch((cause) => console.error("Failover after turn failed", cause));
+      }
+    }
   }
 
   async function execute(effect: StoredEffect): Promise<void> {

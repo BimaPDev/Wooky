@@ -2,6 +2,8 @@ import { basename, isAbsolute, normalize, sep } from "node:path";
 import type {
   Command,
   CommandOf,
+  FailoverSettings,
+  ModelTarget,
   PendingEvent,
   ProviderCapabilities,
   ProviderKind,
@@ -15,8 +17,10 @@ import {
   pendingApprovals,
   pendingQuestions,
   resumePoint,
+  shouldSwitchBack,
   threadsSharingWorkspace,
 } from "@age/domain";
+import { cooledDownIfNeeded, expiredCooldownClears } from "../failover/cooldown.ts";
 import { checkpointRef, NO_CHECKPOINT_ITEM, type Effect } from "./effects.ts";
 
 export interface DecideContext {
@@ -24,6 +28,9 @@ export interface DecideContext {
   newId(prefix: string): string;
   /** Known provider capabilities. A missing flag means the provider cannot do that. */
   capabilities(provider: ProviderKind): ProviderCapabilities | undefined;
+  /** Adapters registered on this server. */
+  hasProvider?(provider: ProviderKind): boolean;
+  failoverSettings: FailoverSettings;
 }
 
 export type Rejection = {
@@ -127,7 +134,7 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
     case "turn.revert":
       return revertTurn(model, command);
     case "thread.failover":
-      return reject("bad_request", "Failover is not implemented yet.");
+      return threadFailover(model, command, ctx);
   }
 }
 
@@ -250,9 +257,13 @@ function startTurn(
       },
     ]);
   }
-  const started = beginTurn(model, thread, command.prompt, ctx);
-  if (!started.ok) return started;
-  return accept(command, started.events, started.effects);
+  const prelude = failoverPrelude(model, ctx);
+  const active =
+    thread.failover && ctx.failoverSettings.switchBack && shouldSwitchBack(thread, model, ctx.now())
+      ? switchBackThenStart(model, thread, command.prompt, ctx)
+      : beginTurn(model, thread, command.prompt, ctx);
+  if (!active.ok) return active;
+  return accept(command, [...prelude, ...active.events], active.effects);
 }
 
 function removeQueued(model: ReadModel, command: CommandOf<"queue.remove">): Decision {
@@ -285,6 +296,97 @@ function promoteQueued(
     ],
     started.effects,
   );
+}
+
+function threadFailover(
+  model: ReadModel,
+  command: CommandOf<"thread.failover">,
+  ctx: DecideContext,
+): Decision {
+  const thread = model.threads[command.threadId];
+  if (!thread) return notFound("thread", command.threadId);
+  if (isBusy(thread)) return reject("conflict", "Stop the running turn before failing over.");
+  if (thread.provider === command.to.provider && thread.model === command.to.model)
+    return reject("bad_request", "Failover target is already the active model.");
+  if (ctx.hasProvider && !ctx.hasProvider(command.to.provider))
+    return reject("bad_request", `Unknown provider ${command.to.provider}.`);
+
+  const now = ctx.now();
+  const events: Draft[] = [...failoverPrelude(model, ctx)];
+  const from: ModelTarget = { provider: thread.provider, model: thread.model };
+  const cooled = cooledDownIfNeeded(model, from, command.failure, now);
+  if (cooled) events.push(cooled);
+
+  const handoff = command.to.provider !== thread.provider;
+  events.push(configuredDraft(thread, command.to.provider, command.to.model, handoff));
+  events.push({
+    type: "thread.failedOver",
+    threadId: thread.id,
+    from,
+    to: command.to,
+    failure: command.failure,
+    switches: (thread.failover?.switches ?? 0) + 1,
+  });
+
+  const nextThread: Thread = {
+    ...thread,
+    provider: command.to.provider,
+    model: command.to.model,
+    ...(handoff ? { providerSessionId: null } : {}),
+  };
+  const started = beginTurn(model, nextThread, command.retryPrompt, ctx);
+  if (!started.ok) return started;
+  return accept(command, [...events, ...started.events], started.effects);
+}
+
+function switchBackThenStart(
+  model: ReadModel,
+  thread: Thread,
+  prompt: string,
+  ctx: DecideContext,
+): { ok: true; events: Draft[]; effects: Effect[] } | Rejection {
+  const original = thread.failover?.original;
+  if (!original) return reject("conflict", "This thread has no failover state to restore.");
+  const events: Draft[] = [
+    configuredDraft(
+      thread,
+      original.provider,
+      original.model,
+      original.provider !== thread.provider,
+    ),
+    { type: "thread.failoverRestored", threadId: thread.id, to: original },
+  ];
+  const restored: Thread = {
+    ...thread,
+    provider: original.provider,
+    model: original.model,
+    providerSessionId: original.provider !== thread.provider ? null : thread.providerSessionId,
+    failover: undefined,
+  };
+  const started = beginTurn(model, restored, prompt, ctx);
+  if (!started.ok) return started;
+  return { ok: true, events: [...events, ...started.events], effects: started.effects };
+}
+
+function failoverPrelude(model: ReadModel, ctx: DecideContext): Draft[] {
+  return expiredCooldownClears(model, ctx.now());
+}
+
+function configuredDraft(
+  thread: Thread,
+  provider: ProviderKind,
+  modelName: string,
+  handoff: boolean,
+): Draft {
+  return {
+    type: "thread.configured",
+    threadId: thread.id,
+    provider,
+    model: modelName,
+    runtimeMode: thread.runtimeMode,
+    handoff,
+    ...(thread.interactionMode ? { interactionMode: thread.interactionMode } : {}),
+  };
 }
 
 function beginTurn(
