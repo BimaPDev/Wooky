@@ -72,6 +72,18 @@ describe("CursorTranslator", () => {
     const done = lastDone(events);
     expect(done?.status).toBe("failed");
     expect(done?.error).toBe("Something went wrong");
+    expect(done).not.toHaveProperty("failure");
+  });
+
+  it("attaches quota failure on a usage-limit result", async () => {
+    const events = await translateFixture("usage-limit.ndjson");
+    const done = lastDone(events);
+    expect(done).toMatchObject({
+      type: "done",
+      status: "failed",
+      error: "You've reached your usage limit for composer-2",
+      failure: { kind: "quota" },
+    });
   });
 
   it("ignores unknown event types", async () => {
@@ -85,6 +97,7 @@ describe("CursorTranslator", () => {
       "simple-message.ndjson",
       "tools.ndjson",
       "error-result.ndjson",
+      "usage-limit.ndjson",
       "unknown-events.ndjson",
       "real-read-shell.ndjson",
     ]) {
@@ -119,6 +132,24 @@ describe("CursorTranslator", () => {
     const t = new CursorTranslator("turn-signal", "/workspace");
     expect(t.finish(null, "SIGKILL", null, false)).toEqual([
       { type: "done", status: "failed", error: "Process exited on signal SIGKILL" },
+    ]);
+  });
+
+  it("finish classifies a usage-limit stderr tail as quota", () => {
+    const t = new CursorTranslator("turn-limit", "/workspace");
+    expect(t.finish(1, null, "You've reached your usage limit for auto", false)).toMatchObject([
+      {
+        type: "done",
+        status: "failed",
+        failure: { kind: "quota" },
+      },
+    ]);
+  });
+
+  it("finish never classifies an aborted turn", () => {
+    const t = new CursorTranslator("turn-abort", "/workspace");
+    expect(t.finish(1, null, "You've reached your usage limit for auto", true)).toEqual([
+      { type: "done", status: "interrupted", error: null },
     ]);
   });
 

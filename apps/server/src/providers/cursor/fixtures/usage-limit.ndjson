@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"sess-test-001"}
+{"type":"result","subtype":"error","duration_ms":100,"is_error":true,"result":"You've reached your usage limit for composer-2","session_id":"sess-test-001","usage":{"inputTokens":10,"outputTokens":0}}

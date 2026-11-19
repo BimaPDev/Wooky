@@ -326,6 +326,18 @@ function handleClientRequest(msg) {
   }
 
   if (msg.method === "turn/start") {
+    if (scenario === "usage-limit-rpc") {
+      send({
+        id: msg.id,
+        error: {
+          code: -32000,
+          message: "usage_limit_reached",
+          data: { code: "usage_limit_reached", resets_in_seconds: 60, plan_type: "plus" },
+        },
+      });
+      return;
+    }
+
     send({
       id: msg.id,
       result: {
@@ -344,6 +356,25 @@ function handleClientRequest(msg) {
       const padding = "x".repeat(5000);
       process.stderr.write(`${padding}\nFATAL: simulated codex panic in worker\n`);
       process.exit(1);
+    }
+
+    if (scenario === "usage-limit") {
+      send({
+        method: "turn/completed",
+        params: {
+          threadId: currentThreadId,
+          turn: {
+            id: currentTurnId,
+            status: "failed",
+            items: [],
+            error: {
+              message: "You've hit your usage limit",
+              additionalDetails: "try again in 2 hours",
+            },
+          },
+        },
+      });
+      return;
     }
 
     if (scenario === "spawn-grandchild") {

@@ -1,11 +1,14 @@
-import type { ProviderEvent, TimelineItem, Usage } from "@age/contracts";
+import type { ProviderEvent, TimelineItem, TurnFailure, Usage } from "@age/contracts";
 import type {
   SDKAssistantMessage,
   SDKPartialAssistantMessage,
+  SDKRateLimitInfo,
   SDKResultMessage,
   SDKUserMessage,
   SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { asDoneFailure } from "../failure.ts";
+import { classifyClaudeFailure } from "./classify.ts";
 import { clip, truncateBytes } from "./text.ts";
 import { describeTool } from "./tools.ts";
 
@@ -18,6 +21,7 @@ export interface Translator {
   push(message: SDKMessage): ProviderEvent[];
   /** Close the turn when the stream ended, was aborted or threw. No-op once `done` was emitted. */
   finish(reason: FinishReason): ProviderEvent[];
+  noteRateLimit(info: SDKRateLimitInfo): void;
 }
 
 export interface TranslatorOptions {
@@ -60,6 +64,7 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
   let authFailed = false;
   let finished = false;
   let lastChainUuid: string | null = null;
+  let lastRateLimit: SDKRateLimitInfo | null = null;
   const planProposed = options.planProposed;
 
   const stateFor = (messageId: string): MessageState => {
@@ -199,6 +204,7 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
     status: "completed" | "interrupted" | "failed",
     error: string | null,
     out: ProviderEvent[],
+    failure?: TurnFailure,
   ): ProviderEvent[] {
     finished = true;
     out.push({
@@ -206,8 +212,19 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
       status,
       error,
       ...(lastChainUuid ? { nativeRef: lastChainUuid } : {}),
+      ...(failure ? { failure } : {}),
     });
     return out;
+  }
+
+  function classifyFailed(error: string | null, resultSubtype?: string): TurnFailure | undefined {
+    return asDoneFailure(
+      classifyClaudeFailure({
+        resultSubtype,
+        errorText: error ?? undefined,
+        rateLimit: lastRateLimit,
+      }),
+    );
   }
 
   function result(message: SDKResultMessage, out: ProviderEvent[]): ProviderEvent[] {
@@ -217,10 +234,15 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
       return done("completed", null, out);
     }
     settleRunningTools("failed", out);
-    return done("failed", resultError(message, authFailed), out);
+    const error = resultError(message, authFailed);
+    return done("failed", error, out, classifyFailed(error, message.subtype));
   }
 
   return {
+    noteRateLimit(info) {
+      lastRateLimit = info;
+    },
+
     push(message) {
       if (finished) return [];
       const out: ProviderEvent[] = [];
@@ -238,6 +260,9 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
           break;
         case "user":
           toolResults(message, out);
+          break;
+        case "rate_limit_event":
+          lastRateLimit = message.rate_limit_info;
           break;
         case "result":
           return result(message, out);
@@ -263,7 +288,8 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
       }
       if (reason.kind === "error") {
         settleRunningTools("failed", out);
-        return done("failed", errorText(reason.error), out);
+        const error = errorText(reason.error);
+        return done("failed", error, out, classifyFailed(error));
       }
       if (planProposed?.value) {
         settleRunningTools("done", out);

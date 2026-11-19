@@ -1,10 +1,8 @@
-export type TurnFailureKind = "rate_limit" | "quota" | "overloaded" | "auth" | "other";
-export type TurnFailure = {
-  kind: TurnFailureKind;
-  resetAt?: string /* ISO */;
-  retryAfterMs?: number;
-  message: string;
-};
+import type { TurnFailure, TurnFailureKind } from "@age/contracts";
+
+export type { TurnFailure, TurnFailureKind };
+
+const MESSAGE_MAX = 2000;
 
 const INTERRUPT_RE =
   /\b(?:the turn was interrupted|user(?:-|\s+)(?:abort(?:ed)?|cancel(?:led|ed))|cancelled by the user|canceled by the user)\b|\binterrupted\b/i;
@@ -103,15 +101,37 @@ export function classifyGenericText(text: string, now?: Date): TurnFailure | nul
   const clock = now ?? new Date();
   const timing = timingFrom(message, clock);
 
-  if (AUTH_RE.test(message)) return { kind: "auth", message };
-  if (OVERLOADED_RE.test(message)) return { kind: "overloaded", message, ...timing };
-  if (QUOTA_RE.test(message)) return { kind: "quota", message, ...timing };
-  if (RATE_LIMIT_RE.test(message)) return { kind: "rate_limit", message, ...timing };
+  if (AUTH_RE.test(message)) return ofKind("auth", message);
+  if (OVERLOADED_RE.test(message)) return ofKind("overloaded", message, timing);
+  if (QUOTA_RE.test(message)) return ofKind("quota", message, timing);
+  if (RATE_LIMIT_RE.test(message)) return ofKind("rate_limit", message, timing);
   return null;
 }
 
 export function isInterruptText(text: string): boolean {
   return INTERRUPT_RE.test(text);
+}
+
+function ofKind(
+  kind: TurnFailureKind,
+  message: string,
+  timing: Pick<TurnFailure, "resetAt" | "retryAfterMs"> = {},
+): TurnFailure {
+  return { kind, message, ...timing };
+}
+
+export function asDoneFailure(failure: TurnFailure | null): TurnFailure | undefined {
+  if (!failure) return undefined;
+  const message =
+    failure.message.length <= MESSAGE_MAX ? failure.message : failure.message.slice(0, MESSAGE_MAX);
+  const retryAfterMs =
+    failure.retryAfterMs === undefined ? undefined : Math.round(Math.max(0, failure.retryAfterMs));
+  return {
+    kind: failure.kind,
+    message,
+    ...(failure.resetAt ? { resetAt: failure.resetAt } : {}),
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+  };
 }
 
 export function timingFrom(text: string, now: Date): Pick<TurnFailure, "resetAt" | "retryAfterMs"> {

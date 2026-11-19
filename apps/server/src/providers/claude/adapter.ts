@@ -182,6 +182,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
           pending = null;
           if (step === ABORTED || step.done) break;
           if (step.value.type === "rate_limit_event") {
+            translator.noteRateLimit(step.value.rate_limit_info);
             options.onRateLimit?.(step.value.rate_limit_info);
           }
           trackPlanWrite(step.value, lastPlanWritePath);

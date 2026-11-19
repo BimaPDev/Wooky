@@ -508,7 +508,7 @@ export function createCodexAdapter(options?: CodexAdapterOptions): ProviderAdapt
           if (stderr && !message.includes(stderr)) {
             message = `${message}: ${stderr}`;
           }
-          const fallback = translator.finish("failed", message)[0];
+          const fallback = translator.finish("failed", message, setupError ?? protocolFailure)[0];
           if (fallback && fallback.type === "done") {
             finalDone = fallback;
           }

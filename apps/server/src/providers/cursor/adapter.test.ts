@@ -72,6 +72,7 @@ describe("createCursorAdapter e2e", () => {
       const done = events.filter((e) => e.type === "done").at(-1);
       expect(done?.status).toBe("failed");
       expect(done?.error).toContain("simulated crash");
+      expect(done).not.toHaveProperty("failure");
     } finally {
       if (prev === undefined) delete process.env.AGE_FAKE_CURSOR_MODE;
       else process.env.AGE_FAKE_CURSOR_MODE = prev;
@@ -148,6 +149,22 @@ describe("createCursorAdapter e2e", () => {
     expect(events.filter((e) => e.type === "done")).toEqual([
       { type: "done", status: "interrupted", error: null },
     ]);
+  });
+
+  it("attaches quota failure on a usage-limit result stream", async () => {
+    process.env.AGE_FAKE_CURSOR_FIXTURE = join(dirname(fakeBin), "usage-limit.ndjson");
+    const adapter = createCursorAdapter({
+      cursorBin: process.execPath,
+      cursorArgsPrefix: [fakeBin],
+    });
+    const events = await collect(adapter.runTurn(baseInput()));
+    const done = events.filter((e) => e.type === "done").at(-1);
+    expect(done).toMatchObject({
+      type: "done",
+      status: "failed",
+      error: "You've reached your usage limit for composer-2",
+      failure: { kind: "quota" },
+    });
   });
 
   it("emits exactly one failed done for a stdout null line", async () => {

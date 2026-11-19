@@ -6,6 +6,7 @@ import {
   blockStart,
   init,
   messageStart,
+  rateLimitEvent,
   resultError,
   resultSuccess,
   text,
@@ -314,10 +315,40 @@ describe("result", () => {
   it.each([
     ["error_during_execution", ["Tool crashed"], "Tool crashed"],
     ["error_max_turns", [], "Claude Code stopped after reaching its turn limit."],
-    ["error_max_budget_usd", [], "Claude Code stopped after reaching its spending limit."],
-  ] as const)("fails on %s", (subtype, errors, message) => {
+  ] as const)("fails on %s without a failover failure", (subtype, errors, message) => {
     const events = run([init(), resultError(subtype, [...errors])]);
     expect(events.at(-1)).toEqual({ type: "done", status: "failed", error: message });
+    expectOneDoneLast(events);
+  });
+
+  it("fails error_max_budget_usd as quota", () => {
+    const events = run([init(), resultError("error_max_budget_usd")]);
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      status: "failed",
+      error: "Claude Code stopped after reaching its spending limit.",
+      failure: { kind: "quota" },
+    });
+    expectOneDoneLast(events);
+  });
+
+  it("attaches quota failure on a usage-limit result after a rejected rate_limit_event", () => {
+    const events = run([
+      init(),
+      rateLimitEvent({
+        status: "rejected",
+        rateLimitType: "five_hour",
+        utilization: 100,
+        resetsAt: 1_763_485_200,
+      }),
+      resultSuccess({ is_error: true, result: "Claude AI usage limit reached|1763485200" }),
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      status: "failed",
+      error: "Claude AI usage limit reached|1763485200",
+      failure: { kind: "quota" },
+    });
     expectOneDoneLast(events);
   });
 
@@ -347,6 +378,7 @@ describe("result", () => {
       status: "failed",
       error: "API Error: overloaded",
       nativeRef: expect.any(String),
+      failure: { kind: "overloaded", message: "API Error: overloaded" },
     });
   });
 
@@ -356,8 +388,11 @@ describe("result", () => {
       assistant("m1", [text("Not logged in")], { error: "authentication_failed" }),
       resultSuccess({ is_error: true, result: "Not logged in" }),
     ]);
-    expect(events.at(-1)).toMatchObject({ status: "failed" });
-    expect(events.at(-1)).toMatchObject({ error: expect.stringContaining("not signed in") });
+    expect(events.at(-1)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("not signed in"),
+      failure: { kind: "auth" },
+    });
   });
 
   it("ignores messages after done", () => {
@@ -383,12 +418,14 @@ describe("finish", () => {
       error: null,
       nativeRef: expect.any(String),
     });
+    expect(events.at(-1)).not.toHaveProperty("failure");
     expectOneDoneLast(events);
   });
 
   it("an exception yields done failed with its message", () => {
     const events = run([init()], { kind: "error", error: new Error("spawn failed") });
     expect(events.at(-1)).toEqual({ type: "done", status: "failed", error: "spawn failed" });
+    expect(events.at(-1)).not.toHaveProperty("failure");
     expectOneDoneLast(events);
   });
 
