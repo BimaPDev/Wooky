@@ -94,9 +94,22 @@ After `session/new`, the adapter selects the thread's model with
 `session/set_config_option` when the session advertises a `model` option
 (`{ configId: "model", value: "<id>" }`). If that option is absent it tries
 `session/set_model`. If the agent implements neither, the turn continues on the
-agent's default and says so. `opencode acp` has no `--model` flag. OpenCode 1.19.6
-can create a file in the workspace without sending `session/request_permission`.
-When it does ask, the approval card is the same one the ACP adapter uses.
+agent's default and says so. `opencode acp` has no `--model` flag.
+
+OpenCode 1.19.6's build agent allows every tool unless a later rule says
+otherwise. The installed binary reads `OPENCODE_PERMISSION` after project
+`opencode.json` and applies it with `findLast`, so the env value wins. AGE sets
+that variable on the child (it is not logged, and it replaces the same key in
+`providers.opencode.env`):
+
+| Runtime mode | `edit`  | `bash`  | `webfetch` |
+| ------------ | ------- | ------- | ---------- |
+| `approve`    | `ask`   | `ask`   | `ask`      |
+| `auto-edits` | `allow` | `ask`   | `ask`      |
+| `full`       | `allow` | `allow` | `allow`    |
+
+An `ask` rule arrives as `session/request_permission` and becomes an approval
+card. `full` still picks allow without a card.
 
 ## ACP
 
@@ -199,6 +212,12 @@ Tool output previews stop at 4 KB.
 same for edits, and still asks for commands. Plan mode always asks. Cancelling the
 turn answers the pending request with `cancelled`, sends `session/cancel`, and
 kills the process group if the prompt has not returned within 3 seconds.
+
+A generic ACP command has no shared permission config, so AGE cannot make it
+ask. If a turn in `approve` or `auto-edits` finishes without a single
+`session/request_permission`, the timeline gets one notice: "This agent does
+not ask before acting; runtime mode cannot be enforced". OpenCode does not get
+that notice, because `OPENCODE_PERMISSION` is what makes it ask.
 
 A prompt error whose text matches the shared classifier becomes that failure
 (`rate_limit`, `quota`, `overloaded`, `auth`). ACP's `auth_required` error

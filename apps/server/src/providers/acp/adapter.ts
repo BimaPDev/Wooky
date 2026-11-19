@@ -84,6 +84,7 @@ async function* runConfiguredTurn(
     ...(options.killGraceMs !== undefined ? { killGraceMs: options.killGraceMs } : {}),
     ...(options.maxLineBytes !== undefined ? { maxLineBytes: options.maxLineBytes } : {}),
     ...(options.onDebug ? { onDebug: options.onDebug } : {}),
+    noticeWhenSilent: true,
   };
   yield* runAcpTurn(spec, input);
 }
