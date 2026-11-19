@@ -1,12 +1,4 @@
-import {
-  Fragment,
-  memo,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type PointerEvent,
-} from "react";
+import { Fragment, memo, useMemo, useRef, type KeyboardEvent, type PointerEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { closePaneThread, focusPaneThread, setPaneWeights } from "../../state/actions.ts";
 import { useStore } from "../../state/store.ts";
@@ -14,6 +6,7 @@ import { Composer } from "../Composer.tsx";
 import { IconClose } from "../Icons.tsx";
 import { modelLabel, providerLabels } from "../labels.ts";
 import { ThreadView } from "../ThreadView.tsx";
+import { shouldFollowDrag } from "./guards.ts";
 import {
   PANE_NUDGE_LARGE_PX,
   PANE_NUDGE_PX,
@@ -25,13 +18,23 @@ import {
 /** The main area's split: 2 to 4 panes side by side, or nothing when the layout is not a split. */
 export function PaneDock() {
   const panes = useStore((state) => state.panes);
-  const threads = useStore((state) => state.model.threads);
-  const layout = useMemo(() => splitLayout(panes, (id) => Boolean(threads[id])), [panes, threads]);
+  // Only this layout's own threads matter: whether each still exists. Other threads never re-render the split.
+  const present = useStore(
+    useShallow((state) =>
+      (state.panes?.threadIds ?? []).map((id) => Boolean(state.model.threads[id])),
+    ),
+  );
+  const layout = useMemo(() => {
+    const here = new Set((panes?.threadIds ?? []).filter((_, i) => present[i]));
+    return splitLayout(panes, (id) => here.has(id));
+  }, [panes, present]);
   if (!layout) return null;
   return <PaneRow layout={layout} />;
 }
 
 interface DragSession {
+  pointerId: number;
+  element: HTMLElement;
   index: number;
   origin: number;
   start: number[];
@@ -41,13 +44,11 @@ interface DragSession {
 
 function PaneRow({ layout }: { layout: PaneLayout }) {
   const rowRef = useRef<HTMLDivElement>(null);
+  const slots = useRef<(HTMLDivElement | null)[]>([]);
   const drag = useRef<DragSession | null>(null);
-  // Widths while a divider is dragged. They reach the store once, on release.
-  const [live, setLive] = useState<number[] | null>(null);
   const titles = useStore(
     useShallow((state) => layout.threadIds.map((id) => state.model.threads[id]?.title ?? "")),
   );
-  const shown = live ?? layout.weights;
   const count = layout.threadIds.length;
 
   // Dividers are 1px each. The panes share what is left.
@@ -56,10 +57,20 @@ function PaneRow({ layout }: { layout: PaneLayout }) {
     return row ? row.getBoundingClientRect().width - (count - 1) : 0;
   };
 
+  // A drag changes only the two panes beside its divider. Their flex-grow is written straight to the DOM.
+  const paint = (index: number, weights: readonly number[]) => {
+    const left = slots.current[index];
+    const right = slots.current[index + 1];
+    if (left) left.style.flexGrow = String(weights[index] ?? 0);
+    if (right) right.style.flexGrow = String(weights[index + 1] ?? 0);
+  };
+
   const startDrag = (event: PointerEvent<HTMLDivElement>, index: number) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || drag.current) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     drag.current = {
+      pointerId: event.pointerId,
+      element: event.currentTarget,
       index,
       origin: event.clientX,
       start: layout.weights,
@@ -70,22 +81,26 @@ function PaneRow({ layout }: { layout: PaneLayout }) {
 
   const moveDrag = (event: PointerEvent<HTMLDivElement>) => {
     const session = drag.current;
-    if (!session) return;
+    if (!session || !shouldFollowDrag(session, event)) return;
     session.latest = resizeWeights(
       session.start,
       session.index,
       event.clientX - session.origin,
       session.available,
     );
-    setLive(session.latest);
+    paint(session.index, session.latest);
   };
 
-  const endDrag = () => {
+  // Ends the drag once. A release commits the widths, one store write; a cancel puts the old widths back.
+  const finishDrag = (pointerId: number, commit: boolean) => {
     const session = drag.current;
+    if (!session || session.pointerId !== pointerId) return;
     drag.current = null;
-    if (!session) return;
-    setPaneWeights(session.latest);
-    setLive(null);
+    if (session.element.hasPointerCapture(pointerId))
+      session.element.releasePointerCapture(pointerId);
+    const changed = session.latest.some((weight, i) => weight !== session.start[i]);
+    if (commit && changed) setPaneWeights(session.latest);
+    else paint(session.index, session.start);
   };
 
   const onDividerKey = (event: KeyboardEvent<HTMLDivElement>, index: number) => {
@@ -115,8 +130,11 @@ function PaneRow({ layout }: { layout: PaneLayout }) {
         {layout.threadIds.map((id, i) => (
           <Fragment key={id}>
             <div
+              ref={(el) => {
+                slots.current[i] = el;
+              }}
               className={i === layout.focused ? "pane-slot focused" : "pane-slot"}
-              style={{ flexGrow: shown[i] }}
+              style={{ flexGrow: layout.weights[i] }}
             >
               <PaneView threadId={id} focused={i === layout.focused} />
             </div>
@@ -128,12 +146,13 @@ function PaneRow({ layout }: { layout: PaneLayout }) {
                 aria-label={`Resize between ${titles[i] || "pane"} and ${titles[i + 1] || "pane"}`}
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-valuenow={Math.round((shown[i] ?? 0) * 100)}
+                aria-valuenow={Math.round((layout.weights[i] ?? 0) * 100)}
                 className="pane-divider"
                 onPointerDown={(event) => startDrag(event, i)}
                 onPointerMove={moveDrag}
-                onPointerUp={endDrag}
-                onPointerCancel={endDrag}
+                onPointerUp={(event) => finishDrag(event.pointerId, true)}
+                onPointerCancel={(event) => finishDrag(event.pointerId, false)}
+                onLostPointerCapture={(event) => finishDrag(event.pointerId, true)}
                 onKeyDown={(event) => onDividerKey(event, i)}
               />
             ) : null}

@@ -3,15 +3,19 @@ import { useState } from "react";
 import { addReviewNote, removeReviewNote } from "../../state/actions.ts";
 import { IconTrash } from "../Icons.tsx";
 import { noteLabel, type NoteAnchor } from "./notes.ts";
+import { snippetOf } from "./snippets.ts";
 
 /** The inline composer under a diff line. Cmd+Enter adds, Escape cancels. */
 export function NoteComposer({
   threadId,
   anchor,
+  lineText,
   onDone,
 }: {
   threadId: string;
   anchor: NoteAnchor;
+  /** The line's text when the composer opened. Kept client-side to notice when the line changes. */
+  lineText: string;
   onDone: () => void;
 }) {
   const [body, setBody] = useState("");
@@ -21,7 +25,7 @@ export function NoteComposer({
   const save = async () => {
     if (!text || saving) return;
     setSaving(true);
-    const ack = await addReviewNote(threadId, anchor, text);
+    const ack = await addReviewNote(threadId, anchor, text, snippetOf(lineText));
     setSaving(false);
     if (ack) onDone();
   };
@@ -64,11 +68,22 @@ export function NoteComposer({
   );
 }
 
-/** A note under its line. Author-less: the note is the agent's prompt, not a chat message. */
-export function ReviewNoteItem({ threadId, note }: { threadId: string; note: ReviewNote }) {
+/**
+ * A note under its line. Author-less: the note is the agent's prompt, not a chat message.
+ * `stale` keeps it visible and marks that its line changed since the note was written.
+ */
+export function ReviewNoteItem({
+  threadId,
+  note,
+  stale = false,
+}: {
+  threadId: string;
+  note: ReviewNote;
+  stale?: boolean;
+}) {
   const label = noteLabel(note);
   return (
-    <div className="review-note">
+    <div className={stale ? "review-note stale" : "review-note"}>
       <div className="review-note-head">
         <span className="mono review-note-anchor">{label}</span>
         <button
@@ -82,6 +97,7 @@ export function ReviewNoteItem({ threadId, note }: { threadId: string; note: Rev
         </button>
       </div>
       <p className="review-note-body">{note.body}</p>
+      {stale ? <p className="review-note-stale">Line changed since this note</p> : null}
     </div>
   );
 }

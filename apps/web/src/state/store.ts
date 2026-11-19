@@ -11,6 +11,7 @@ import { create } from "zustand";
 import type { ConnectionStatus } from "../rpc/client.ts";
 import { pruneNavStack, type NavStack, type NavTarget } from "../lib/nav-history.ts";
 import { loadPanes, savePanes, syncPanes, type PaneLayout } from "../components/panes/layout.ts";
+import { claimSnippets, type PendingSnippet } from "../components/review/snippets.ts";
 
 export type Theme = "dark" | "light";
 
@@ -64,6 +65,10 @@ export interface AppState {
   navSilent: boolean;
   /** Split panes, remembered per window. Null when the main area shows one thread. */
   panes: PaneLayout | null;
+  /** Line text each review note was written against, by note id. Client-side only; lost on reload. */
+  reviewSnippets: Record<string, string>;
+  /** Snippets waiting for the server to name their note. */
+  pendingSnippets: PendingSnippet[];
 }
 
 export function currentNavFromState(
@@ -106,6 +111,8 @@ export const useStore = create<AppState>(() => ({
   nav: { past: [], future: [] },
   navSilent: false,
   panes: loadPanes(),
+  reviewSnippets: {},
+  pendingSnippets: [],
 }));
 
 // sync: store selection and model changes keep the split panes and their saved layout in step
@@ -126,6 +133,21 @@ useStore.subscribe((state, prev) => {
   });
   if (next.panes !== state.panes || next.selected !== state.selectedThreadId)
     useStore.setState(next);
+});
+
+// sync: a newly appeared review note takes the snippet its composer captured for that line
+useStore.subscribe((state, prev) => {
+  if (state.model.reviewNotes === prev.model.reviewNotes) return;
+  const { pending, claimed } = claimSnippets(
+    state.pendingSnippets,
+    prev.model.reviewNotes,
+    state.model.reviewNotes,
+  );
+  if (pending.length === state.pendingSnippets.length && Object.keys(claimed).length === 0) return;
+  useStore.setState({
+    pendingSnippets: pending,
+    reviewSnippets: { ...state.reviewSnippets, ...claimed },
+  });
 });
 
 export function receiveSnapshot(model: ReadModel) {

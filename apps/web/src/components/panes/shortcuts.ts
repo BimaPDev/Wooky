@@ -1,12 +1,14 @@
 import { useEffect } from "react";
 import { focusPaneIndex, splitWithRecent } from "../../state/actions.ts";
+import { isTypingTarget } from "./guards.ts";
 import { paneShortcut } from "./layout.ts";
 
-/** Window shortcuts for panes: ⌘\ splits, ⌘1–4 focus a pane. */
+/** Window shortcuts for panes: ⌘\ splits, ⌘1–4 focus a pane. Typing in a field never triggers them. */
 export function usePaneShortcuts() {
   // sync: window keydown listener for pane shortcuts
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
       const shortcut = paneShortcut({
         key: event.key,
         mod: event.metaKey || event.ctrlKey,

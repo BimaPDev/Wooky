@@ -10,8 +10,10 @@ import {
   type NoteAnchor,
 } from "./review/notes.ts";
 import { NoteComposer, ReviewNoteItem } from "./review/ReviewNotes.tsx";
+import { isStale } from "./review/snippets.ts";
 
 const NO_NOTES: readonly ReviewNote[] = [];
+const NO_SNIPPETS: Readonly<Record<string, string>> = {};
 
 interface Compose {
   row: number;
@@ -20,18 +22,22 @@ interface Compose {
 
 /**
  * Unified diff body: line numbers, tinted additions and removals. With a thread id and a path,
- * each line takes a review note: a "+" in the gutter, Enter or c on a focused line.
+ * each line takes a review note: a "+" in the gutter, Enter or c on a focused line. Notes whose
+ * line changed since they were written are marked; notes whose line is gone stay listed below.
  */
 export const DiffLines = memo(function DiffLines({
   patch,
   threadId,
   path,
   notes = NO_NOTES,
+  snippets = NO_SNIPPETS,
 }: {
   patch: string;
   threadId?: string;
   path?: string;
   notes?: readonly ReviewNote[];
+  /** Line text each note was written against, by note id. Client-side only. */
+  snippets?: Readonly<Record<string, string>>;
 }) {
   const hunks = useMemo(() => parseUnifiedDiff(patch), [patch]);
   const reviewPath = threadId !== undefined ? (path ?? null) : null;
@@ -51,7 +57,31 @@ export const DiffLines = memo(function DiffLines({
       hunks.map((_, h) => hunks.slice(0, h).reduce((total, hunk) => total + hunk.lines.length, 0)),
     [hunks],
   );
+  // The text now shown at each anchor, keyed the same way notes are.
+  const lineTexts = useMemo(() => {
+    const texts = new Map<string, string>();
+    if (reviewPath === null) return texts;
+    for (const hunk of hunks)
+      for (const line of hunk.lines) {
+        const anchor = anchorForLine(reviewPath, line);
+        if (anchor) texts.set(anchorKey(anchor), line.text);
+      }
+    return texts;
+  }, [hunks, reviewPath]);
   const notesByAnchor = useMemo(() => groupNotesByAnchor(notes), [notes]);
+  const orphans = useMemo(
+    () => notes.filter((note) => !lineTexts.has(anchorKey(note))),
+    [notes, lineTexts],
+  );
+  const stale = useMemo(
+    () =>
+      new Set(
+        notes
+          .filter((note) => isStale(snippets[note.id], lineTexts.get(anchorKey(note)) ?? null))
+          .map((note) => note.id),
+      ),
+    [notes, snippets, lineTexts],
+  );
   const tableRef = useRef<HTMLTableElement>(null);
   const [compose, setCompose] = useState<Compose | null>(null);
 
@@ -145,7 +175,11 @@ export const DiffLines = memo(function DiffLines({
                     ? rowNotes.map((note) => (
                         <tr key={note.id} className="review-note-row">
                           <td colSpan={span}>
-                            <ReviewNoteItem threadId={review.threadId} note={note} />
+                            <ReviewNoteItem
+                              threadId={review.threadId}
+                              note={note}
+                              stale={stale.has(note.id)}
+                            />
                           </td>
                         </tr>
                       ))
@@ -156,6 +190,7 @@ export const DiffLines = memo(function DiffLines({
                         <NoteComposer
                           threadId={review.threadId}
                           anchor={anchor}
+                          lineText={line.text}
                           onDone={() => closeCompose(row)}
                         />
                       </td>
@@ -167,10 +202,27 @@ export const DiffLines = memo(function DiffLines({
           </tbody>
         );
       })}
+      {review && orphans.length > 0 ? (
+        <tbody className="review-orphans">
+          <tr>
+            <td colSpan={span} className="review-orphans-head">
+              Lines no longer in this diff
+            </td>
+          </tr>
+          {orphans.map((note) => (
+            <tr key={note.id} className="review-note-row">
+              <td colSpan={span}>
+                <ReviewNoteItem threadId={review.threadId} note={note} stale={stale.has(note.id)} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      ) : null}
     </table>
   );
 
-  if (hunks.length === 0) return <p className="diff-empty">No textual changes.</p>;
+  if (hunks.length === 0 && orphans.length === 0)
+    return <p className="diff-empty">No textual changes.</p>;
   if (!review) return table;
   return (
     <div
@@ -206,12 +258,14 @@ export function FileDiffView({
   defaultOpen,
   threadId,
   notes,
+  snippets,
 }: {
   file: FileDiff;
   defaultOpen: boolean;
   /** Set to review lines of this thread. Omit for a read-only diff. */
   threadId?: string;
   notes?: readonly ReviewNote[];
+  snippets?: Readonly<Record<string, string>>;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -236,6 +290,7 @@ export function FileDiffView({
             threadId={threadId}
             path={threadId !== undefined ? file.path : undefined}
             notes={notes}
+            snippets={snippets}
           />
         ) : (
           <p className="diff-empty">Binary file, no preview.</p>
