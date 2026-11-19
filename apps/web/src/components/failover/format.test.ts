@@ -1,11 +1,10 @@
-import type { ProviderStatus, Turn } from "@age/contracts";
+import type { ProviderStatus } from "@age/contracts";
 import { describe, expect, it } from "vitest";
 import {
   activeCooldowns,
   clockLabel,
   cooldownFor,
   cooldownRowText,
-  failoverNoticeFor,
   failureText,
   limitedUntilLabel,
   moveItem,
@@ -51,23 +50,6 @@ const providers: ProviderStatus[] = [
     models: [{ id: "auto", label: "Auto" }],
   },
 ];
-
-const turn = (fields: Partial<Turn> & Pick<Turn, "id">): Turn => ({
-  threadId: "t",
-  prompt: "do it",
-  provider: "claude",
-  model: "opus",
-  status: "completed",
-  items: [],
-  startedAt: at(0),
-  endedAt: at(1),
-  checkpointBefore: null,
-  checkpointAfter: null,
-  changedFiles: [],
-  usage: null,
-  error: null,
-  ...fields,
-});
 
 describe("time labels", () => {
   it("shows the time for today and the weekday for another day", () => {
@@ -116,91 +98,39 @@ describe("cooldowns", () => {
 });
 
 describe("notices", () => {
+  const from = { provider: "claude" as const, model: "opus" };
+  const to = { provider: "codex" as const, model: "gpt-6.1-sol" };
+
   it("formats the switch notice with the reset time", () => {
-    const text = noticeText(
-      {
-        kind: "failedOver",
-        from: { provider: "claude", model: "opus" },
-        to: { provider: "codex", model: "gpt-6.1-sol" },
-        reason: "quota",
-        resetAt: at(180),
-      },
-      providers,
-      now,
-      fmt,
-    );
-    expect(text).toBe(
+    const origin = {
+      kind: "failover" as const,
+      from,
+      to,
+      failure: { kind: "quota" as const, resetAt: at(180), message: "x" },
+      switches: 1,
+    };
+    expect(noticeText(origin, providers, now, fmt)).toBe(
       "Claude hit its usage limit (resets 3:00 PM). Switched to Codex · GPT-6.1 Sol and retried.",
     );
   });
 
-  it("falls back to generic copy when the reason is unknown", () => {
-    const text = noticeText(
-      {
-        kind: "failedOver",
-        from: { provider: "claude", model: "opus" },
-        to: { provider: "codex", model: "gpt-6-luna" },
-        reason: null,
-        resetAt: null,
-      },
-      providers,
-      now,
+  it("omits the reset time when the failure has none", () => {
+    const origin = {
+      kind: "failover" as const,
+      from,
+      to: { provider: "codex" as const, model: "gpt-6-luna" },
+      failure: { kind: "rate_limit" as const, message: "x" },
+      switches: 1,
+    };
+    expect(noticeText(origin, providers, now)).toBe(
+      "Claude hit its rate limit. Switched to Codex · GPT-6 Luna and retried.",
     );
-    expect(text).toBe("Claude hit a limit. Switched to Codex · GPT-6 Luna and retried.");
   });
 
   it("formats the restore notice", () => {
-    expect(
-      noticeText({ kind: "restored", to: { provider: "claude", model: "opus" } }, providers, now),
-    ).toBe("Limit reset. Switched back to Claude · Opus.");
-  });
-
-  const failed = turn({ id: "a", status: "failed" });
-  const retry = turn({ id: "b", provider: "codex", model: "gpt-6.1-sol", startedAt: at(2) });
-  const next = turn({ id: "c", prompt: "next" });
-
-  it("detects a retry on another target after a failed turn", () => {
-    expect(failoverNoticeFor(undefined, failed, retry)).toEqual({
-      kind: "failedOver",
-      from: { provider: "claude", model: "opus" },
-      to: { provider: "codex", model: "gpt-6.1-sol" },
-      reason: null,
-      resetAt: null,
-    });
-  });
-
-  it("takes the reason and reset time from the failed turn", () => {
-    const withFailure = turn({
-      id: "a",
-      status: "failed",
-      failure: { kind: "quota", resetAt: at(180), message: "limit" },
-    });
-    expect(failoverNoticeFor(undefined, withFailure, retry)).toMatchObject({
-      reason: "quota",
-      resetAt: at(180),
-    });
-  });
-
-  it("ignores turns that are not a retry", () => {
-    expect(failoverNoticeFor(undefined, turn({ id: "x" }), retry)).toBeNull();
-    expect(failoverNoticeFor(undefined, undefined, failed)).toBeNull();
-    expect(
-      failoverNoticeFor(undefined, failed, turn({ id: "same", status: "completed" })),
-    ).toBeNull();
-  });
-
-  it("detects a return to the first model after a retry", () => {
-    expect(failoverNoticeFor(failed, retry, next)).toEqual({
-      kind: "restored",
-      to: { provider: "claude", model: "opus" },
-    });
-    expect(
-      failoverNoticeFor(
-        failed,
-        retry,
-        turn({ id: "d", prompt: "next", provider: "codex", model: "gpt-6-luna" }),
-      ),
-    ).toBeNull();
+    expect(noticeText({ kind: "restore", from: to, to: from }, providers, now)).toBe(
+      "Limit reset. Switched back to Claude · Opus.",
+    );
   });
 });
 

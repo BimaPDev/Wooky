@@ -4,6 +4,7 @@ import { loadDeviceSettings, patchDeviceSettings } from "../state/appearance.ts"
 import { useStore } from "../state/store.ts";
 import { ChainEditor } from "./failover/ChainEditor.tsx";
 import { useMinuteClock } from "./failover/clock.ts";
+import { createSaver } from "./failover/saver.ts";
 import { activeCooldowns, cooldownRowText, relativeLabel } from "./failover/format.ts";
 
 type Trigger = FailoverConfig["triggers"][number];
@@ -65,11 +66,26 @@ export function FailoverSettings() {
   const cooldowns = useStore((state) => state.model.cooldowns ?? NO_COOLDOWNS);
   const nowMs = useMinuteClock();
   const [draft, setDraft] = useState<FailoverConfig | null>(null);
+  const [saver] = useState(() =>
+    createSaver<FailoverConfig>({
+      delayMs: 200,
+      send: (failover) => patchDeviceSettings({ failover }),
+      onIdle: (outcome) => {
+        setDraft(null);
+        if (outcome === "failed") {
+          useStore.setState({ notice: "Could not save the model fallback settings." });
+        }
+      },
+    }),
+  );
 
   // sync: load device settings when the page mounts
   useEffect(() => {
     void loadDeviceSettings();
   }, []);
+
+  // sync: send an unsent edit when the page closes
+  useEffect(() => () => saver.flush(), [saver]);
 
   const settings = draft ?? saved;
   if (!settings) return <p className="empty-state small">Loading settings.</p>;
@@ -77,9 +93,7 @@ export function FailoverSettings() {
   const save = (patch: Partial<FailoverConfig>) => {
     const next = { ...settings, ...patch };
     setDraft(next);
-    void patchDeviceSettings({ failover: next }).finally(() =>
-      setDraft((current) => (current === next ? null : current)),
-    );
+    saver.push(next);
   };
 
   const off = !settings.enabled;

@@ -3,9 +3,9 @@ import type {
   ProviderCooldown,
   ProviderKind,
   ProviderStatus,
-  Turn,
   TurnFailure,
   TurnFailureKind,
+  TurnOrigin,
 } from "@age/contracts";
 import { isAvailable, modelLabel } from "../labels.ts";
 
@@ -127,16 +127,6 @@ export function cooldownRowText(row: CooldownRow, nowMs: number, fmt: ClockForma
   return `${row.label} — limited until ${clockLabel(row.until, nowMs, fmt)}`;
 }
 
-export type FailoverNotice =
-  | {
-      kind: "failedOver";
-      from: ModelTarget;
-      to: ModelTarget;
-      reason: TurnFailureKind | null;
-      resetAt: string | null;
-    }
-  | { kind: "restored"; to: ModelTarget };
-
 const reasonPhrase: Record<TurnFailureKind, string> = {
   rate_limit: "hit its rate limit",
   quota: "hit its usage limit",
@@ -148,12 +138,12 @@ const reasonPhrase: Record<TurnFailureKind, string> = {
 /** "Claude hit its usage limit (resets 3:00 PM)", without a final period. */
 function limitClause(
   provider: ProviderKind,
-  reason: TurnFailureKind | null,
+  reason: TurnFailureKind,
   resetAt: string | null,
   nowMs: number,
   fmt: ClockFormat,
 ): string {
-  const phrase = reason ? reasonPhrase[reason] : "hit a limit";
+  const phrase = reasonPhrase[reason];
   const resets = resetAt ? ` (resets ${clockLabel(resetAt, nowMs, fmt)})` : "";
   return `${providerName[provider]} ${phrase}${resets}`;
 }
@@ -168,60 +158,25 @@ export function failureText(
   return `${limitClause(provider, failure.kind, failure.resetAt ?? null, nowMs, fmt)}.`;
 }
 
+/** The inline row for a turn that started from a failover or an automatic restore. */
 export function noticeText(
-  notice: FailoverNotice,
+  origin: TurnOrigin,
   providers: ProviderStatus[],
   nowMs: number,
   fmt: ClockFormat = {},
 ): string {
-  if (notice.kind === "restored") {
-    return `Limit reset. Switched back to ${targetLabel(providers, notice.to)}.`;
+  if (origin.kind === "restore") {
+    return `Limit reset. Switched back to ${targetLabel(providers, origin.to)}.`;
   }
-  const clause = limitClause(notice.from.provider, notice.reason, notice.resetAt, nowMs, fmt);
-  return `${clause}. Switched to ${targetLabel(providers, notice.to)} and retried.`;
-}
-
-const turnTarget = (turn: Turn) => targetOf(turn);
-
-/** A turn that re-ran the previous turn's prompt after it failed, on a different target. */
-export function isFailoverRetry(prev: Turn | undefined, turn: Turn): boolean {
-  return (
-    prev !== undefined &&
-    prev.status === "failed" &&
-    prev.prompt === turn.prompt &&
-    !sameTarget(turnTarget(prev), turnTarget(turn))
+  const { failure } = origin;
+  const clause = limitClause(
+    origin.from.provider,
+    failure.kind,
+    failure.resetAt ?? null,
+    nowMs,
+    fmt,
   );
-}
-
-/**
- * The read model keeps no failover event on the timeline, so notices are derived from the
- * turn sequence: a failed turn followed by the same prompt on another target is a switch, and
- * its reason comes from the failed turn's `failure`.
- */
-export function failoverNoticeFor(
-  before: Turn | undefined,
-  prev: Turn | undefined,
-  turn: Turn,
-): FailoverNotice | null {
-  if (prev && isFailoverRetry(prev, turn)) {
-    return {
-      kind: "failedOver",
-      from: turnTarget(prev),
-      to: turnTarget(turn),
-      reason: prev.failure?.kind ?? null,
-      resetAt: prev.failure?.resetAt ?? null,
-    };
-  }
-  if (
-    prev &&
-    before &&
-    isFailoverRetry(before, prev) &&
-    prev.prompt !== turn.prompt &&
-    sameTarget(turnTarget(before), turnTarget(turn))
-  ) {
-    return { kind: "restored", to: turnTarget(turn) };
-  }
-  return null;
+  return `${clause}. Switched to ${targetLabel(providers, origin.to)} and retried.`;
 }
 
 /** Move one row up or down. Out of range or no-op moves return the same array. */

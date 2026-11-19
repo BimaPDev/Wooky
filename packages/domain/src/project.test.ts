@@ -58,6 +58,30 @@ describe("applyEvent", () => {
     expect(model.turns.t1).toHaveLength(1);
   });
 
+  it("copies a turn origin onto the turn and omits it otherwise", () => {
+    const origin = {
+      kind: "restore" as const,
+      from: { provider: "codex" as const, model: "gpt-6.1-sol" },
+      to: { provider: "claude" as const, model: "opus" },
+    };
+    const model = applyEvents(emptyReadModel(), [
+      ...seed(),
+      ev({
+        type: "turn.started",
+        commandId: "c4",
+        threadId: "t1",
+        turnId: "u2",
+        prompt: "again",
+        provider: "demo",
+        model: "demo",
+        checkpointBefore: null,
+        origin,
+      }),
+    ]);
+    expect(model.turns.t1?.[0]).not.toHaveProperty("origin");
+    expect(model.turns.t1?.[1]?.origin).toEqual(origin);
+  });
+
   it("ignores replayed events at or below seq", () => {
     const events = seed();
     const once = applyEvents(emptyReadModel(), events);

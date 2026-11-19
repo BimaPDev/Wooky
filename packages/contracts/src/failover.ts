@@ -19,6 +19,19 @@ export const ModelTarget = z.object({
 });
 export type ModelTarget = z.infer<typeof ModelTarget>;
 
+/** Why a turn started: a failover retry, or an automatic return to the original model. */
+export const TurnOrigin = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("failover"),
+    from: ModelTarget,
+    to: ModelTarget,
+    failure: TurnFailure,
+    switches: z.number().int(),
+  }),
+  z.object({ kind: z.literal("restore"), from: ModelTarget, to: ModelTarget }),
+]);
+export type TurnOrigin = z.infer<typeof TurnOrigin>;
+
 export const ThreadFailoverState = z.object({
   original: ModelTarget,
   switchedAt: IsoTime,

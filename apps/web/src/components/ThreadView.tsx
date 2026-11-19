@@ -7,7 +7,7 @@ import { useStore } from "../state/store.ts";
 import { IconChevron, IconUndo } from "./Icons.tsx";
 import { FailoverNoticeRow } from "./failover/FailoverNotice.tsx";
 import { FallbackBanner } from "./failover/FallbackBanner.tsx";
-import { failoverNoticeFor, failureText } from "./failover/format.ts";
+import { failureText } from "./failover/format.ts";
 import { SwitchAndRetry } from "./failover/SwitchAndRetry.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { TimelineEntry } from "./Timeline.tsx";
@@ -69,19 +69,12 @@ const TurnView = memo(function TurnView({
   turnId: string;
   isLast: boolean;
 }) {
-  const [turn, prev, before] = useStore(
-    useShallow((state) => {
-      const list = state.model.turns[threadId] ?? [];
-      const index = list.findIndex((t) => t.id === turnId);
-      return [list[index], list[index - 1], list[index - 2]] as const;
-    }),
-  );
+  const turn = useStore((state) => state.model.turns[threadId]?.find((t) => t.id === turnId));
   if (!turn) return null;
-  const notice = failoverNoticeFor(before, prev, turn);
   return (
     <article className="turn" aria-label={`Turn: ${turn.prompt.slice(0, 60)}`}>
-      {notice ? <FailoverNoticeRow notice={notice} /> : null}
-      {notice?.kind === "failedOver" ? null : (
+      {turn.origin ? <FailoverNoticeRow origin={turn.origin} /> : null}
+      {turn.origin?.kind === "failover" ? null : (
         <div className="prompt" data-user-message-bubble="">
           {turn.prompt}
         </div>

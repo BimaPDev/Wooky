@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ModelTarget, TurnFailure, TurnFailureKind } from "./failover.ts";
+import { ModelTarget, TurnFailure, TurnFailureKind, TurnOrigin } from "./failover.ts";
 import {
   DiffStat,
   FLEET_LIMITS,
@@ -77,6 +77,8 @@ export const AgeEvent = z.discriminatedUnion("type", [
     interactionMode: InteractionMode.optional(),
     /** Set when the turn started from a queued prompt. */
     fromQueueId: Id.optional(),
+    /** Set only when the turn is a failover retry or an automatic restore. */
+    origin: TurnOrigin.optional(),
   }),
   /** Insert or replace an item by id. */
   z.object({

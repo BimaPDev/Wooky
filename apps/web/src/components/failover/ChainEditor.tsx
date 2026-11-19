@@ -57,7 +57,9 @@ function TargetRow({
   const label = targetLabel(providers, target);
   // aria-disabled, not disabled, so focus stays on the button while a row moves to an end.
   const move = (delta: -1 | 1) => {
-    if (!disabled) onChange(moveItem(chain, index, delta));
+    if (disabled) return;
+    const next = moveItem(chain, index, delta);
+    if (next !== chain) onChange(next);
   };
   return (
     <li className="failover-row">

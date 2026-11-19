@@ -119,6 +119,7 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         usage: null,
         error: null,
         ...(event.interactionMode ? { interactionMode: event.interactionMode } : {}),
+        ...(event.origin ? { origin: event.origin } : {}),
       };
       const withTurn = {
         ...model,

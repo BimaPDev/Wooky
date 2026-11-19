@@ -518,6 +518,13 @@ export const fixtureModel: ReadModel = {
         prompt: "Add retry with backoff to the sync job.",
         provider: "codex",
         model: "gpt-5.5-codex",
+        origin: {
+          kind: "failover",
+          from: { provider: "claude", model: "claude-opus-5-5" },
+          to: { provider: "codex", model: "gpt-5.5-codex" },
+          failure: { kind: "quota", resetAt: ago(-90), message: "Claude usage limit reached." },
+          switches: 1,
+        },
         startedAt: ago(4),
         endedAt: ago(1.5),
         items: [
@@ -547,6 +554,13 @@ export const fixtureModel: ReadModel = {
         prompt: "Summarize the open migrations.",
         provider: "codex",
         model: "gpt-5.5-codex",
+        origin: {
+          kind: "failover",
+          from: { provider: "claude", model: "claude-opus-5-5" },
+          to: { provider: "codex", model: "gpt-5.5-codex" },
+          failure: { kind: "rate_limit", message: "Claude rate limit reached." },
+          switches: 1,
+        },
         startedAt: ago(88),
         endedAt: ago(86),
         items: [
@@ -557,6 +571,11 @@ export const fixtureModel: ReadModel = {
         id: "u9c",
         threadId: "t9",
         prompt: "Now draft the rollback plan.",
+        origin: {
+          kind: "restore",
+          from: { provider: "codex", model: "gpt-5.5-codex" },
+          to: { provider: "claude", model: "claude-opus-5-5" },
+        },
         startedAt: ago(3),
         endedAt: ago(1.5),
         items: [{ kind: "message", id: "u9cm", role: "assistant", text: "Rollback drafted." }],
