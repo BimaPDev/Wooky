@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -68,6 +68,32 @@ describe("themes push", () => {
     const push = await nextPush();
     expect(push.changedIds).toContain("cli-paper");
     expect(push.activeThemeId).toBe("default");
+  });
+
+  it("broadcasts a settings change written by rename when settings.json did not exist at start", async () => {
+    const home = await tempDir("home");
+    const server = await startServer({
+      home,
+      port: 0,
+      host: "127.0.0.1",
+      adapters: [createDemoAdapter({ stepMs: 0 })],
+    });
+    servers.push(server);
+    const socket = new WebSocket(`${server.url.replace("http", "ws")}${AGE_WS_PATH}`);
+    sockets.push(socket);
+    const got = new Promise<ThemesPush>((resolve) => {
+      socket.on("message", (data) => {
+        const push = RpcPush.safeParse(JSON.parse(String(data)));
+        if (push.success && push.data.push === "themes") resolve(ThemesPush.parse(push.data));
+      });
+    });
+    await new Promise<void>((resolve, reject) =>
+      socket.once("open", () => resolve()).once("error", reject),
+    );
+    const temp = join(home, "settings.json.next");
+    await writeFile(temp, `${JSON.stringify({ activeThemeId: "wall-tide" })}\n`, "utf8");
+    await rename(temp, join(home, "settings.json"));
+    expect((await got).activeThemeId).toBe("wall-tide");
   });
 
   it("coalesces a burst of theme file writes into one push", async () => {

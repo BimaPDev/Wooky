@@ -1,5 +1,5 @@
-import { watch, type FSWatcher } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, watch, type FSWatcher } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { ThemesPush } from "@age/contracts";
 import type { ThemeStore } from "./themes.ts";
 
@@ -37,7 +37,12 @@ export function watchThemeFiles(
 
   const watchers: FSWatcher[] = [];
 
+  // Watch directories, not files: settings.json may not exist yet, and editors and the
+  // CLI may replace it by rename, which a file watcher on macOS never sees.
+  const settingsDir = dirname(themes.settingsPath);
+  const settingsName = basename(themes.settingsPath);
   try {
+    mkdirSync(themes.themesDir, { recursive: true });
     watchers.push(
       watch(themes.themesDir, { persistent: false }, (_event, filename) => {
         if (!filename || IGNORED_NAME_RE.test(filename)) return;
@@ -46,19 +51,21 @@ export function watchThemeFiles(
         schedule();
       }),
     );
-  } catch {
-    /* themes dir may be missing until first use */
+  } catch (error) {
+    console.warn("Theme folder watch unavailable", error);
   }
 
   try {
+    mkdirSync(settingsDir, { recursive: true });
     watchers.push(
-      watch(themes.settingsPath, { persistent: false }, () => {
+      watch(settingsDir, { persistent: false }, (_event, filename) => {
+        if (filename !== settingsName) return;
         settingsDirty = true;
         schedule();
       }),
     );
-  } catch {
-    /* settings file may not exist yet */
+  } catch (error) {
+    console.warn("Settings watch unavailable", error);
   }
 
   return () => {
