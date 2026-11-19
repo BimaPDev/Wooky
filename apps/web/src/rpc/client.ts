@@ -165,7 +165,7 @@ export function createRpcClient(options: RpcClientOptions) {
     const message = parsed.data;
     if ("push" in message) {
       if (message.push === "terminal") options.onTerminal?.(message);
-      else options.onEvent(message.event);
+      else if (message.push === "event") options.onEvent(message.event);
       return;
     }
     const entry = pending.get(message.id);

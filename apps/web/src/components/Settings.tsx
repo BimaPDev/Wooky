@@ -146,6 +146,7 @@ function generalDefaults() {
     appearanceContrast: _contrast,
     glassOpacity: _glass,
     chatWidth: _width,
+    wallpaperMotion: _motion,
     ...rest
   } = DeviceSettings.parse({});
   return rest;

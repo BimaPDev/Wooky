@@ -86,6 +86,12 @@ function createHandlers({
     "themes.get": ({ id }) => themes.get(id),
     "themes.put": ({ theme }) => themes.put(theme),
     "themes.delete": ({ id }) => themes.remove(id),
+    "themes.import": () => {
+      throw new ServiceError("unavailable", "Theme import is not implemented.");
+    },
+    "themes.activate": () => {
+      throw new ServiceError("unavailable", "Theme activate is not implemented.");
+    },
     "terminal.open": ({ cwd, cols, rows }, conn) => {
       const opened = terminals.open({ cwd, cols, rows }, (message) => conn.send(message));
       conn.trackTerminal(opened.sessionId);

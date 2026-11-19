@@ -95,6 +95,8 @@ for (const file of files) {
   for (const rule of rules) {
     if (!rule.applies(rel)) continue;
     for (const { spec, line } of imports(text)) {
+      // Contract tests import vitest. Production files under contracts stay zod-only.
+      if (isTest && rule.id === "contracts-pure" && spec === "vitest") continue;
       if (!rule.imports(spec)) report(file, line, rule.id, `${rule.message} (got "${spec}")`);
     }
   }
