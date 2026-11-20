@@ -37,6 +37,10 @@ function thread(fields: Partial<Thread> = {}): Thread {
     runtimeMode: "approve",
     worktree: null,
     providerSessionId: null,
+    ownerDeviceId: null,
+    movedTo: null,
+    movedFrom: null,
+    pullRequest: null,
     queue: [],
     status: "idle",
     createdAt: at,
@@ -50,7 +54,13 @@ function seed(threadFields: Partial<Thread> = {}): ReadModel {
     {
       type: "project.added",
       commandId: "seed",
-      project: { id: "p1", name: "demo", root: "/work/demo", createdAt: at },
+      project: {
+        id: "p1",
+        name: "demo",
+        root: "/work/demo",
+        createdAt: at,
+        settings: { scripts: [] },
+      },
     },
     { type: "thread.created", commandId: "seed", thread: thread(threadFields) },
   ]);
@@ -135,7 +145,13 @@ describe("decide project.add", () => {
       {
         type: "project.added",
         commandId: cmd.commandId,
-        project: { id: "project-1", name: "app", root: "/work/app", createdAt: at },
+        project: {
+          id: "project-1",
+          name: "app",
+          root: "/work/app",
+          createdAt: at,
+          settings: { scripts: [] },
+        },
       },
     ]);
     expect(effects).toEqual([]);

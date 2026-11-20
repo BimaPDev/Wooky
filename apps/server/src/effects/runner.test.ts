@@ -146,7 +146,7 @@ function seededStore(home: string, root: string, thread: Partial<Thread> = {}): 
       {
         type: "project.added",
         commandId: "seed",
-        project: { id: "p1", name: "p", root, createdAt: at },
+        project: { id: "p1", name: "p", root, createdAt: at, settings: { scripts: [] } },
       },
       {
         type: "thread.created",
@@ -160,6 +160,10 @@ function seededStore(home: string, root: string, thread: Partial<Thread> = {}): 
           runtimeMode: "full",
           worktree: null,
           providerSessionId: null,
+          ownerDeviceId: null,
+          movedTo: null,
+          movedFrom: null,
+          pullRequest: null,
           queue: [],
           status: "idle",
           createdAt: at,
@@ -542,7 +546,7 @@ describe("effect runner effects and recovery", () => {
         {
           type: "project.added",
           commandId: "c1",
-          project: { id: "p1", name: "p", root: "/p", createdAt: at },
+          project: { id: "p1", name: "p", root: "/p", createdAt: at, settings: { scripts: [] } },
         },
         {
           type: "thread.created",
@@ -556,6 +560,10 @@ describe("effect runner effects and recovery", () => {
             runtimeMode: "full",
             worktree: null,
             providerSessionId: null,
+            ownerDeviceId: null,
+            movedTo: null,
+            movedFrom: null,
+            pullRequest: null,
             queue: [],
             status: "idle",
             createdAt: at,

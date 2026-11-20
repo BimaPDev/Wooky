@@ -2,6 +2,8 @@ import { z } from "zod";
 import { FailoverSettings, ModelTarget } from "./failover.ts";
 import { ProviderKind } from "./model.ts";
 import { AcpAgentConfig, ProviderSettings } from "./provider-settings.ts";
+import { Environment, HostingSettings } from "./remote.ts";
+import { SyncSettings } from "./sync.ts";
 
 /** Hex color like #rgb or #rrggbb / #rrggbbaa. */
 export const HexColor = z
@@ -206,6 +208,12 @@ export const DeviceSettings = z.object({
   failover: FailoverSettings,
   /** Models starred in the picker, in the order they were added. */
   favoriteModels: z.array(ModelTarget).max(30).default([]),
+  /** User-facing name of this install. Absent until the user sets one. */
+  deviceName: z.string().min(1).optional(),
+  hosting: HostingSettings,
+  sync: SyncSettings,
+  /** Remote servers this client can switch to. The local server is not an entry. */
+  environments: z.array(Environment).default([]),
 });
 export type DeviceSettings = z.infer<typeof DeviceSettings>;
 

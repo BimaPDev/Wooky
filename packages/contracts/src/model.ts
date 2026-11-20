@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { ThreadFailoverState, TurnFailure, TurnOrigin } from "./failover.ts";
 import { ProviderKind } from "./kind.ts";
+import { DeviceId } from "./remote.ts";
+import { ProjectSettings } from "./scripts.ts";
 
 export { ProviderKind };
 
@@ -140,6 +142,8 @@ export const Project = z.object({
   createdAt: IsoTime,
   /** The hidden folder behind "No project". The UI shows it as "No project" and lists no row for it. */
   scratch: z.boolean().optional(),
+  /** Scripts, worktree setup, and the preview URL. Old projects decode as no scripts. */
+  settings: ProjectSettings,
 });
 export type Project = z.infer<typeof Project>;
 
@@ -159,6 +163,31 @@ export type QueuedPrompt = z.infer<typeof QueuedPrompt>;
 
 export const ThreadStatus = z.enum(["idle", "running", "waiting", "error"]);
 export type ThreadStatus = z.infer<typeof ThreadStatus>;
+
+export const PullRequestState = z.enum(["open", "merged", "closed"]);
+export type PullRequestState = z.infer<typeof PullRequestState>;
+
+export const PullRequest = z.object({
+  url: z.string().min(1),
+  number: z.number().int().positive(),
+  state: PullRequestState,
+  branch: z.string().min(1),
+});
+export type PullRequest = z.infer<typeof PullRequest>;
+
+/** Set when this device released the thread to another device. */
+export const ThreadMovedTo = z.object({
+  deviceId: DeviceId,
+  at: IsoTime,
+});
+export type ThreadMovedTo = z.infer<typeof ThreadMovedTo>;
+
+/** Set on the local thread created by importing one that lived on another device. */
+export const ThreadMovedFrom = z.object({
+  deviceId: DeviceId,
+  threadId: Id,
+});
+export type ThreadMovedFrom = z.infer<typeof ThreadMovedFrom>;
 
 export const Thread = z.object({
   id: Id,
@@ -198,6 +227,11 @@ export const Thread = z.object({
   createdAt: IsoTime,
   updatedAt: IsoTime,
   failover: ThreadFailoverState.optional(),
+  /** null means this device. Old logs omit the field and decode as null. */
+  ownerDeviceId: DeviceId.nullable().default(null),
+  movedTo: ThreadMovedTo.nullable().default(null),
+  movedFrom: ThreadMovedFrom.nullable().default(null),
+  pullRequest: PullRequest.nullable().default(null),
 });
 export type Thread = z.infer<typeof Thread>;
 

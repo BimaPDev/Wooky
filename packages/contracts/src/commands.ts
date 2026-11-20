@@ -10,6 +10,8 @@ import {
   ReviewSide,
   RuntimeMode,
 } from "./model.ts";
+import { DeviceId } from "./remote.ts";
+import { ProjectSettings } from "./scripts.ts";
 
 /** Fields shared by `thread.spawn` and the `agents.spawn` RPC (no commandId). */
 export const ThreadSpawnParams = z.object({
@@ -74,6 +76,12 @@ export const Command = z.discriminatedUnion("type", [
     scratch: z.boolean().optional(),
   }),
   z.object({ ...base, type: z.literal("project.remove"), projectId: Id }),
+  z.object({
+    ...base,
+    type: z.literal("project.configure"),
+    projectId: Id,
+    settings: ProjectSettings,
+  }),
   z.object({
     ...base,
     type: z.literal("thread.create"),
@@ -172,6 +180,33 @@ export const Command = z.discriminatedUnion("type", [
     type: z.literal("review.send"),
     threadId: Id,
     extra: z.string().optional(),
+  }),
+  /**
+   * Give this thread to another device. Rejected while a turn is running unless `force`
+   * (the caller interrupts first). Files must already sync; the event only records the move.
+   */
+  z.object({
+    ...base,
+    type: z.literal("thread.release"),
+    threadId: Id,
+    toDeviceId: DeviceId,
+    force: z.boolean().optional(),
+  }),
+  /**
+   * Create a local thread from a peer's copy. `transcript` is the handoff context.
+   * `turnsJson` is the peer's turn list, kept on the event and not projected.
+   */
+  z.object({
+    ...base,
+    type: z.literal("thread.import"),
+    sourceDeviceId: DeviceId,
+    sourceThreadId: Id,
+    projectId: Id,
+    title: z.string().min(1),
+    provider: ProviderKind,
+    model: z.string().min(1),
+    transcript: z.string(),
+    turnsJson: z.unknown().optional(),
   }),
 ]);
 export type Command = z.infer<typeof Command>;

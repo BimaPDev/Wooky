@@ -44,7 +44,13 @@ const project = (seq: number, id: string): AgeEvent => ({
   at: "2026-01-01T00:00:00.000Z",
   commandId: null,
   type: "project.added",
-  project: { id, name: id, root: `/tmp/${id}`, createdAt: "2026-01-01T00:00:00.000Z" },
+  project: {
+    id,
+    name: id,
+    root: `/tmp/${id}`,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    settings: { scripts: [] },
+  },
 });
 
 const flush = () => Promise.resolve().then(() => Promise.resolve());

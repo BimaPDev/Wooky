@@ -19,12 +19,15 @@ import {
   Project,
   ProviderKind,
   ProviderStatus,
+  PullRequest,
   ReviewNote,
   Thread,
   ThreadGroup,
   Turn,
 } from "./model.ts";
-import { TerminalPush, TerminalSessionId } from "./terminal.ts";
+import { DeviceId, DeviceInfo, PairingCode, PairedDeviceView, TailscaleStatus } from "./remote.ts";
+import { ConflictResolution, Snapshot, SnapshotKind, SyncPush, SyncStatus } from "./sync.ts";
+import { TerminalInfo, TerminalPush, TerminalSessionId, TerminalSize } from "./terminal.ts";
 import { ProviderLimits, UsageHistoryParams, UsageHistoryResult } from "./usage.ts";
 
 /**
@@ -191,13 +194,20 @@ export const RpcMethods = {
       cwd: z.string().min(1).optional(),
       cols: z.number().int().positive().optional(),
       rows: z.number().int().positive().optional(),
+      projectId: Id.optional(),
+      scriptId: Id.optional(),
+      size: TerminalSize.optional(),
     }),
-    result: z.object({
-      sessionId: TerminalSessionId,
-      shell: z.string(),
+    result: TerminalInfo.extend({
       /** CRLF on Windows shells, LF elsewhere. Absent on older servers; clients use LF. */
       lineEnding: z.enum(["\n", "\r\n"]).optional(),
     }),
+  },
+  "terminal.list": { params: z.object({}), result: z.array(TerminalInfo) },
+  /** Reattach. The server then pushes a `replay` of the buffered scrollback. */
+  "terminal.attach": {
+    params: z.object({ sessionId: TerminalSessionId }),
+    result: TerminalInfo,
   },
   "terminal.write": {
     params: z.object({ sessionId: TerminalSessionId, data: z.string() }),
@@ -281,6 +291,101 @@ export const RpcMethods = {
     params: z.object({ threadId: Id, ...AgentsAuthFields }),
     result: AgentResult,
   },
+  "device.info": { params: z.object({}), result: DeviceInfo },
+  "device.rename": {
+    params: z.object({ name: z.string().min(1) }),
+    result: DeviceInfo,
+  },
+  "remote.tailscaleStatus": { params: z.object({}), result: TailscaleStatus },
+  "remote.pairingCode.create": { params: z.object({}), result: PairingCode },
+  "remote.devices.list": { params: z.object({}), result: z.array(PairedDeviceView) },
+  "remote.devices.revoke": {
+    params: z.object({ deviceId: DeviceId }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "remote.devices.rename": {
+    params: z.object({ deviceId: DeviceId, name: z.string().min(1) }),
+    result: PairedDeviceView,
+  },
+  "sync.status": { params: z.object({}), result: SyncStatus },
+  "sync.now": {
+    params: z.object({ projectId: Id.optional() }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "sync.snapshots.list": {
+    params: z.object({
+      kind: SnapshotKind.optional(),
+      projectId: Id.optional(),
+      threadId: Id.optional(),
+      limit: z.number().int().positive().max(500).optional(),
+      before: z.string().min(1).optional(),
+    }),
+    result: z.array(Snapshot),
+  },
+  "sync.snapshots.diff": {
+    params: z.object({
+      snapshotId: z.string().min(1),
+      against: z.union([z.string().min(1), z.literal("working")]).optional(),
+    }),
+    result: z.array(FileDiff),
+  },
+  "sync.snapshots.restore": {
+    params: z.object({
+      snapshotId: z.string().min(1),
+      paths: z.array(z.string()).optional(),
+    }),
+    result: z.object({ backupSnapshotId: z.string().min(1) }),
+  },
+  "sync.snapshots.create": {
+    params: z.object({
+      projectId: Id,
+      label: z.string().min(1).optional(),
+    }),
+    result: Snapshot,
+  },
+  "sync.conflicts.resolve": {
+    params: z.object({ conflictId: z.string().min(1), resolution: ConflictResolution }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "scripts.run": {
+    params: z.object({ projectId: Id, scriptId: Id, threadId: Id.optional() }),
+    result: TerminalInfo,
+  },
+  "git.status": {
+    params: z.object({ threadId: Id }),
+    result: z.object({
+      branch: z.string(),
+      upstream: z.string().nullable(),
+      ahead: z.number().int().nonnegative(),
+      behind: z.number().int().nonnegative(),
+      dirty: z.boolean(),
+      hasRemote: z.boolean(),
+      ghAvailable: z.boolean(),
+      ghAuthed: z.boolean(),
+    }),
+  },
+  "git.commit": {
+    params: z.object({ threadId: Id, message: z.string().min(1) }),
+    result: z.object({ sha: z.string().min(1) }),
+  },
+  "git.push": {
+    params: z.object({ threadId: Id, setUpstream: z.boolean().optional() }),
+    result: z.object({ ok: z.literal(true), remoteUrl: z.string().min(1) }),
+  },
+  "git.pr.create": {
+    params: z.object({
+      threadId: Id,
+      title: z.string().min(1),
+      body: z.string(),
+      base: z.string().min(1).optional(),
+      draft: z.boolean().optional(),
+    }),
+    result: z.object({ url: z.string().min(1), number: z.number().int().positive() }),
+  },
+  "git.pr.status": {
+    params: z.object({ threadId: Id }),
+    result: PullRequest.nullable(),
+  },
 } as const;
 
 export type RpcMethod = keyof typeof RpcMethods;
@@ -320,7 +425,7 @@ export const ThemesPush = z.object({
 });
 export type ThemesPush = z.infer<typeof ThemesPush>;
 
-export const RpcPush = z.union([RpcEventPush, TerminalPush, ThemesPush]);
+export const RpcPush = z.union([RpcEventPush, TerminalPush, ThemesPush, SyncPush]);
 export type RpcPush = z.infer<typeof RpcPush>;
 
 export const ServerMessage = z.union([RpcResponse, RpcPush]);

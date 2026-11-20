@@ -24,6 +24,7 @@ import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
 import { openSignInTerminal } from "../terminal/login.ts";
 import type { TerminalManager } from "../terminal/session.ts";
+import { defaultCwd } from "../terminal/shell.ts";
 import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
 import type { HistoryService } from "../usage/history.ts";
@@ -151,10 +152,24 @@ function createHandlers(
       notifyThemes([]);
       return settings;
     },
-    "terminal.open": ({ cwd, cols, rows }, conn) => {
-      const opened = terminals.open({ cwd, cols, rows }, (message) => conn.send(message));
+    "terminal.open": ({ cwd, cols, rows, projectId, scriptId, size }, conn) => {
+      const opened = terminals.open(
+        { cwd, cols: size?.cols ?? cols, rows: size?.rows ?? rows },
+        (message) => conn.send(message),
+      );
       conn.trackTerminal(opened.sessionId);
-      return opened;
+      return {
+        sessionId: opened.sessionId,
+        shell: opened.shell,
+        lineEnding: opened.lineEnding,
+        title: opened.shell,
+        cwd: defaultCwd(cwd),
+        pty: false,
+        createdAt: new Date().toISOString(),
+        exited: false,
+        projectId: projectId ?? null,
+        scriptId: scriptId ?? null,
+      };
     },
     "terminal.write": ({ sessionId, data }) => {
       terminals.write(sessionId, data);
@@ -200,7 +215,33 @@ function createHandlers(
         reserveWait: conn.reserveAgentWait,
         releaseWait: conn.releaseAgentWait,
       }),
+    "device.info": notImplemented,
+    "device.rename": notImplemented,
+    "remote.tailscaleStatus": notImplemented,
+    "remote.pairingCode.create": notImplemented,
+    "remote.devices.list": notImplemented,
+    "remote.devices.revoke": notImplemented,
+    "remote.devices.rename": notImplemented,
+    "sync.status": notImplemented,
+    "sync.now": notImplemented,
+    "sync.snapshots.list": notImplemented,
+    "sync.snapshots.diff": notImplemented,
+    "sync.snapshots.restore": notImplemented,
+    "sync.snapshots.create": notImplemented,
+    "sync.conflicts.resolve": notImplemented,
+    "terminal.list": notImplemented,
+    "terminal.attach": notImplemented,
+    "scripts.run": notImplemented,
+    "git.status": notImplemented,
+    "git.commit": notImplemented,
+    "git.push": notImplemented,
+    "git.pr.create": notImplemented,
+    "git.pr.status": notImplemented,
   };
+}
+
+function notImplemented(): never {
+  throw new Error("not implemented");
 }
 
 /** Attaches the RPC WebSocket at WOOKY_WS_PATH. Returns a function that closes every socket. */

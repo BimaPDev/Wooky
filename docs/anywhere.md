@@ -1,0 +1,293 @@
+# Anywhere: hosts, remote access, sync and snapshots
+
+Goal: start a task on one machine (the work Mac), go home, and continue on another
+(the Windows PC) without losing anything. Install with one command. Wooky stays
+account-free: no hosted relay, no Wooky cloud, and agent sign-ins never leave a machine.
+
+## Words
+
+- **Device**: one Wooky install (a server plus its WOOKY_HOME). Has a stable `deviceId`
+  (random, created on first start, stored in WOOKY_HOME/device.json) and a user-editable name.
+- **Environment**: a Wooky server a client is connected to. The local server is the
+  environment `local`; a paired remote device is another environment. A client (web,
+  desktop, phone browser) can hold several environments and switch between them.
+- **Host**: a device other devices connect to as clients. Every device *can* be a host;
+  hosting is off until the user enables it.
+- **Peer**: two devices that each run their own agents and sync with each other.
+- **Snapshot**: a recorded state of something synced (a project's files, a thread, the
+  settings) that the user can revert to. "Git for Wooky stuff."
+
+## Topologies (the user picks per device, Settings → Anywhere)
+
+1. **Host mode.** One always-on device (home server, Proxmox LXC, VPS, spare Mac) runs the
+   agents. Laptops open it as an environment. Tasks keep running when a laptop sleeps.
+   Optional: mirror the host's project files to the laptop's own checkout (file sync).
+2. **Peer mode.** No server. Each laptop runs its own agents. Synced categories flow both
+   ways. A running task stays on the device it started on; "Continue on this device"
+   transfers the thread (see Threads).
+3. **Both.** Peers plus a host. The host is just another peer that never sleeps.
+
+## Connections (how a client reaches a device)
+
+`RemoteConnection` is a tagged union; Tailscale is the default and is detected
+automatically.
+
+| kind        | what                                                                                                                          |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `tailscale` | `tailscale status --json` gives the MagicDNS name and tailnet IP. Optional `tailscale serve` for HTTPS on 443. Default.      |
+| `direct`    | `http(s)://host:port` on the LAN or any routable address.                                                                    |
+| `url`       | Any user-supplied URL (reverse proxy, Cloudflare Tunnel, ngrok). Must be https unless the host is a private/loopback address. |
+| `ssh`       | The client spawns `ssh -N -L <localPort>:127.0.0.1:<remotePort> user@host` and connects to the forwarded port.                |
+
+Binding: by default the server binds 127.0.0.1 only (today's behaviour). Enabling hosting
+binds the chosen interfaces: the tailnet IP (default), all interfaces, or stays loopback-only
+for `ssh`/`url` (the tunnel does the exposure).
+
+## Pairing and auth
+
+- Any non-loopback connection needs a **device token**. Loopback stays as today, plus a
+  local token (G29) for non-browser local processes is a later hardening step.
+- The host creates a **pairing code**: 8 characters from an unambiguous alphabet, single
+  use, 10 minute expiry. Shown in Settings → Anywhere → "Pair a device" with a QR code of
+  `wooky://pair?url=…&code=…` and printed by `wooky pair` on the CLI.
+- The client calls the unauthenticated HTTP endpoint `POST /pair` with
+  `{code, deviceId, deviceName, platform}`. The host returns `{token, hostDeviceId, hostName}`.
+  The token is 32 random bytes, base64url. The host stores only its SHA-256 plus
+  metadata (`PairedDevice`). Five wrong codes in a minute locks pairing for one minute.
+- Clients send the token as `Authorization: Bearer` (non-browser) or, for the browser UI
+  served by the host, as an HttpOnly SameSite=Strict cookie set by `/pair`.
+  Origin/Host checks stay for cookie auth.
+- Paired devices can be renamed and revoked. Revoking closes their open sockets at once.
+- Remote clients never get the folder picker. They may get `fs.searchEntries` only inside
+  registered projects.
+- Desktop clients keep tokens in Electron `safeStorage`. A server acting as a sync peer keeps them in
+  WOOKY_HOME/peers.json, mode 0600 (on Windows, under the user profile ACL).
+
+## Sync
+
+Per device, `SyncSettings`:
+
+```
+enabled: boolean                       // master switch, default false
+categories: {
+  files: boolean        default true   // project working copies, incl. uncommitted
+  threads: boolean      default true   // conversations, turns, checkpoints, queue
+  settings: boolean     default true   // device settings except device-local keys
+  themes: boolean       default true   // themes and wallpapers
+  ignoredFiles: boolean default false  // also sync files matched by .gitignore
+}
+intervalSec: number     default 30     // file scan interval; also on turn.finished
+retention: { keepDays: 30, keepMin: 50 }  // snapshot pruning
+peers: deviceId[]                      // which paired devices to sync with
+projectMap: { [projectId]: { [deviceId]: localPath } }  // same project, different paths
+```
+
+Device-local keys never sync: binary paths, env, window state, sync settings themselves.
+
+### Files: shadow repos and snapshots
+
+- Each synced project gets a **shadow git dir** at WOOKY_HOME/sync/<projectId>.git with
+  `core.worktree` = the project path. It never touches the project's own `.git`, index or
+  refs, and it works for folders that are not git repos.
+- A **file snapshot** = `GIT_INDEX_FILE=<tmp> git add -A` (respecting .gitignore unless
+  `ignoredFiles`; always excluding `.git/` and WOOKY_HOME), `write-tree`, `commit-tree`
+  with parent = the previous snapshot. Ref: `refs/wooky/snap/<deviceId>/<projectId>` (tip).
+  The commit message records JSON metadata: deviceId, reason
+  (`interval|turn|before-apply|manual|revert`), threadId/turnId if any, plus the project
+  repo's HEAD sha and branch.
+- Snapshots are only written when the tree changed.
+- **Transfer**: `git bundle create - <tip> ^<last-known-remote-tip>` streamed over HTTP
+  `GET /sync/bundle?project=…&since=…` (token-authenticated), applied with `git bundle unbundle`
+  into the receiver's shadow repo under `refs/wooky/peer/<deviceId>/<projectId>`.
+  WS pushes `sync.available {deviceId, projectId, tip}` so peers pull promptly.
+- **Apply** (receiver):
+  1. Take a `before-apply` snapshot of the local working copy. This is the backup.
+  2. If the local tree equals the last tree applied from that peer (no local edits
+     since), check out the incoming tree into the working copy (write changed files,
+     delete removed ones, only paths tracked by the snapshot). Fast-forward.
+  3. Otherwise run a three-way merge with `git merge-tree --write-tree` (base = last common
+     snapshot). A clean merge is applied. A conflicted merge is NOT applied: it raises a
+     `SyncConflict` that the user resolves (keep mine / take theirs / open both) in the UI.
+  4. Never apply while a turn is running in that project on this device. Queue until it finishes.
+  5. Project git state: if the snapshot's HEAD commit is reachable (fetch the project's
+     branch objects via the same bundle) and the local repo is on the same branch with
+     a clean fast-forward, move the branch. Otherwise only the working tree syncs, and a
+     notice says the branches differ.
+- **Revert**: any snapshot can be restored into the working copy. The restore itself
+  takes a `before-apply` snapshot first, so it can be undone.
+- **Retention**: prune snapshot history older than keepDays while keeping at least keepMin,
+  by rewriting the chain (squash old ones) and `git gc --prune=now` on the shadow repo.
+
+### Threads
+
+- Every thread has an **owner device**, the one that runs its turns. Default: the creator.
+- Threads sync as **read-only replicas** to peers. The owner sends the thread's events as
+  a JSON event batch (`GET /sync/threads?since=<seq>`). The receiver stores them in a
+  separate `replica_events` table keyed by (ownerDeviceId, seq) and folds them with the
+  same reducer into `ReadModel.replicas`.
+- **Continue on this device**: `thread.claim` on the receiver. It asks the owner to
+  `thread.release` (rejected while a turn is running unless `force` after an interrupt),
+  then imports the thread as its own (a new local thread with the transcript as handoff
+  context, the same as a provider handoff) and links `movedFrom`. The owner's copy shows
+  "moved to <device>". Files arrive through file sync, which is required for claim.
+- Host mode needs none of this: the client just views the host's environment.
+
+### Settings and themes
+
+Last writer wins per top-level key, with `{value, updatedAt, deviceId}` stamps.
+Each accepted change is a snapshot (`settings` kind) so it can be reverted.
+
+## One-command install
+
+Served from GitHub release assets of the Wooky repo (the user publishes; nothing is pushed
+by agents). `WOOKY_REPO` overrides the source.
+
+- macOS/Linux: `curl -fsSL <release>/install.sh | bash`
+- Windows: `irm <release>/install.ps1 | iex`
+- Proxmox VE host: `bash -c "$(curl -fsSL <release>/proxmox.sh)"` creates a Debian 13 LXC
+  (prompts for CTID, cores, RAM and disk, defaulting to 2/4096/16G; unprivileged; nesting
+  on), installs Tailscale inside (optional), then runs install.sh in the container.
+
+install.sh / install.ps1:
+1. Detect OS/arch. Install Node 24 into WOOKY_HOME/runtime if `node` is missing or older,
+   as a portable tarball/zip from nodejs.org with SHA-256 verified against SHASUMS256.txt.
+2. Download `wooky-<version>.tgz` (server bundle + web dist + package.json for native
+   deps), verify its SHA-256 from the release, unpack to ~/.wooky/app/<version>, and
+   `npm install --omit=dev` for node-pty (build tools are a soft requirement; without
+   them the terminal falls back to pipes).
+3. Put a `wooky` launcher on PATH (~/.local/bin or %LOCALAPPDATA%\Wooky\bin).
+4. Optional `--service`: launchd LaunchAgent (macOS), systemd user unit plus
+   `loginctl enable-linger` (Linux), or a Scheduled Task at logon (Windows). Default on
+   for Linux servers and containers.
+5. Optional `--host`: enable hosting and print a pairing code + QR in the terminal.
+6. Optional `--agents claude,codex,opencode`: install those CLIs with their official
+   installers, then tell the user to sign in via `wooky` terminal or the web UI.
+7. Idempotent: rerunning upgrades. `wooky update` does the same. `wooky uninstall` removes
+   the service and app dir and keeps WOOKY_HOME unless `--purge`.
+
+Flags are also env vars (`WOOKY_SERVICE=1` …) because `curl | bash` cannot pass flags
+easily.
+
+## Contracts
+
+The sections above are the behaviour. This section is the wire. Where they differ, this
+section wins: `POST /pair` is `PairRequest` / `PairResponse` (a `DeviceInfo` on each side),
+not the flat field list in Pairing and auth. A peer learns that a snapshot exists from a
+`SyncPush` of kind `snapshot`. There is no separate `sync.available` push.
+
+Schemas live in `packages/contracts`. Old logs omit the new fields and decode to the defaults.
+
+### Schemas
+
+- `DeviceId`, `DevicePlatform`, `DeviceInfo`
+- `RemoteConnection` — `tailscale` `{hostName, port, https}`, `direct` `{url}` (any http(s) URL),
+  `url` `{url}` (https, or http only for localhost, 127/8, `::1`, 10/8, 172.16/12, 192.168/16,
+  100.64/10, and `*.ts.net`), `ssh` `{target, remotePort, localPort?, identityFile?}`
+- `Environment` `{id, label, deviceId?, connection, addedAt}` — the local server is not stored
+- `PairedDevice` `{deviceId, name, platform, pairedAt, lastSeenAt, tokenHash, revoked}`
+- `PairedDeviceView` — `PairedDevice` without `tokenHash`
+- `PairingCode` `{code, expiresAt, url}` — `code` is 8 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ`
+- `HostingSettings` `{enabled: false, bind: "tailscale", port: 4317, tailscaleServe: false}`
+- `PairRequest` `{code, device: DeviceInfo}`, `PairResponse` `{token, host: DeviceInfo}`
+- `TailscaleStatus` `{installed, running, hostName, ips}`
+- `SyncCategories` `{files: true, threads: true, settings: true, themes: true, ignoredFiles: false}`
+- `SyncRetention` `{keepDays: 30, keepMin: 50}`
+- `SyncSettings` `{enabled: false, categories, intervalSec: 30 (5–3600), retention, peers: [], projectMap: {}}`
+- `SnapshotKind` `files | thread | settings | themes`
+- `SnapshotReason` `interval | turn | before-apply | manual | revert | incoming`
+- `SnapshotSummary` `{filesChanged, insertions, deletions}`
+- `Snapshot` `{id, kind, projectId, threadId, deviceId, reason, createdAt, summary, parentId}` —
+  `id` is the shadow commit sha or a uuid. `sync.snapshots.create`'s `label` is not a field;
+  the sync engine puts it in the commit message.
+- `SyncPeerStatus` `{deviceId, name, state: idle|syncing|offline|error, lastSyncAt, error}`
+- `SyncConflict` `{id, projectId, peerDeviceId, mine, theirs, base, paths, createdAt}`
+- `ConflictResolution` `mine | theirs | both` — `both` keeps theirs as files with a `.theirs` suffix
+- `SyncStatus` `{enabled, peers, conflicts}`
+- `ProjectScript` `{id, name, command, icon?, runOnWorktreeCreate: false, previewUrl?}`
+- `ProjectSettings` `{scripts: [], worktreeSetup?, defaultPreviewUrl?}` — `previewUrl` may contain `${PORT}`
+- `TerminalSize` `{cols, rows}`
+- `TerminalInfo` `{sessionId, title, cwd, shell, pty, createdAt, exited, projectId, scriptId}` —
+  `pty: false` is the pipe fallback
+- `PullRequest` `{url, number, state: open|merged|closed, branch}`
+- `ThreadMovedTo` `{deviceId, at}`, `ThreadMovedFrom` `{deviceId, threadId}`
+
+`Project.settings` is `ProjectSettings` (default `{scripts: []}`).
+
+`Thread` adds `ownerDeviceId` (`null` means this device), `movedTo`, `movedFrom`, and
+`pullRequest`, each defaulting to `null`.
+
+`DeviceSettings` adds `deviceName?`, `hosting`, `sync`, and `environments` (default `[]`).
+`DeviceSettingsPatch` still keeps only the keys that were sent. A patch of `{sync: {enabled: true}}`
+does not include `hosting` or `environments`. Nested objects are still parsed by their own
+schema, so omitted keys inside `sync` take `SyncSettings` defaults and the saved `sync` object
+is replaced as a whole, the same way `failover` already works.
+
+`TerminalPush.kind` gains `replay`. `data` is the buffered scrollback.
+
+### Commands
+
+Each carries `commandId`.
+
+- `project.configure` `{projectId, settings}` → `project.configured` `{projectId, settings}`
+- `thread.release` `{threadId, toDeviceId, force?}` → `thread.released` `{threadId, toDeviceId}`
+  The release time is the event's `at`. The reducer sets `movedTo` to `{deviceId: toDeviceId, at}`.
+- `thread.import` `{sourceDeviceId, sourceThreadId, projectId, title, provider, model, transcript, turnsJson?}`
+  → `thread.imported` `{thread, sourceDeviceId, sourceThreadId, transcript, turnsJson?}`
+  The reducer creates that thread with `movedFrom` set from the source fields and an empty turn
+  list. `turnsJson` stays on the event; it is not folded into the read model.
+
+### Events
+
+- `thread.prLinked` `{threadId, pullRequest}` — internal, emitted by the git effect. `pullRequest`
+  may be null to clear it.
+
+### RPCs
+
+Params → result.
+
+- `device.info` `{}` → `DeviceInfo`
+- `device.rename` `{name}` → `DeviceInfo`
+- `remote.tailscaleStatus` `{}` → `TailscaleStatus`
+- `remote.pairingCode.create` `{}` → `PairingCode`
+- `remote.devices.list` `{}` → `PairedDeviceView[]`
+- `remote.devices.revoke` `{deviceId}` → `{ok: true}`
+- `remote.devices.rename` `{deviceId, name}` → `PairedDeviceView`
+- `sync.status` `{}` → `SyncStatus`
+- `sync.now` `{projectId?}` → `{ok: true}`
+- `sync.snapshots.list` `{kind?, projectId?, threadId?, limit?, before?}` → `Snapshot[]`
+- `sync.snapshots.diff` `{snapshotId, against?: snapshotId | "working"}` → same result as `git.diff`
+- `sync.snapshots.restore` `{snapshotId, paths?}` → `{backupSnapshotId}`
+- `sync.snapshots.create` `{projectId, label?}` → `Snapshot`
+- `sync.conflicts.resolve` `{conflictId, resolution}` → `{ok: true}`
+- `terminal.list` `{}` → `TerminalInfo[]`
+- `terminal.attach` `{sessionId}` → `TerminalInfo` (the server then pushes `replay`)
+- `terminal.open` keeps `cwd`, `cols`, `rows`, and adds optional `projectId`, `scriptId`, `size`.
+  The result is `TerminalInfo` plus optional `lineEnding` (`"\n"` | `"\r\n"`).
+- `scripts.run` `{projectId, scriptId, threadId?}` → `TerminalInfo`
+- `git.status` `{threadId}` → `{branch, upstream, ahead, behind, dirty, hasRemote, ghAvailable, ghAuthed}`
+- `git.commit` `{threadId, message}` → `{sha}`
+- `git.push` `{threadId, setUpstream?}` → `{ok: true, remoteUrl}`
+- `git.pr.create` `{threadId, title, body, base?, draft?}` → `{url, number}`
+- `git.pr.status` `{threadId}` → `Thread["pullRequest"]`
+
+### Pushes
+
+`SyncPush` joins the websocket push union:
+
+- `{push: "sync", kind: "status", enabled, peers, conflicts}`
+- `{push: "sync", kind: "snapshot", snapshot}`
+- `{push: "sync", kind: "conflict", conflict}`
+
+## Stations
+
+- S0 contracts, domain, this doc
+- W1 Windows: process-tree kill, Windows CI, fix Windows test failures
+- A1 server: device identity, hosting bind, pairing + token auth, Tailscale detection, `wooky pair`
+- A2 server: sync engine (shadow repos, snapshots, bundles, apply, conflicts, retention, restore)
+- A3 server: thread replicas + claim/release/import, settings/themes sync
+- A4 web: environments switcher, pairing UI, Settings → Anywhere (hosting, sync categories, peers), snapshot history + diff + restore, conflict cards, phone layout + PWA manifest
+- I1 installer: release bundle, install.sh, install.ps1, proxmox.sh, services, `wooky update|uninstall`
+- T1 PTY terminal (node-pty + @xterm/xterm, reattach, multiple tabs, pipe fallback)
+- G1 commit/push/PR (git service + gh CLI + web)
+- P1 project scripts + worktree setup + preview URL
+- M1 MCP server (`wooky mcp` stdio bridge)

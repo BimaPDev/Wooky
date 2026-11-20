@@ -26,7 +26,13 @@ export function testLog() {
     project(id: string, root: string) {
       return log.push({
         type: "project.added",
-        project: { id, name: id, root, createdAt: "2026-01-01T00:00:00.000Z" },
+        project: {
+          id,
+          name: id,
+          root,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          settings: { scripts: [] },
+        },
       });
     },
     thread(id: string, projectId: string, extra: Partial<Thread> = {}) {
@@ -41,6 +47,10 @@ export function testLog() {
           runtimeMode: "approve",
           worktree: null,
           providerSessionId: null,
+          ownerDeviceId: null,
+          movedTo: null,
+          movedFrom: null,
+          pullRequest: null,
           queue: [],
           status: "idle",
           createdAt: "2026-01-01T00:00:00.000Z",

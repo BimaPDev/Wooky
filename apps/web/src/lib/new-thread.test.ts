@@ -18,6 +18,7 @@ const project = (id: string, name: string, scratch?: true) => ({
   name,
   root: `/work/${id}`,
   createdAt: at,
+  settings: { scripts: [] },
   ...(scratch ? { scratch } : {}),
 });
 const projects = {

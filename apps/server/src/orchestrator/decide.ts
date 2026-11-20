@@ -167,6 +167,12 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
       return wrapFleet(command, decideReviewRemoveNote(model, command, ctx));
     case "review.send":
       return wrapFleet(command, decideReviewSend(model, command, ctx));
+    case "project.configure":
+      throw new Error("not implemented");
+    case "thread.release":
+      throw new Error("not implemented");
+    case "thread.import":
+      throw new Error("not implemented");
   }
 }
 
@@ -217,6 +223,7 @@ function addProject(
         name,
         root,
         createdAt: ctx.now(),
+        settings: { scripts: [] },
         ...(command.scratch ? { scratch: true } : {}),
       },
     },
@@ -274,6 +281,10 @@ function createThread(
           ...(command.fastMode !== undefined ? { fastMode: command.fastMode } : {}),
           ...(command.ultracode !== undefined ? { ultracode: command.ultracode } : {}),
           providerSessionId: null,
+          ownerDeviceId: null,
+          movedTo: null,
+          movedFrom: null,
+          pullRequest: null,
           queue: [],
           status: "idle",
           createdAt: now,

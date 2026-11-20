@@ -51,7 +51,23 @@ type LegacyModel = { threads: Record<string, object> } & Record<string, unknown>
 /** Shape gaps an old snapshot has relative to the current ReadModel decoder. */
 function withLegacyDefaults(model: LegacyModel) {
   const threads = Object.fromEntries(
-    Object.entries(model.threads).map(([id, thread]) => [id, { ...thread, queue: [] }]),
+    Object.entries(model.threads).map(([id, thread]) => [
+      id,
+      {
+        ...thread,
+        queue: [],
+        ownerDeviceId: null,
+        movedTo: null,
+        movedFrom: null,
+        pullRequest: null,
+      },
+    ]),
   );
-  return { ...model, threads, cooldowns: {}, groups: {}, reviewNotes: {} };
+  const projects = Object.fromEntries(
+    Object.entries(model.projects as Record<string, object>).map(([id, project]) => [
+      id,
+      { ...project, settings: { scripts: [] } },
+    ]),
+  );
+  return { ...model, projects, threads, cooldowns: {}, groups: {}, reviewNotes: {} };
 }

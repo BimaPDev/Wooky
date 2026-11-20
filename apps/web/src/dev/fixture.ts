@@ -38,6 +38,10 @@ const thread = (fields: Partial<Thread> & Pick<Thread, "id" | "projectId" | "tit
   runtimeMode: "approve",
   worktree: null,
   providerSessionId: null,
+  ownerDeviceId: null,
+  movedTo: null,
+  movedFrom: null,
+  pullRequest: null,
   queue: [],
   status: "idle",
   createdAt: ago(600),
@@ -124,8 +128,20 @@ The fix is to await \`warmCache()\` before the server starts listening. I'm now`
 export const fixtureModel: ReadModel = {
   seq: 42,
   projects: {
-    p1: { id: "p1", name: "orders-api", root: "/Users/demo/code/orders-api", createdAt: ago(900) },
-    p2: { id: "p2", name: "marketing-site", root: "/Users/demo/code/site", createdAt: ago(800) },
+    p1: {
+      id: "p1",
+      name: "orders-api",
+      root: "/Users/demo/code/orders-api",
+      createdAt: ago(900),
+      settings: { scripts: [] },
+    },
+    p2: {
+      id: "p2",
+      name: "marketing-site",
+      root: "/Users/demo/code/site",
+      createdAt: ago(800),
+      settings: { scripts: [] },
+    },
   },
   threads: {
     t1: thread({
@@ -1423,6 +1439,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
             root: "/Users/demo/.wooky/scratch",
             createdAt: new Date().toISOString(),
             scratch: true,
+            settings: { scripts: [] },
           },
         },
       ]);

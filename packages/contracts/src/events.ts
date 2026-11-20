@@ -10,6 +10,7 @@ import {
   MergeState,
   Project,
   ProviderKind,
+  PullRequest,
   QuestionAnswers,
   QueuedPrompt,
   ReviewNote,
@@ -22,6 +23,8 @@ import {
   UserQuestion,
   Worktree,
 } from "./model.ts";
+import { DeviceId } from "./remote.ts";
+import { ProjectSettings } from "./scripts.ts";
 
 /**
  * Events are the durable record of decisions. Projections (the read model) are
@@ -39,6 +42,12 @@ const meta = {
 export const AgeEvent = z.discriminatedUnion("type", [
   z.object({ ...meta, type: z.literal("project.added"), project: Project }),
   z.object({ ...meta, type: z.literal("project.removed"), projectId: Id }),
+  z.object({
+    ...meta,
+    type: z.literal("project.configured"),
+    projectId: Id,
+    settings: ProjectSettings,
+  }),
   z.object({ ...meta, type: z.literal("thread.created"), thread: Thread }),
   z.object({ ...meta, type: z.literal("thread.renamed"), threadId: Id, title: z.string() }),
   z.object({ ...meta, type: z.literal("thread.removed"), threadId: Id }),
@@ -242,6 +251,33 @@ export const AgeEvent = z.discriminatedUnion("type", [
     type: z.literal("thread.worktreeFailed"),
     threadId: Id,
     message: z.string().min(1),
+  }),
+  /** The owner gave the thread away. `movedTo.at` is this event's `at`. */
+  z.object({
+    ...meta,
+    type: z.literal("thread.released"),
+    threadId: Id,
+    toDeviceId: DeviceId,
+  }),
+  /**
+   * A local thread created from a peer. The reducer sets `movedFrom` from the source
+   * fields. `transcript` and `turnsJson` stay on the event for the claim effect.
+   */
+  z.object({
+    ...meta,
+    type: z.literal("thread.imported"),
+    thread: Thread,
+    sourceDeviceId: DeviceId,
+    sourceThreadId: Id,
+    transcript: z.string(),
+    turnsJson: z.unknown().optional(),
+  }),
+  /** The git effect recorded a pull request for this thread. Null clears it. */
+  z.object({
+    ...meta,
+    type: z.literal("thread.prLinked"),
+    threadId: Id,
+    pullRequest: PullRequest.nullable(),
   }),
 ]);
 export type AgeEvent = z.infer<typeof AgeEvent>;
