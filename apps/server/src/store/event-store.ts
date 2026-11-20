@@ -22,6 +22,10 @@ export interface EventStore {
   markEffect(id: number, status: "done" | "retired"): void;
   /** Effects a previous process committed but never finished, oldest first. */
   pendingEffects(): StoredEffect[];
+  /** Append replica events from a peer owner (ignores duplicate owner/seq). */
+  appendReplicaEvents(ownerDeviceId: string, events: readonly AgeEvent[]): number;
+  replicaEventsAfter(ownerDeviceId: string, since: number): AgeEvent[];
+  replicaHighWater(ownerDeviceId: string): number;
   subscribe(listener: Listener): () => void;
   close(): void;
 }
@@ -58,6 +62,12 @@ export function openEventStore(home: string, clock: () => string): EventStore {
       payload TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('pending', 'done', 'retired'))
     );
+    CREATE TABLE IF NOT EXISTS replica_events (
+      owner_device_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      event_json TEXT NOT NULL,
+      PRIMARY KEY (owner_device_id, seq)
+    );
   `);
 
   const insertEvent = db.prepare(
@@ -74,6 +84,15 @@ export function openEventStore(home: string, clock: () => string): EventStore {
   const updateEffect = db.prepare("UPDATE effects SET status = ? WHERE id = ?");
   const selectPending = db.prepare(
     "SELECT id, payload FROM effects WHERE status = 'pending' ORDER BY id",
+  );
+  const insertReplica = db.prepare(
+    "INSERT OR IGNORE INTO replica_events (owner_device_id, seq, event_json) VALUES (?, ?, ?)",
+  );
+  const selectReplicaAfter = db.prepare(
+    "SELECT seq, event_json FROM replica_events WHERE owner_device_id = ? AND seq > ? ORDER BY seq",
+  );
+  const selectReplicaHighWater = db.prepare(
+    "SELECT MAX(seq) AS maxSeq FROM replica_events WHERE owner_device_id = ?",
   );
 
   const decode = (row: EventRow): AgeEvent => {
@@ -171,6 +190,33 @@ export function openEventStore(home: string, clock: () => string): EventStore {
     pendingEffects() {
       const rows = selectPending.all() as unknown as { id: number; payload: string }[];
       return rows.map((row) => ({ ...(JSON.parse(row.payload) as Effect), id: row.id }));
+    },
+    appendReplicaEvents(ownerDeviceId, events) {
+      let added = 0;
+      transaction(() => {
+        for (const event of events) {
+          const { changes } = insertReplica.run(ownerDeviceId, event.seq, JSON.stringify(event));
+          if (changes) added += 1;
+        }
+      });
+      return added;
+    },
+    replicaEventsAfter(ownerDeviceId, since) {
+      const rows = selectReplicaAfter.all(ownerDeviceId, since) as {
+        seq: number;
+        event_json: string;
+      }[];
+      return rows.map((row) => {
+        const parsed = AgeEvent.safeParse({ ...JSON.parse(row.event_json), seq: row.seq });
+        if (!parsed.success)
+          throw new Error(`Replica event ${ownerDeviceId}/${row.seq} does not decode`);
+        return parsed.data;
+      });
+    },
+    replicaHighWater(ownerDeviceId) {
+      const row = selectReplicaHighWater.get(ownerDeviceId) as
+        { maxSeq: number | null } | undefined;
+      return row?.maxSeq ?? 0;
     },
     subscribe(listener) {
       listeners.add(listener);
