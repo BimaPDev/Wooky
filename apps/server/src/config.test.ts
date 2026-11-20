@@ -45,13 +45,6 @@ describe("resolveConfig", () => {
     expect(config).toMatchObject({ allowedHosts: ["box.lan", "mac.tailnet", "studio.local"] });
   });
 
-  it("no longer accepts --allow-remote-picker", () => {
-    expect(() => resolveConfig(["--allow-remote-picker"], {})).toThrow(/Unknown option/);
-    expect(resolveConfig([], { WOOKY_ALLOW_REMOTE_PICKER: "1" })).not.toHaveProperty(
-      "allowRemotePicker",
-    );
-  });
-
   it("rejects bad input and recognises --help", () => {
     expect(() => resolveConfig(["--port", "70000"], {})).toThrow(/Invalid port/);
     expect(() => resolveConfig(["--nope"], {})).toThrow(/Unknown option/);

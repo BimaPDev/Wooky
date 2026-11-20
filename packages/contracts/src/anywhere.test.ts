@@ -15,7 +15,7 @@ import {
   RemoteConnection,
   TailscaleStatus,
 } from "./remote.ts";
-import { RpcMethods, RpcPush } from "./rpc.ts";
+import { RpcError, RpcMethods, RpcPush, ServerMessage } from "./rpc.ts";
 import { ProjectScript, ProjectSettings } from "./scripts.ts";
 import {
   ConflictResolution,
@@ -207,6 +207,15 @@ describe("remote contracts", () => {
         ips: ["100.64.0.1"],
       }).ips,
     ).toEqual(["100.64.0.1"]);
+    expect(
+      TailscaleStatus.parse({
+        installed: true,
+        running: true,
+        hostName: null,
+        ips: [],
+        serveError: "serve is unavailable",
+      }).serveError,
+    ).toBe("serve is unavailable");
 
     const env = Environment.parse({
       id: "home",
@@ -468,5 +477,15 @@ describe("terminal, commands, events, and rpc", () => {
         token: "tok",
       }).wsUrl,
     ).toBe("ws://127.0.0.1:4317/ws");
+  });
+
+  it("parses a forbidden rpc error as a normal wire error", () => {
+    expect(RpcError.parse({ code: "forbidden", message: "Loopback only." })).toEqual({
+      code: "forbidden",
+      message: "Loopback only.",
+    });
+    expect(
+      ServerMessage.parse({ id: 1, ok: false, error: { code: "forbidden", message: "Denied." } }),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
   });
 });
