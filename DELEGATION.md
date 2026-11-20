@@ -44,6 +44,7 @@ agents on different models and harnesses). The method:
 | 19   | Anywhere M1: `wooky mcp` stdio bridge            | Grok 4.7 (Cursor)                                    | Composer 2.5 (Cursor)                | merged, 9 review fixes applied (no full mode by default)        | demo e2e via MCP transcript         |
 | 20   | Anywhere I1: one-command installer               | Gemini 4 Neon (quota) → Composer 2.5 (Cursor)        | Grok 4.7 (Cursor)                    | merged, 14 review fixes applied                                 | local install 0.0.1→0.0.4, dry-runs |
 | 21   | Anywhere T1: real PTY terminal (node-pty, xterm) | Grok 4.6 (Cursor)                                    | Composer 2.5 (Cursor)                | merged, 10 review fixes applied                                 | replay with ANSI, env-leak test     |
+| 22   | Theme: 9 pixel-tile wallpaper themes             | Sonnet 5.5                                           | head chef (PNG review)               | merged                                                          | sanitizer unchanged, budget tests   |
 
 Open items: the 19 server tests that fail on Windows (CRLF, path separators, POSIX
 signals) are unverified, because nobody has run them on Windows yet. A thrown effect is
