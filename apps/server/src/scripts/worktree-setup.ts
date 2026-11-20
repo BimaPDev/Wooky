@@ -1,4 +1,4 @@
-import type { ProjectSettings, ReadModel, Worktree } from "@wooky/contracts";
+import type { PendingEvent, ProjectSettings, ReadModel, Worktree } from "@wooky/contracts";
 import type { EventStore } from "../store/event-store.ts";
 import type { TerminalManager, TerminalSubscriber } from "../terminal/session.ts";
 import { resolveShellCommand } from "../terminal/shell.ts";
@@ -63,7 +63,8 @@ export async function setupWorktree(input: WorktreeSetupInput): Promise<ApplySha
           cwd: input.worktree.path,
           projectId: project?.id ?? null,
           scriptId: job.scriptId,
-          title: setupScriptTitle(job),
+          // The bare setup command is already called "Setup"; only scripts take the prefix.
+          title: job.scriptId ? setupScriptTitle(job) : job.name,
           commandArgv: scriptArgv(shell, job.command, platform),
         },
         silentTerminalSink,
@@ -93,17 +94,44 @@ export function formatSetupNotice(
   return bits.length > 0 ? `Setting up worktree: ${bits.join("; ")}` : "Setting up worktree";
 }
 
+/**
+ * Setup runs when the worktree is bound, which is before the thread has any turn. A notice with
+ * no turn has nowhere to live, so it waits for the thread's first turn.
+ */
+const heldNotices = new Map<string, string[]>();
+
+function setupNoticeEvent(input: WorktreeSetupInput, turnId: string, text: string): PendingEvent {
+  return {
+    type: "turn.itemUpserted",
+    commandId: null,
+    threadId: input.threadId,
+    turnId,
+    item: { kind: "notice", id: input.newId("notice"), text },
+  };
+}
+
 function recordSetupNotice(input: WorktreeSetupInput, text: string) {
   const turns = input.store.model.turns[input.threadId] ?? [];
   const turn = turns.find((item) => item.status === "running") ?? turns.at(-1);
-  if (!turn) return;
-  input.store.appendInternal([
-    {
-      type: "turn.itemUpserted",
-      commandId: null,
-      threadId: input.threadId,
-      turnId: turn.id,
-      item: { kind: "notice", id: input.newId("notice"), text },
-    },
-  ]);
+  if (turn) {
+    input.store.appendInternal([setupNoticeEvent(input, turn.id, text)]);
+    return;
+  }
+  const held = heldNotices.get(input.threadId) ?? [];
+  held.push(text);
+  heldNotices.set(input.threadId, held);
+  const unsubscribe = input.store.subscribe((events) => {
+    const started = events.find(
+      (event) => event.type === "turn.started" && event.threadId === input.threadId,
+    );
+    if (!started || started.type !== "turn.started") return;
+    unsubscribe();
+    const pending = heldNotices.get(input.threadId) ?? [];
+    heldNotices.delete(input.threadId);
+    if (pending.length > 0) {
+      input.store.appendInternal(
+        pending.map((heldText) => setupNoticeEvent(input, started.turnId, heldText)),
+      );
+    }
+  });
 }

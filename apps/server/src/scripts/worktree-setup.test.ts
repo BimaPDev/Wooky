@@ -116,7 +116,14 @@ describe("worktree setup hook", () => {
         type: "project.configure",
         projectId: project.id,
         settings: {
-          scripts: [],
+          scripts: [
+            {
+              id: "install",
+              name: "Install",
+              command: "echo installed",
+              runOnWorktreeCreate: true,
+            },
+          ],
           sharedPaths: [{ path: ".env", mode: "link" }],
           worktreeSetup: "echo setup-done",
           prompts: [],
@@ -148,13 +155,28 @@ describe("worktree setup hook", () => {
       expect((await lstat(envLink)).isSymbolicLink()).toBe(true);
 
       let setup: TerminalInfo | undefined;
+      let scriptSetup: TerminalInfo | undefined;
       for (let i = 0; i < 200; i += 1) {
         const listed = await client.call<TerminalInfo[]>("terminal.list");
-        setup = listed.find((session) => session.title.startsWith("Setup:"));
-        if (setup) break;
+        setup = listed.find((session) => session.title === "Setup");
+        scriptSetup = listed.find((session) => session.title === "Setup: Install");
+        if (setup && scriptSetup) break;
         await client.call("providers.list");
       }
-      expect(setup?.title).toMatch(/^Setup:/);
+      expect(setup?.title).toBe("Setup");
+      expect(scriptSetup?.title).toBe("Setup: Install");
+
+      // The notice has no turn to live on until the first turn starts.
+      await client.dispatch({ type: "turn.start", threadId, prompt: "Say ok" });
+      const notice = await client.next(
+        "turn.itemUpserted",
+        (event) => event.threadId === threadId && event.item.kind === "notice",
+      );
+      expect(notice.item).toMatchObject({
+        kind: "notice",
+        text: expect.stringMatching(/^Setting up worktree: linked \.env; running Setup, Install$/),
+      });
+      await client.next("turn.finished", (event) => event.threadId === threadId);
     },
   );
 });
