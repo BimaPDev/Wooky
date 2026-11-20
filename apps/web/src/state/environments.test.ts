@@ -13,6 +13,7 @@ import {
   noteConnectionStatus,
   probeEnvironments,
   switchEnvironment,
+  currentEnvironments,
 } from "./environments.ts";
 import { useStore } from "./store.ts";
 
@@ -119,5 +120,46 @@ describe("environments", () => {
     await switchEnvironment("env-home");
     await switchEnvironment("env-lab");
     expect(reconnects.at(-1)).toEqual({ url: "ws://env-lab/ws", token: "token-env-lab" });
+  });
+
+  it("restores local device settings after switching back from a remote", async () => {
+    const { calls } = setup((method, params) => {
+      if (method === "remote.connectInfo")
+        return info((params as { environmentId: string }).environmentId);
+      if (method === "settings.get") return { colorMode: "dark", environments: [home] };
+      return undefined;
+    });
+    const local = { colorMode: "light", environments: [home, lab] } as DeviceSettings;
+    useStore.setState({ deviceSettings: local });
+    await switchEnvironment("env-home");
+    await switchEnvironment("local");
+    expect(calls).toContain("settings.get");
+  });
+
+  it("keeps local environments while remote", async () => {
+    setup((method, params) =>
+      method === "remote.connectInfo"
+        ? info((params as { environmentId: string }).environmentId)
+        : undefined,
+    );
+    const localEnvs = [home, lab];
+    useStore.setState({ deviceSettings: { environments: localEnvs } as DeviceSettings });
+    await switchEnvironment("env-home");
+    expect(currentEnvironments()).toEqual(localEnvs);
+  });
+
+  it("sends a sync patch from local values after switching back", async () => {
+    const { calls } = setup((method, params) => {
+      if (method === "remote.connectInfo")
+        return info((params as { environmentId: string }).environmentId);
+      if (method === "settings.get") return { environments: [home, lab], sync: { enabled: false } };
+      if (method === "settings.put") return params && (params as { settings: unknown }).settings;
+      return undefined;
+    });
+    await switchEnvironment("env-home");
+    await switchEnvironment("local");
+    const { putSettings } = await import("./environments.ts");
+    await putSettings({ sync: { enabled: true } });
+    expect(calls).toContain("settings.put");
   });
 });

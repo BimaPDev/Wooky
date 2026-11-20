@@ -91,6 +91,10 @@ export function useEnvironments(): Environment[] {
   );
 }
 
+export function currentEnvironments(): Environment[] {
+  return snapshot.session.remote ? snapshot.localEnvironments : snapshot.environments;
+}
+
 export function useDeviceInfo(): DeviceInfo | null {
   return useSyncExternalStore(subscribe, () => snapshot.device);
 }
