@@ -322,6 +322,45 @@ describe("remote auth", () => {
     expect(calls).toEqual([`serve ${port}`, "off"]);
   });
 
+  it("turns Tailscale Serve off when the server closes", async () => {
+    const { calls, tailscale } = fakeTailscale();
+    const server = await boot({ tailscale });
+    const local = await rpc(server);
+    const enabled = await local.call("settings.put", {
+      settings: { hosting: { enabled: true, tailscaleServe: true } },
+    });
+    expect(enabled.ok).toBe(true);
+    const port = server.servePort();
+    expect(port).not.toBeNull();
+    expect(calls).toEqual([`serve ${port}`]);
+
+    await server.close();
+    expect(calls).toEqual([`serve ${port}`, "off"]);
+    expect(server.servePort()).toBeNull();
+  });
+
+  it("does not hang shutdown when Tailscale Serve cannot be turned off", async () => {
+    const tailscale: Tailscale = {
+      ...fakeTailscale().tailscale,
+      serveOff: async () => {
+        throw new Error("tailscale down");
+      },
+    };
+    const server = await boot({ tailscale });
+    const local = await rpc(server);
+    expect(
+      (
+        await local.call("settings.put", {
+          settings: { hosting: { enabled: true, tailscaleServe: true } },
+        })
+      ).ok,
+    ).toBe(true);
+    expect(server.servePort()).not.toBeNull();
+
+    await expect(server.close()).resolves.toBeUndefined();
+    expect(server.servePort()).toBeNull();
+  });
+
   it("closes the socket when the token is revoked and still checks Origin on loopback", async () => {
     const server = await boot();
     const token = await pair(server);

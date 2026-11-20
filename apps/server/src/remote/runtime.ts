@@ -17,6 +17,7 @@ export interface RemoteRuntime {
   pairing: ReturnType<typeof createPairing>;
   peers: PeerDirectory & Pick<ReturnType<typeof createPeers>, "join" | "connectInfo" | "retain">;
   tailscaleStatus(): Promise<TailscaleReport>;
+  disableServe(): Promise<void>;
   track(deviceId: string, socket: import("ws").WebSocket): void;
   onSettings(
     before: DeviceSettings,
@@ -101,8 +102,11 @@ export function createRemoteRuntime(options: {
   }
 
   async function disableServe(): Promise<void> {
-    await tailscale.serveOff();
-    await bind.closeServe();
+    try {
+      await tailscale.serveOff();
+    } finally {
+      await bind.closeServe();
+    }
   }
 
   async function syncServe(before: HostingSettings, after: HostingSettings): Promise<void> {
@@ -130,6 +134,7 @@ export function createRemoteRuntime(options: {
     pairing,
     peers,
     tailscaleStatus: () => tailscale.status(),
+    disableServe,
     track: (deviceId, socket) => auth.track(deviceId, socket),
     onSettings,
     async listen({ handler, onUpgrade }) {

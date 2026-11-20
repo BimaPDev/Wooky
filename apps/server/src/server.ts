@@ -27,13 +27,31 @@ import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
-import { createRemoteRuntime } from "./remote/runtime.ts";
+import { createRemoteRuntime, type RemoteRuntime } from "./remote/runtime.ts";
 import type { Tailscale } from "./remote/tailscale.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
 import { createLimitsService } from "./usage/limits.ts";
 import { setAgentTokenIssuer } from "./providers/agent-env.ts";
+
+const SERVE_OFF_TIMEOUT_MS = 3_000;
+
+async function stopServe(remote: RemoteRuntime): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      remote.disableServe(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SERVE_OFF_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.error("tailscale serve off failed", error);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export interface ServerOptions {
   home: string;
@@ -208,6 +226,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       // Stop new work first, then drain running turns while open sockets still get their
       // final events, and close the store last.
       closing ??= (async () => {
+        if (remote.servePort() !== null) await stopServe(remote);
         unpublish();
         stopShipPolling();
         dispatcher.close();
