@@ -27,6 +27,47 @@
   white-space: nowrap;
 }
 
+.terminal-tab.ended {
+  color: var(--text-4);
+}
+
+.terminal-tab.ended .terminal-tab-title {
+  opacity: 0.7;
+}
+
+.terminal-pipe-mode {
+  flex: none;
+  color: var(--text-4);
+  font-size: var(--text-xs);
+}
+
+.terminal-tab-restart {
+  flex: none;
+  height: 18px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.terminal-tab-restart:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.terminal-tab-restart:active {
+  background: var(--bg-active);
+}
+
+.terminal-tab-restart:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .terminal-tab-close {
   width: 18px;
   height: 18px;

@@ -14,11 +14,13 @@ export function XtermSession({
   active,
   pty,
   lineEnding,
+  onEnded,
 }: {
   sessionId: string;
   active: boolean;
   pty: boolean;
   lineEnding: "\n" | "\r\n";
+  onEnded?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -77,8 +79,18 @@ export function XtermSession({
         return;
       }
       if (message.kind === "data" && message.data) term.write(message.data);
+      if (message.kind === "exit" || message.kind === "error") {
+        const text =
+          message.data ??
+          (message.kind === "exit"
+            ? `\r\n[process exited with code ${message.code ?? 0}]\r\n`
+            : "");
+        if (text) term.write(text);
+        term.options.disableStdin = true;
+        onEnded?.();
+      }
     });
-  }, [sessionId]);
+  }, [sessionId, onEnded]);
 
   // sync: reattach so the server replays scrollback after mount and reconnect
   useEffect(() => {

@@ -2,6 +2,7 @@ import { chmodSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { IPty, IWindowsPtyForkOptions } from "node-pty";
+import { AGENT_INTERNAL_ENV_KEYS } from "../providers/agent-env.ts";
 
 export type PtyModule = {
   spawn: (file: string, args: string[], options: IWindowsPtyForkOptions) => IPty;
@@ -10,12 +11,22 @@ export type PtyModule = {
 export type PtyLoader = () => Promise<PtyModule>;
 
 let fallbackLogged = false;
+let spawnHelperChmodLogged = false;
 
 export function logPtyFallback(reason: unknown): void {
   if (fallbackLogged) return;
   fallbackLogged = true;
   const detail = reason instanceof Error ? reason.message : String(reason);
   console.warn(`node-pty unavailable; terminal sessions will use pipes. ${detail}`);
+}
+
+function isErrno(err: unknown, code: string): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as NodeJS.ErrnoException).code === code
+  );
 }
 
 function ensureSpawnHelperExecutable() {
@@ -27,7 +38,20 @@ function ensureSpawnHelperExecutable() {
       join(root, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
       join(root, "build", "Release", "spawn-helper"),
     ]) {
-      if (existsSync(candidate)) chmodSync(candidate, 0o755);
+      if (!existsSync(candidate)) continue;
+      try {
+        chmodSync(candidate, 0o755);
+      } catch (err) {
+        if (isErrno(err, "EACCES") || isErrno(err, "EROFS")) {
+          if (!spawnHelperChmodLogged) {
+            spawnHelperChmodLogged = true;
+            const detail = err instanceof Error ? err.message : String(err);
+            console.warn(`Could not chmod node-pty spawn-helper (${candidate}). ${detail}`);
+          }
+          continue;
+        }
+        throw err;
+      }
     }
   } catch {
     // spawn may still fail; the session layer falls back to pipes
@@ -42,10 +66,18 @@ export async function loadNodePty(): Promise<PtyModule> {
   return { spawn };
 }
 
+const AGENT_INTERNAL = new Set<string>(AGENT_INTERNAL_ENV_KEYS);
+
 export function terminalEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(base)) {
-    if (value !== undefined) env[key] = value;
+    if (value === undefined) continue;
+    if (key === "WOOKY_HOME") {
+      env[key] = value;
+      continue;
+    }
+    if (key.startsWith("WOOKY_") || AGENT_INTERNAL.has(key)) continue;
+    env[key] = value;
   }
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";

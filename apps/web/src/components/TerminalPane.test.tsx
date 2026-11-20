@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setBackend } from "../state/backend.ts";
 import { useStore } from "../state/store.ts";
+import { receiveTerminal } from "../state/terminal.ts";
 import { TerminalPane, terminalLine } from "./TerminalPane.tsx";
 
 vi.mock("./terminal/xterm-styles.ts", () => ({ xtermStyles: true }));
@@ -16,7 +17,12 @@ vi.mock("@xterm/xterm", () => {
   class MockTerminal {
     cols = 80;
     rows = 24;
-    options: { theme?: unknown; fontFamily?: string; fontSize?: number } = {};
+    options: {
+      theme?: unknown;
+      fontFamily?: string;
+      fontSize?: number;
+      disableStdin?: boolean;
+    } = {};
     open() {}
     loadAddon() {}
     write() {}
@@ -209,5 +215,50 @@ describe("TerminalPane", () => {
     const tabs = [...(host?.querySelectorAll('[role="tab"]') ?? [])];
     expect(tabs.map((tab) => tab.textContent)).toEqual(["zsh", "dev", "bash"]);
     expect(calls.some((call) => call.method === "terminal.open")).toBe(true);
+  });
+
+  it("writes an exit notice, dims the tab, and restarts with the same cwd and script", async () => {
+    renderPane();
+    await flush();
+    const closesBefore = calls.filter((call) => call.method === "terminal.close").length;
+    await act(async () => {
+      receiveTerminal({
+        push: "terminal",
+        sessionId: "term_b",
+        kind: "exit",
+        code: 1,
+        data: "\r\n[process exited with code 1]\r\n",
+      });
+    });
+    const ended = host?.querySelector(".terminal-tab.ended");
+    expect(ended).not.toBeNull();
+    expect(ended?.textContent).toContain("Restart");
+    expect(host?.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(calls.filter((call) => call.method === "terminal.close")).toHaveLength(closesBefore);
+    const restart = host?.querySelector('[aria-label="Restart dev"]');
+    if (!(restart instanceof HTMLButtonElement)) throw new Error("missing restart");
+    await act(async () => {
+      restart.click();
+      await Promise.resolve();
+    });
+    const opened = calls.filter((call) => call.method === "terminal.open");
+    expect(opened.at(-1)?.params).toEqual({
+      cwd: "/work",
+      projectId: "p1",
+      scriptId: "dev",
+    });
+  });
+
+  it("labels a pipe-mode tab", async () => {
+    const listed = sessions[0];
+    if (!listed) throw new Error("missing listed session");
+    sessions[0] = { ...listed, pty: false };
+    try {
+      renderPane();
+      await flush();
+      expect(host?.textContent).toContain("pipe mode");
+    } finally {
+      sessions[0] = { ...listed, pty: true };
+    }
   });
 });

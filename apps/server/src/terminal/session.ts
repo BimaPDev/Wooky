@@ -2,7 +2,8 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { TerminalInfo, TerminalPush } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
-import { killTree, killTreeSync } from "../process/kill-tree.ts";
+import { isTreeAlive, killTree, killTreeSync } from "../process/kill-tree.ts";
+import { appendToRing, holdIncompleteEscape, splitOutputFrames } from "./frames.ts";
 import {
   loadNodePty,
   logPtyFallback,
@@ -50,18 +51,14 @@ export interface TerminalManagerOptions {
 }
 
 const MAX_SESSIONS = 16;
-const RING_BYTES = 256 * 1024;
-const FRAME_BYTES = 64 * 1024;
 const COALESCE_MS = 8;
 const PAUSE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
-const TERMINAL_KILL_GRACE_MS = 1_500;
-
-const killEscalationTimers = new WeakMap<
-  ChildProcessWithoutNullStreams,
-  ReturnType<typeof setTimeout>
->();
+/** Kill a running session after this long with zero subscribers. Settings can come later. */
+export const TERMINAL_DETACHED_KILL_MS = 24 * 60 * 60 * 1000;
+/** Drop an exited session from list/attach after this long. */
+export const TERMINAL_EXITED_DROP_MS = 10 * 60 * 1000;
 
 interface SessionBackend {
   pid: number | undefined;
@@ -90,6 +87,8 @@ interface Session {
   pending: string;
   coalesceTimer: ReturnType<typeof setTimeout> | undefined;
   drainTimer: ReturnType<typeof setTimeout> | undefined;
+  detachedTimer: ReturnType<typeof setTimeout> | undefined;
+  exitedTimer: ReturnType<typeof setTimeout> | undefined;
   paused: boolean;
 }
 
@@ -99,47 +98,13 @@ function childStillRunning(child: ChildProcessWithoutNullStreams): boolean {
 
 function stopPipe(child: ChildProcessWithoutNullStreams, sync = false) {
   const pid = child.pid;
-
-  const clearEscalation = () => {
-    const timer = killEscalationTimers.get(child);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      killEscalationTimers.delete(child);
-    }
-  };
-  child.once("exit", clearEscalation);
-
-  if (process.platform === "win32") {
-    if (pid === undefined || !childStillRunning(child)) return;
-    killTreeSync(pid, "SIGKILL", { mode: "tree" });
-    return;
-  }
-
-  if (!childStillRunning(child)) return;
-
-  const sendSignal = (signal: NodeJS.Signals) => {
-    if (!childStillRunning(child)) return;
-    try {
-      child.kill(signal);
-    } catch {
-      // already gone
-    }
-  };
-
-  sendSignal("SIGTERM");
-
-  if (sync) {
-    sendSignal("SIGKILL");
-    return;
-  }
-
-  const timer = setTimeout(() => sendSignal("SIGKILL"), TERMINAL_KILL_GRACE_MS);
-  timer.unref();
-  killEscalationTimers.set(child, timer);
+  if (pid === undefined || !childStillRunning(child)) return;
+  if (sync) killTreeSync(pid, "SIGKILL", { mode: "tree" });
+  else void killTree(pid, "SIGKILL", { mode: "tree" });
 }
 
-function stopPty(pid: number | undefined, killPty: () => void, sync: boolean) {
-  if (pid !== undefined) {
+function stopPty(pid: number | undefined, killPty: () => void, sync: boolean, exited: boolean) {
+  if (!exited && pid !== undefined && isTreeAlive(pid)) {
     if (sync) killTreeSync(pid, "SIGKILL", { mode: "tree" });
     else void killTree(pid, "SIGKILL", { mode: "tree" });
   }
@@ -151,19 +116,7 @@ function stopPty(pid: number | undefined, killPty: () => void, sync: boolean) {
 }
 
 function appendRing(session: Session, chunk: string) {
-  const next = Buffer.concat([session.ring, Buffer.from(chunk, "utf8")]);
-  session.ring =
-    next.length <= RING_BYTES ? next : Buffer.from(next.subarray(next.length - RING_BYTES));
-}
-
-function splitFrames(data: string): string[] {
-  const buf = Buffer.from(data, "utf8");
-  if (buf.length <= FRAME_BYTES) return [data];
-  const frames: string[] = [];
-  for (let offset = 0; offset < buf.length; offset += FRAME_BYTES) {
-    frames.push(buf.subarray(offset, offset + FRAME_BYTES).toString("utf8"));
-  }
-  return frames;
+  session.ring = appendToRing(session.ring, chunk);
 }
 
 function toInfo(session: Session): TerminalInfo {
@@ -248,15 +201,74 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     scheduleDrain(session);
   }
 
-  function flushPending(session: Session) {
-    if (session.coalesceTimer) {
-      clearTimeout(session.coalesceTimer);
-      session.coalesceTimer = undefined;
+  function clearTimer(slot: "coalesceTimer" | "drainTimer" | "detachedTimer" | "exitedTimer") {
+    return (session: Session) => {
+      const timer = session[slot];
+      if (!timer) return;
+      clearTimeout(timer);
+      session[slot] = undefined;
+    };
+  }
+
+  const clearCoalesce = clearTimer("coalesceTimer");
+  const clearDrain = clearTimer("drainTimer");
+  const clearDetached = clearTimer("detachedTimer");
+  const clearExited = clearTimer("exitedTimer");
+
+  function dropSession(session: Session) {
+    clearCoalesce(session);
+    clearDrain(session);
+    clearDetached(session);
+    clearExited(session);
+    sessions.delete(session.id);
+  }
+
+  function detachedCount() {
+    let count = 0;
+    for (const session of sessions.values()) {
+      if (!session.exited && session.subscribers.size === 0) count += 1;
     }
+    return count;
+  }
+
+  function reapExited() {
+    for (const session of [...sessions.values()]) {
+      if (session.exited) dropSession(session);
+    }
+  }
+
+  function scheduleDetachedKill(session: Session) {
+    clearDetached(session);
+    if (session.exited || session.subscribers.size > 0) return;
+    const timer = setTimeout(() => {
+      session.detachedTimer = undefined;
+      if (session.exited || session.subscribers.size > 0) return;
+      session.backend.kill(false);
+    }, TERMINAL_DETACHED_KILL_MS);
+    timer.unref();
+    session.detachedTimer = timer;
+  }
+
+  function scheduleExitedDrop(session: Session) {
+    clearExited(session);
+    const timer = setTimeout(() => {
+      session.exitedTimer = undefined;
+      dropSession(session);
+    }, TERMINAL_EXITED_DROP_MS);
+    timer.unref();
+    session.exitedTimer = timer;
+  }
+
+  function flushPending(session: Session, drainHeld = false) {
+    clearCoalesce(session);
     const pending = session.pending;
     if (!pending) return;
-    session.pending = "";
-    for (const data of splitFrames(pending)) {
+    const { ready, held } = drainHeld
+      ? { ready: pending, held: "" }
+      : holdIncompleteEscape(pending);
+    session.pending = held;
+    if (!ready) return;
+    for (const data of splitOutputFrames(ready)) {
       broadcast(session, { push: "terminal", sessionId: session.id, kind: "data", data });
     }
     applyFlowControl(session);
@@ -274,14 +286,16 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
 
   function finish(session: Session, code: number, data: string) {
     if (session.exited) return;
-    flushPending(session);
+    flushPending(session, true);
     session.exited = true;
-    if (session.drainTimer) {
-      clearTimeout(session.drainTimer);
-      session.drainTimer = undefined;
-    }
+    clearDrain(session);
+    clearDetached(session);
     broadcast(session, { push: "terminal", sessionId: session.id, kind: "exit", code, data });
-    if (session.closing || session.subscribers.size === 0) sessions.delete(session.id);
+    if (session.closing) {
+      dropSession(session);
+      return;
+    }
+    scheduleExitedDrop(session);
   }
 
   function pipeBackend(
@@ -351,7 +365,7 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
           kind: "error",
           data: message,
         });
-        sessions.delete(bound.session.id);
+        dropSession(bound.session);
       },
       (code, signal) => {
         if (!bound.session || !sessions.has(bound.session.id)) return;
@@ -395,7 +409,7 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
         proc.resume();
       },
       kill(sync) {
-        stopPty(proc.pid, () => proc.kill(), sync);
+        stopPty(proc.pid, () => proc.kill(), sync, bound.session?.exited === true);
       },
     };
     proc.onData((chunk) => {
@@ -447,6 +461,8 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
       pending: "",
       coalesceTimer: undefined,
       drainTimer: undefined,
+      detachedTimer: undefined,
+      exitedTimer: undefined,
       paused: false,
     };
     sessions.set(id, session);
@@ -457,8 +473,12 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     input: TerminalOpenInput,
     subscriber: TerminalSubscriber,
   ): Promise<TerminalOpenResult> {
+    if (sessions.size >= MAX_SESSIONS) reapExited();
     if (sessions.size >= MAX_SESSIONS) {
-      throw new ServiceError("conflict", `At most ${MAX_SESSIONS} terminal sessions.`);
+      throw new ServiceError(
+        "conflict",
+        `At most ${MAX_SESSIONS} terminal sessions (${detachedCount()} detached).`,
+      );
     }
     const shell = resolveShell();
     const cwd = defaultCwd(input.cwd);
@@ -488,6 +508,7 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
 
   function attach(sessionId: string, subscriber: TerminalSubscriber): TerminalInfo {
     const session = requireSession(sessionId);
+    clearDetached(session);
     session.subscribers.add(subscriber);
     const replay = session.ring.toString("utf8");
     subscriber.send({
@@ -503,13 +524,13 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     const session = sessions.get(sessionId);
     if (!session) return;
     session.subscribers.delete(subscriber);
-    if (session.exited && session.subscribers.size === 0) sessions.delete(session.id);
+    if (!session.exited && session.subscribers.size === 0) scheduleDetachedKill(session);
   }
 
   function detachSubscriber(subscriber: TerminalSubscriber) {
     for (const session of [...sessions.values()]) {
       if (!session.subscribers.delete(subscriber)) continue;
-      if (session.exited && session.subscribers.size === 0) sessions.delete(session.id);
+      if (!session.exited && session.subscribers.size === 0) scheduleDetachedKill(session);
     }
   }
 
@@ -535,7 +556,7 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     const session = sessions.get(sessionId);
     if (!session) return;
     if (session.exited) {
-      sessions.delete(sessionId);
+      dropSession(session);
       return;
     }
     session.closing = true;
@@ -545,10 +566,9 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
   function closeAll() {
     const sync = process.platform === "win32";
     for (const session of [...sessions.values()]) {
-      sessions.delete(session.id);
-      if (session.coalesceTimer) clearTimeout(session.coalesceTimer);
-      if (session.drainTimer) clearTimeout(session.drainTimer);
-      if (!session.exited) session.backend.kill(sync);
+      const exited = session.exited;
+      dropSession(session);
+      if (!exited) session.backend.kill(sync);
     }
   }
 

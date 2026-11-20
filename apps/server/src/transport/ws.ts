@@ -336,6 +336,7 @@ export function attachWebSocket(
         unsubscribe = services.store.subscribe(push);
         return history.length;
       },
+      // Disconnect detaches this socket; sessions belong to the server and keep running.
       trackTerminal(_sessionId) {},
       terminalSink: {
         send(message) {

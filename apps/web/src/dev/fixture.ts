@@ -21,6 +21,7 @@ import {
 } from "@wooky/contracts";
 import { applySettingsPatch, fleetRows } from "@wooky/domain";
 import { receiveEvent, useStore } from "../state/store.ts";
+import { receiveTerminal } from "../state/terminal.ts";
 import {
   looksLikeSvg,
   looksLikeT3code,
@@ -1543,8 +1544,38 @@ function respond(method: RpcMethod, params: unknown): unknown {
       fixtureSettings = { ...fixtureSettings, activeThemeId: id };
       return fixtureSettings;
     }
+    case "terminal.list":
+      return [];
+    case "terminal.attach": {
+      const sessionId = (params as RpcParams<"terminal.attach">).sessionId;
+      queueMicrotask(() => {
+        receiveTerminal({ push: "terminal", sessionId, kind: "replay", data: "" });
+      });
+      return {
+        sessionId,
+        title: "fixture",
+        cwd: "/tmp",
+        shell: "fixture",
+        pty: true,
+        createdAt: new Date().toISOString(),
+        exited: false,
+        projectId: null,
+        scriptId: null,
+      };
+    }
     case "terminal.open":
-      return { sessionId: "term_fixture", shell: "fixture" };
+      return {
+        sessionId: "term_fixture",
+        title: "fixture",
+        cwd: "/tmp",
+        shell: "fixture",
+        pty: true,
+        createdAt: new Date().toISOString(),
+        exited: false,
+        projectId: null,
+        scriptId: null,
+        lineEnding: "\n" as const,
+      };
     case "terminal.write":
     case "terminal.resize":
     case "terminal.close":

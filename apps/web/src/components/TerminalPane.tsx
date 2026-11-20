@@ -17,6 +17,10 @@ type Tab = {
   title: string;
   pty: boolean;
   lineEnding: "\n" | "\r\n";
+  cwd: string | undefined;
+  projectId: string | null;
+  scriptId: string | null;
+  ended: boolean;
 };
 
 function lineEndingOf(value: string | undefined): "\n" | "\r\n" {
@@ -29,6 +33,10 @@ function tabFromInfo(info: TerminalInfo, lineEnding?: "\n" | "\r\n"): Tab {
     title: info.title || info.shell,
     pty: info.pty,
     lineEnding: lineEnding ?? "\n",
+    cwd: info.cwd,
+    projectId: info.projectId,
+    scriptId: info.scriptId,
+    ended: info.exited,
   };
 }
 
@@ -38,6 +46,10 @@ function tabFromOpen(result: RpcResult<"terminal.open">): Tab {
     title: result.title || result.shell,
     pty: result.pty ?? false,
     lineEnding: lineEndingOf(result.lineEnding),
+    cwd: result.cwd,
+    projectId: result.projectId ?? null,
+    scriptId: result.scriptId ?? null,
+    ended: result.exited ?? false,
   };
 }
 
@@ -121,6 +133,35 @@ export function TerminalPane() {
     }
   };
 
+  const markEnded = (sessionId: string) => {
+    setTabs((current) =>
+      current.map((tab) => (tab.sessionId === sessionId ? { ...tab, ended: true } : tab)),
+    );
+  };
+
+  const restartTab = async (tab: Tab) => {
+    try {
+      const result = await backend().call("terminal.open", {
+        ...(tab.cwd ? { cwd: tab.cwd } : {}),
+        ...(tab.projectId ? { projectId: tab.projectId } : {}),
+        ...(tab.scriptId ? { scriptId: tab.scriptId } : {}),
+      });
+      const opened = { ...tabFromOpen(result), title: tab.title };
+      setTabs((current) =>
+        current.map((item) => (item.sessionId === tab.sessionId ? opened : item)),
+      );
+      setActiveId(opened.sessionId);
+      setError(null);
+      try {
+        await backend().call("terminal.close", { sessionId: tab.sessionId });
+      } catch {
+        // already gone
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start the shell.");
+    }
+  };
+
   const closeTab = async (sessionId: string) => {
     const remaining = tabs.filter((tab) => tab.sessionId !== sessionId);
     setTabs(remaining);
@@ -160,12 +201,15 @@ export function TerminalPane() {
         <div className="terminal-tabs" role="tablist" aria-label="Terminal sessions">
           {tabs.map((tab) => {
             const selected = tab.sessionId === activeId;
+            const tabClass = ["terminal-tab", selected ? "active" : "", tab.ended ? "ended" : ""]
+              .filter(Boolean)
+              .join(" ");
             return (
               <div
                 key={tab.sessionId}
                 role="tab"
                 tabIndex={0}
-                className={selected ? "terminal-tab active" : "terminal-tab"}
+                className={tabClass}
                 aria-selected={selected}
                 onClick={() => setActiveId(tab.sessionId)}
                 onDoubleClick={() => setRenamingId(tab.sessionId)}
@@ -189,6 +233,24 @@ export function TerminalPane() {
                 ) : (
                   <span className="terminal-tab-title">{tab.title}</span>
                 )}
+                {!tab.pty ? (
+                  <Tooltip label="Real terminal unavailable (node-pty failed to load). Colours, resizing and interactive programs may not work.">
+                    <span className="terminal-pipe-mode">pipe mode</span>
+                  </Tooltip>
+                ) : null}
+                {tab.ended ? (
+                  <button
+                    type="button"
+                    className="terminal-tab-restart"
+                    aria-label={`Restart ${tab.title}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void restartTab(tab);
+                    }}
+                  >
+                    Restart
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="icon-button terminal-tab-close"
@@ -241,6 +303,7 @@ export function TerminalPane() {
             active={tab.sessionId === activeId && !starting}
             pty={tab.pty}
             lineEnding={tab.lineEnding}
+            onEnded={() => markEnded(tab.sessionId)}
           />
         ))}
       </div>
