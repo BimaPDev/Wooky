@@ -23,9 +23,10 @@ import { watchThemeFiles } from "../settings/theme-watch.ts";
 import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
 import { openSignInTerminal } from "../terminal/login.ts";
-import type { TerminalManager } from "../terminal/session.ts";
+import type { TerminalManager, TerminalSubscriber } from "../terminal/session.ts";
 import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
+import type { ShipService } from "../git/ship.ts";
 import type { SyncService } from "../sync/service.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
@@ -44,6 +45,7 @@ interface Services {
   limits: LimitsService;
   history: HistoryService;
   fleet: FleetService;
+  ship: ShipService;
   scratch: ScratchService;
   sync: SyncService;
   attachments: AttachmentStore;
@@ -58,6 +60,7 @@ interface Connection {
   /** Replaces this connection's event subscription. */
   follow(fromSeq: number): number;
   trackTerminal(sessionId: string): void;
+  terminalSink: TerminalSubscriber;
   agentWaits: number;
   reserveAgentWait(): void;
   releaseAgentWait(): void;
@@ -81,6 +84,7 @@ function createHandlers(
     limits,
     history,
     fleet,
+    ship,
     scratch,
     sync,
     attachments,
@@ -155,8 +159,23 @@ function createHandlers(
       notifyThemes([]);
       return settings;
     },
-    "terminal.open": ({ cwd, cols, rows }, conn) => {
-      const opened = terminals.open({ cwd, cols, rows }, (message) => conn.send(message));
+    "terminal.open": async ({ cwd, cols, rows, projectId, scriptId, size }, conn) => {
+      const project = projectId ? store.model.projects[projectId] : undefined;
+      const script =
+        scriptId && project
+          ? project.settings.scripts.find((entry) => entry.id === scriptId)
+          : undefined;
+      const opened = await terminals.open(
+        {
+          cwd: cwd ?? project?.root,
+          cols: size?.cols ?? cols,
+          rows: size?.rows ?? rows,
+          projectId: projectId ?? null,
+          scriptId: scriptId ?? null,
+          title: script?.name,
+        },
+        conn.terminalSink,
+      );
       conn.trackTerminal(opened.sessionId);
       return opened;
     },
@@ -218,14 +237,18 @@ function createHandlers(
     "sync.snapshots.restore": (params) => sync.engine.restore(params),
     "sync.snapshots.create": ({ projectId, label }) => sync.engine.createSnapshot(projectId, label),
     "sync.conflicts.resolve": (params) => sync.engine.resolve(params),
-    "terminal.list": notImplemented,
-    "terminal.attach": notImplemented,
+    "terminal.list": () => terminals.list(),
+    "terminal.attach": ({ sessionId }, conn) => {
+      const attached = terminals.attach(sessionId, conn.terminalSink);
+      conn.trackTerminal(sessionId);
+      return attached;
+    },
     "scripts.run": notImplemented,
-    "git.status": notImplemented,
-    "git.commit": notImplemented,
-    "git.push": notImplemented,
-    "git.pr.create": notImplemented,
-    "git.pr.status": notImplemented,
+    "git.status": (params) => ship.status(params),
+    "git.commit": (params) => ship.commit(params),
+    "git.push": (params) => ship.push(params),
+    "git.pr.create": (params) => ship.prCreate(params),
+    "git.pr.status": (params) => ship.prStatus(params),
   };
 }
 
@@ -279,7 +302,6 @@ export function attachWebSocket(
   function serve(ws: WebSocket, req: IncomingMessage) {
     let unsubscribe: (() => void) | null = null;
     let lastSeq = 0;
-    const ownedTerminals = new Set<string>();
     const abort = new AbortController();
     let agentWaits = 0;
 
@@ -321,8 +343,15 @@ export function attachWebSocket(
         unsubscribe = services.store.subscribe(push);
         return history.length;
       },
-      trackTerminal(sessionId) {
-        ownedTerminals.add(sessionId);
+      // Disconnect detaches this socket; sessions belong to the server and keep running.
+      trackTerminal(_sessionId) {},
+      terminalSink: {
+        send(message) {
+          conn.send(message);
+        },
+        bufferedAmount() {
+          return ws.bufferedAmount;
+        },
       },
     };
 
@@ -346,8 +375,7 @@ export function attachWebSocket(
       folderPicker.cancel(conn);
       unsubscribe?.();
       abort.abort();
-      for (const sessionId of ownedTerminals) services.terminals.close(sessionId);
-      ownedTerminals.clear();
+      services.terminals.detachSubscriber(conn.terminalSink);
     });
     ws.on("error", () => ws.terminate());
   }

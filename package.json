@@ -18,6 +18,7 @@
     "knip": "knip",
     "check": "node scripts/check.mjs",
     "check:fast": "node scripts/check.mjs --fast",
+    "release": "node scripts/release.mjs",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
@@ -32,7 +33,8 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",
-      "esbuild"
+      "esbuild",
+      "node-pty"
     ]
   }
 }

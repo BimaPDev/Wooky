@@ -1,8 +1,20 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runAgentsCli } from "./cli/agents.ts";
+import { runMcpCli } from "./cli/mcp.ts";
+import { runSelfCli } from "./cli/self.ts";
 import { resolveConfig, USAGE } from "./config.ts";
 import { hydrateLoginShellPath } from "./process/shell-env.ts";
 import { runThemeCli } from "./settings/theme-cli.ts";
 import { startServer } from "./server.ts";
+
+function envWithBundledWebDist(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (env.WOOKY_WEB_DIST) return env;
+  const candidate = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
+  if (!existsSync(join(candidate, "index.html"))) return env;
+  return { ...env, WOOKY_WEB_DIST: candidate };
+}
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -24,8 +36,27 @@ async function main() {
       process.exit(1);
     }
   }
+  if (argv[0] === "mcp") {
+    try {
+      await runMcpCli(argv.slice(1), process.env);
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+    return;
+  }
 
-  const config = resolveConfig(argv, process.env);
+  if (argv[0] === "service" || argv[0] === "update" || argv[0] === "uninstall") {
+    try {
+      const code = await runSelfCli(argv, process.env);
+      process.exit(code);
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  }
+
+  const config = resolveConfig(argv, envWithBundledWebDist(process.env));
   if (config === "help") {
     process.stdout.write(`${USAGE}\n`);
     return;

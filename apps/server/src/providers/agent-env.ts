@@ -23,6 +23,13 @@ export function currentAgentRuntime(): AgentRuntime | null {
   return runtime;
 }
 
+/** Server-internal keys injected into provider children. Never leak these into a user terminal. */
+export const AGENT_INTERNAL_ENV_KEYS = [
+  "WOOKY_THREAD_ID",
+  "WOOKY_SERVER_URL",
+  "WOOKY_AGENT_TOKEN",
+] as const;
+
 /**
  * Environment a provider child needs to call `wooky agents` back into this server.
  * `PATH` is prefixed with the directory that contains `wookyBin`.

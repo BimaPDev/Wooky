@@ -4,7 +4,11 @@ process.env.WOOKY_SKIP_SHELL_ENV ??= "1";
 
 export default defineConfig({
   test: {
-    include: ["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.{ts,tsx}"],
+    include: [
+      "packages/*/src/**/*.test.ts",
+      "apps/*/src/**/*.test.{ts,tsx}",
+      "install/test/**/*.test.ts",
+    ],
     exclude: ["**/node_modules/**", "**/*.browser.test.tsx"],
     environment: "node",
     testTimeout: 15_000,

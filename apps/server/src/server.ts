@@ -11,6 +11,8 @@ import {
 import { createEffectRunner } from "./effects/runner.ts";
 import { createAgentTokenService } from "./fleet/agent-token.ts";
 import { createFleetService } from "./fleet/service.ts";
+import { createGhClient, type GhClient } from "./git/gh.ts";
+import { createShipService } from "./git/ship.ts";
 import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
 import type { DecideContext } from "./orchestrator/decide.ts";
@@ -42,6 +44,8 @@ export interface ServerOptions {
   allowedHosts?: readonly string[];
   adapters?: ProviderAdapter[];
   git?: GitService;
+  /** Test seam: replace the GitHub CLI integration used by git.pr.* */
+  gh?: GhClient;
   /** Directory whose children `fs.pickable` suggests. Defaults to the OS home. */
   userHome?: string;
   /** When set, a non-loopback client may open the folder chooser. */
@@ -123,6 +127,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
   const agentTokens = createAgentTokenService();
   const fleet = createFleetService({ store, dispatcher, git, tokens: agentTokens });
+  const ship = createShipService({ store, git, gh: options.gh ?? createGhClient() });
+  const stopShipPolling = ship.startPolling();
   const scratch = createScratchService({ home: options.home, store, dispatcher });
   const terminals = createTerminalManager();
   const history = createHistoryService({
@@ -154,6 +160,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       limits,
       history,
       fleet,
+      ship,
       scratch,
       sync,
       attachments: createAttachmentStore(options.home),
@@ -201,6 +208,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       // final events, and close the store last.
       closing ??= (async () => {
         unpublish();
+        stopShipPolling();
         dispatcher.close();
         const stopped = new Promise<void>((resolve) => http.close(() => resolve()));
         http.closeIdleConnections();

@@ -1,4 +1,5 @@
-import { homedir } from "node:os";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { WOOKY_DEFAULT_PORT } from "@wooky/contracts";
@@ -56,5 +57,15 @@ describe("resolveConfig", () => {
     expect(() => resolveConfig(["--port", "70000"], {})).toThrow(/Invalid port/);
     expect(() => resolveConfig(["--nope"], {})).toThrow(/Unknown option/);
     expect(resolveConfig(["--help"], {})).toBe("help");
+  });
+
+  it("uses hosting.port from settings.json when no port flag or env is set", () => {
+    const home = mkdtempSync(join(tmpdir(), "wooky-cfg-"));
+    try {
+      writeFileSync(join(home, "settings.json"), JSON.stringify({ hosting: { port: 5123 } }));
+      expect(resolveConfig([], { WOOKY_HOME: home })).toMatchObject({ port: 5123 });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
