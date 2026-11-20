@@ -127,14 +127,22 @@ describe("ACP adapter", () => {
     expect(events.some((event) => event.type === "usage")).toBe(true);
   });
 
-  it("warns once when an agent never asks, and stays quiet when it does", async () => {
-    const quiet = await collect(
+  it("warns only when a tool ran without asking, not on a plain answer", async () => {
+    const answer = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(baseInput({ runtimeMode: "approve" })),
     );
-    const notices = quiet.filter((event) => event.type === "item" && event.item.kind === "notice");
+    expect(answer.some((event) => event.type === "item" && event.item.kind === "notice")).toBe(
+      false,
+    );
+    expect(answer.at(-1)?.type).toBe("done");
+
+    process.env.WOOKY_FAKE_ACP_SCENARIO = "silent-tool";
+    const silent = await collect(
+      createAcpAdapter({ settings: settings() }).runTurn(baseInput({ runtimeMode: "approve" })),
+    );
+    const notices = silent.filter((event) => event.type === "item" && event.item.kind === "notice");
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ item: { text: SILENT_AGENT_NOTICE } });
-    expect(quiet.at(-1)?.type).toBe("done");
 
     const full = await collect(
       createAcpAdapter({ settings: settings() }).runTurn(baseInput({ runtimeMode: "full" })),

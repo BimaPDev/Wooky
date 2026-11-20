@@ -105,6 +105,29 @@ async function runPrompt(id) {
   if (scenario === "oversize") {
     process.stdout.write(`${"x".repeat(9_000)}\n`);
   }
+  if (scenario === "silent-tool") {
+    update({
+      sessionUpdate: "tool_call",
+      toolCallId: "call_silent",
+      title: "Edit hello.txt",
+      kind: "edit",
+      status: "pending",
+      name: "write",
+    });
+    update({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_silent",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "ok" } }],
+    });
+    update({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "m1",
+      content: { type: "text", text: "done" },
+    });
+    send({ jsonrpc: "2.0", id, result: { stopReason: "end_turn" } });
+    return;
+  }
   if (scenario === "permission") {
     const kind = process.env.WOOKY_FAKE_ACP_TOOL_KIND ?? "execute";
     update({

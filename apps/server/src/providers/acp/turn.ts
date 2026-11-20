@@ -35,8 +35,9 @@ export interface AcpTurnSpec {
   maxLineBytes?: number;
   onDebug?: (message: string) => void;
   /**
-   * When set, a completed turn that never called session/request_permission gets
-   * one notice. OpenCode does not set this: its permission env makes it ask.
+   * When set, a completed turn that ran a tool without calling
+   * session/request_permission gets one notice. OpenCode does not set this:
+   * its permission env makes it ask.
    */
   noticeWhenSilent?: boolean;
 }
@@ -83,6 +84,7 @@ export async function* runAcpTurn(
 
   const debug = spec.onDebug ?? acpDebug;
   let sawPermission = false;
+  let sawTool = false;
   const resolved = resolveCommand(spec.command, spec.env);
   if (!resolved) {
     yield failed(spec.missingCommand);
@@ -124,7 +126,10 @@ export async function* runAcpTurn(
           debug("acp: ignored invalid session update");
           return;
         }
-        for (const event of translator.push(parsed.data.update)) queue.push(event);
+        for (const event of translator.push(parsed.data.update)) {
+          if (event.type === "item" && event.item.kind === "tool") sawTool = true;
+          queue.push(event);
+        }
       },
       onRequest: (method, params, id) => {
         if (method !== "session/request_permission")
@@ -225,7 +230,7 @@ export async function* runAcpTurn(
       return;
     }
     const terminal = doneFromStop(outcome.result?.stopReason ?? "end_turn");
-    if (silentAgentNotice(spec, input, sawPermission, terminal)) {
+    if (silentAgentNotice(spec, input, sawPermission, sawTool, terminal)) {
       yield {
         type: "item",
         item: {
@@ -340,10 +345,12 @@ function silentAgentNotice(
   spec: AcpTurnSpec,
   input: TurnInput,
   sawPermission: boolean,
+  sawTool: boolean,
   terminal: Extract<ProviderEvent, { type: "done" }>,
 ): boolean {
   return (
     spec.noticeWhenSilent === true &&
+    sawTool &&
     !sawPermission &&
     input.runtimeMode !== "full" &&
     terminal.status === "completed"

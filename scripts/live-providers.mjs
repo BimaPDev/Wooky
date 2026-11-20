@@ -1,7 +1,7 @@
 // Live proof against REAL agent CLIs (spends a few tokens each). One real Wooky server with a clean
 // home and a throwaway git project, driven over its WebSocket RPC exactly like the web client.
 //
-//   node scripts/live-providers.mjs <claude|opencode|cursor> [model] [--keep]
+//   node scripts/live-providers.mjs <claude|opencode|cursor|acp> [model] [--keep] [--settings <file>]
 //
 // Per provider: providers.list, a turn that streams and creates a file under approve mode (approval card
 // answered), a denied edit, a resumed second turn, a queued prompt, interrupt mid-turn, checkpoint + revert, usage
@@ -26,7 +26,10 @@ const REPO = process.cwd();
 const provider = process.argv[2];
 const modelArg = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : null;
 const KEEP = process.argv.includes("--keep");
-if (!provider) throw new Error("usage: live-providers.mjs <claude|opencode|cursor> [model]");
+const settingsAt = process.argv.indexOf("--settings");
+const settingsFile = settingsAt >= 0 ? process.argv[settingsAt + 1] : null;
+if (settingsAt >= 0 && !settingsFile) throw new Error("--settings needs a file path");
+if (!provider) throw new Error("usage: live-providers.mjs <claude|opencode|cursor|acp> [model]");
 const { WebSocket } = await import(join(REPO, "apps/server/node_modules/ws/wrapper.mjs"));
 const TSX = join(REPO, "apps/server/node_modules/.bin/tsx");
 
@@ -53,6 +56,11 @@ const git = (cwd, ...args) =>
   }).trim();
 
 mkdirSync(home, { recursive: true });
+if (settingsFile) {
+  JSON.parse(readFileSync(settingsFile, "utf8"));
+  writeFileSync(join(home, "settings.json"), readFileSync(settingsFile));
+  out(`  seeded ${home}/settings.json from ${settingsFile}`);
+}
 mkdirSync(root, { recursive: true });
 git(root, "init", "-q", "-b", "main");
 git(root, "config", "user.email", "t@example.com");
@@ -153,15 +161,49 @@ async function until(read, what, ms = 120000) {
   throw new Error(`timed out waiting for ${what}`);
 }
 const turnsOf = async (threadId) => (await snapshot()).turns[threadId] ?? [];
-const finished = async (threadId, count) =>
-  until(
+const finished = async (threadId, count) => {
+  let lastReport = 0;
+  return until(
     async () => {
       const ts = await turnsOf(threadId);
-      return ts.length >= count && ts[count - 1].status !== "running" ? ts[count - 1] : null;
+      const turn = ts[count - 1];
+      if (Date.now() - lastReport > 10000) {
+        lastReport = Date.now();
+        out(
+          `  .. waiting: turn ${count} status=${turn?.status ?? "(none)"} items=${turn ? itemKinds(turn).join(",") : "-"} events=${events.length}`,
+        );
+      }
+      return ts.length >= count && turn && turn.status !== "running" ? turn : null;
     },
     `turn ${count} to finish`,
-    180000,
+    Number(process.env.WOOKY_TURN_TIMEOUT_MS ?? 180000),
   );
+};
+async function dumpState() {
+  try {
+    const snap = await snapshot();
+    for (const [id, t] of Object.entries(snap.threads)) {
+      out(
+        `  thread ${id}: status=${t.status} model=${t.model ?? ""} session=${t.providerSessionId ?? ""} queue=${t.queue?.length ?? 0}`,
+      );
+    }
+    for (const [id, ts] of Object.entries(snap.turns)) {
+      for (const t of ts) {
+        out(
+          `  turn ${id}/${t.id}: status=${t.status} error=${t.error ?? ""} items=${itemKinds(t).join(",")}`,
+        );
+        for (const item of t.items) {
+          if (item.kind === "notice" || item.kind === "tool")
+            out(`    ${item.kind}: ${JSON.stringify(item).slice(0, 300)}`);
+        }
+      }
+    }
+    out(`  last events: ${JSON.stringify(events.slice(-12).map((e) => e.type)).slice(0, 600)}`);
+    for (const e of events.slice(-12)) out(`    event ${JSON.stringify(e).slice(0, 300)}`);
+  } catch (error) {
+    out(`  dumpState failed: ${error}`);
+  }
+}
 
 // auto-answer approvals while we wait, remembering what was asked
 const approvals = [];
@@ -598,6 +640,7 @@ try {
 } catch (e) {
   failures += 1;
   out(`\nERROR ${e.stack ?? e}`);
+  await dumpState();
   out(`server log tail:\n${serverLog.join("").slice(-2500)}`);
 } finally {
   pumpState.stop = true;
