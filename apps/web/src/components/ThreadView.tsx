@@ -5,6 +5,7 @@ import { formatDuration, summarizeTurn } from "../lib/summary.ts";
 import { openChanges, revertTurn } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { IconChevron, IconUndo } from "./Icons.tsx";
+import { ContinuedFromMarker } from "./anywhere/replicas/MovedBanners.tsx";
 import { FailoverNoticeRow } from "./failover/FailoverNotice.tsx";
 import { FallbackBanner } from "./failover/FallbackBanner.tsx";
 import { failureText } from "./failover/format.ts";
@@ -12,10 +13,18 @@ import { SwitchAndRetry } from "./failover/SwitchAndRetry.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { TimelineEntry } from "./Timeline.tsx";
 
-export function ThreadView({ threadId }: { threadId: string }) {
-  const turnIds = useStore(
+export function ThreadView({
+  threadId,
+  peerTurns,
+}: {
+  threadId: string;
+  /** A peer device's turns for a read-only view. The thread is not in the local read model. */
+  peerTurns?: readonly Turn[];
+}) {
+  const localTurnIds = useStore(
     useShallow((state) => (state.model.turns[threadId] ?? []).map((turn) => turn.id)),
   );
+  const turnIds = peerTurns ? peerTurns.map((turn) => turn.id) : localTurnIds;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -42,16 +51,20 @@ export function ThreadView({ threadId }: { threadId: string }) {
 
   return (
     <div className="thread-scroll" data-workspace-area="conversation" ref={scroller}>
-      <FallbackBanner threadId={threadId} />
+      {peerTurns ? null : <FallbackBanner threadId={threadId} />}
       <div className="thread-content" ref={content}>
+        {peerTurns ? null : <ContinuedFromMarker threadId={threadId} />}
         {turnIds.length === 0 ? (
-          <p className="empty-state">Send a message to start this thread.</p>
+          <p className="empty-state">
+            {peerTurns ? "No conversation yet." : "Send a message to start this thread."}
+          </p>
         ) : null}
         {turnIds.map((turnId, index) => (
           <TurnView
             key={turnId}
             threadId={threadId}
             turnId={turnId}
+            peerTurn={peerTurns?.[index]}
             isLast={index === turnIds.length - 1}
           />
         ))}
@@ -63,13 +76,17 @@ export function ThreadView({ threadId }: { threadId: string }) {
 const TurnView = memo(function TurnView({
   threadId,
   turnId,
+  peerTurn,
   isLast,
 }: {
   threadId: string;
   turnId: string;
+  peerTurn?: Turn;
   isLast: boolean;
 }) {
-  const turn = useStore((state) => state.model.turns[threadId]?.find((t) => t.id === turnId));
+  const localTurn = useStore((state) => state.model.turns[threadId]?.find((t) => t.id === turnId));
+  const turn = peerTurn ?? localTurn;
+  const readOnly = peerTurn !== undefined;
   if (!turn) return null;
   return (
     <article className="turn" aria-label={`Turn: ${turn.prompt.slice(0, 60)}`}>
@@ -80,9 +97,14 @@ const TurnView = memo(function TurnView({
         </div>
       )}
       {turn.status === "running" ? (
-        <LiveTurn turn={turn} />
+        <LiveTurn turn={turn} readOnly={readOnly} />
       ) : (
-        <FinishedTurn turn={turn} canRevert={turn.checkpointBefore !== null} isLast={isLast} />
+        <FinishedTurn
+          turn={turn}
+          canRevert={turn.checkpointBefore !== null}
+          isLast={isLast}
+          readOnly={readOnly}
+        />
       )}
     </article>
   );
@@ -92,7 +114,7 @@ function visible(item: TimelineItem) {
   return !(item.kind === "message" && item.role === "user");
 }
 
-function LiveTurn({ turn }: { turn: Turn }) {
+function LiveTurn({ turn, readOnly }: { turn: Turn; readOnly: boolean }) {
   const items = turn.items.filter(visible);
   return (
     <div className="turn-body">
@@ -103,7 +125,7 @@ function LiveTurn({ turn }: { turn: Turn }) {
       </div>
       <div className="trail">
         {items.map((item) => (
-          <TimelineEntry key={item.id} item={item} threadId={turn.threadId} />
+          <TimelineEntry key={item.id} item={item} threadId={turn.threadId} readOnly={readOnly} />
         ))}
       </div>
     </div>
@@ -137,10 +159,12 @@ function FinishedTurn({
   turn,
   canRevert,
   isLast,
+  readOnly,
 }: {
   turn: Turn;
   canRevert: boolean;
   isLast: boolean;
+  readOnly: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const summary = summarizeTurn(turn);
@@ -166,25 +190,27 @@ function FinishedTurn({
         ) : (
           <span className="summary-text">{summary.text}</span>
         )}
-        <button
-          type="button"
-          className="turn-action"
-          disabled={!canRevert || running}
-          title={canRevert ? "Revert files to before this turn" : "No checkpoint for this turn"}
-          onClick={() => revertTurn(turn.threadId, turn.id)}
-        >
-          <IconUndo />
-          Revert to before this turn
-        </button>
+        {readOnly ? null : (
+          <button
+            type="button"
+            className="turn-action"
+            disabled={!canRevert || running}
+            title={canRevert ? "Revert files to before this turn" : "No checkpoint for this turn"}
+            onClick={() => revertTurn(turn.threadId, turn.id)}
+          >
+            <IconUndo />
+            Revert to before this turn
+          </button>
+        )}
       </div>
       {expanded ? (
         <div className="trail settled">
           {steps.map((item) => (
-            <TimelineEntry key={item.id} item={item} threadId={turn.threadId} />
+            <TimelineEntry key={item.id} item={item} threadId={turn.threadId} readOnly={readOnly} />
           ))}
         </div>
       ) : null}
-      {summary.changedFiles.length > 0 ? (
+      {summary.changedFiles.length > 0 && !readOnly ? (
         <div className="file-chips" aria-label="Changed files">
           {summary.changedFiles.map((path) => (
             <button
@@ -207,7 +233,7 @@ function FinishedTurn({
             : (turn.error ?? "The turn failed.")}
         </p>
       ) : null}
-      {turn.status === "failed" && turn.failure && isLast && !running ? (
+      {turn.status === "failed" && turn.failure && isLast && !running && !readOnly ? (
         <SwitchAndRetry turn={turn} failure={turn.failure} />
       ) : null}
       {turn.status === "interrupted" ? (
