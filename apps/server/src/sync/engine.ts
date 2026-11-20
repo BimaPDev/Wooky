@@ -27,6 +27,7 @@ import {
 import { createConflictStore } from "./conflicts.ts";
 import { decodeMeta, encodeMeta, toSnapshot, type SnapshotMeta } from "./meta.ts";
 import { localProject, sharedProjectId } from "./project-map.ts";
+import { createProjectCatalog } from "./project-catalog.ts";
 import type { PeerRecord as PeerEntry } from "../remote/peers.ts";
 import type { SyncDeps, SyncProject, SyncTimers } from "./types.ts";
 
@@ -89,6 +90,12 @@ export function createSyncEngine(deps: SyncDeps) {
   const known = new Map<string, { peer: string | null; applied: string | null }>();
   const activeBundles = new Map<string, number>();
   const shared = new AbortController();
+  const catalog = createProjectCatalog({
+    deviceId: deps.deviceId,
+    projects: () => deps.projects(),
+    map: () => deps.settings().sync.projectMap,
+    ...(deps.projectFacts ? { facts: deps.projectFacts } : {}),
+  });
   const maxFileBytes = deps.maxFileBytes ?? MAX_FILE_BYTES;
   const maxApplyBytes = deps.maxApplyBytes ?? MAX_APPLY_BYTES;
   const myRef = `refs/wooky/snap/${deps.deviceId}`;
@@ -231,13 +238,15 @@ export function createSyncEngine(deps: SyncDeps) {
     tip: string | null;
     /** Stat fingerprint of the folder as snapshotted. */
     fingerprint: string;
+    /** The folder matched the previous tip, so no files changed (a labeled marker may still exist). */
+    unchanged?: boolean;
   }
 
   async function takeSnapshot(
     project: SyncProject,
     reason: SnapshotReason,
     input: SnapshotMetaInput,
-    options: { gate?: boolean; ensureTip?: boolean; fresh?: boolean } = {},
+    options: { gate?: boolean; ensureTip?: boolean; fresh?: boolean; marker?: boolean } = {},
   ): Promise<Taken> {
     const repo = repoFor(project);
     if (!existsSync(repo.workTree)) {
@@ -265,8 +274,10 @@ export function createSyncEngine(deps: SyncDeps) {
     }
     const tree = await git.stage(repo, scan);
     fingerprints.set(project.id, scan.fingerprint);
-    if (tip && tree === (await git.treeOf(repo, tip))) {
-      return { snapshot: null, tip, fingerprint: scan.fingerprint };
+    const unchanged = tip !== null && tree === (await git.treeOf(repo, tip));
+    // A manual save with a label is a marker the user asked for: it is recorded on the same tree.
+    if (unchanged && !(options.marker && input.label)) {
+      return { snapshot: null, tip, fingerprint: scan.fingerprint, unchanged: true };
     }
     if (!tip && tree === EMPTY_TREE && !options.ensureTip) {
       return { snapshot: null, tip: null, fingerprint: scan.fingerprint };
@@ -294,7 +305,7 @@ export function createSyncEngine(deps: SyncDeps) {
     const summary = await git.diffStat(repo, tip ?? EMPTY_TREE, id);
     const created = toSnapshot(project.id, { id, parentId: tip, summary }, meta);
     emit({ push: "sync", kind: "snapshot", snapshot: created });
-    return { snapshot: created, tip: id, fingerprint: scan.fingerprint };
+    return { snapshot: created, tip: id, fingerprint: scan.fingerprint, unchanged };
   }
 
   async function snapshotAt(project: SyncProject, sha: string): Promise<Snapshot | null> {
@@ -318,7 +329,15 @@ export function createSyncEngine(deps: SyncDeps) {
     );
   }
 
-  async function createSnapshot(projectId: string, label?: string): Promise<Snapshot> {
+  /**
+   * A manual snapshot. With nothing changed since the last one, no files are copied: `unchanged`
+   * is true and the result is the existing tip, or, when the user gave a label, a marker commit
+   * on the same tree that carries it.
+   */
+  async function createSnapshot(
+    projectId: string,
+    label?: string,
+  ): Promise<Snapshot & { unchanged: boolean }> {
     requireFiles();
     const project = projectById(projectId);
     return lock(project.id, async () => {
@@ -326,11 +345,11 @@ export function createSyncEngine(deps: SyncDeps) {
         project,
         "manual",
         { label: label ?? null },
-        { ensureTip: true },
+        { ensureTip: true, marker: true },
       );
       const found = taken.snapshot ?? (taken.tip ? await snapshotAt(project, taken.tip) : null);
       if (!found) throw new ServiceError("internal", "The snapshot could not be read back.");
-      return found;
+      return { ...found, unchanged: taken.unchanged === true };
     });
   }
 
@@ -524,6 +543,7 @@ export function createSyncEngine(deps: SyncDeps) {
       state: runtime?.state ?? "idle",
       lastSyncAt: runtime?.lastSyncAt ?? null,
       error: runtime?.error ?? null,
+      projects: catalog.view(deviceId),
     };
   }
 
@@ -535,6 +555,7 @@ export function createSyncEngine(deps: SyncDeps) {
     };
   }
 
+  /** Pushes the status again, for a change that is not a peer's state (a mapping, a new list). */
   function emitStatus() {
     emit({ push: "sync", kind: "status", ...status() });
   }
@@ -805,6 +826,18 @@ export function createSyncEngine(deps: SyncDeps) {
     return TipList.parse(await response.json());
   }
 
+  /** The peer's project list. A peer that has no such route (older) just has none. */
+  async function fetchPeerProjects(peer: PeerEntry): Promise<void> {
+    try {
+      const response = await request(peer, "sync/projects", 15_000);
+      const body = (await response.json()) as { projects?: unknown };
+      if (catalog.accept(peer.deviceId, body.projects)) emitStatus();
+    } catch (error) {
+      if (error instanceof NetworkError) throw error;
+      // Not served (older peer, or sync off there): the peer simply has no list.
+    }
+  }
+
   async function pullProject(
     peer: PeerEntry,
     project: SyncProject,
@@ -849,6 +882,8 @@ export function createSyncEngine(deps: SyncDeps) {
   async function pullPeer(peer: PeerEntry, only?: string): Promise<void> {
     setPeer(peer.deviceId, { state: "syncing", error: null });
     try {
+      await catalog.refreshLocal();
+      await fetchPeerProjects(peer);
       const offered = await fetchTips(peer);
       const problems: string[] = [];
       for (const { projectId: sharedId, tip } of offered) {
@@ -858,10 +893,9 @@ export function createSyncEngine(deps: SyncDeps) {
           deps.deviceId,
           settings().projectMap,
         );
-        if (!project) {
-          problems.push(`${sharedId}: project not mapped on this device`);
-          continue;
-        }
+        // A project the peer shares and this device has not mapped is not an error: it is listed
+        // as "not mapped here" (see `projects` of the peer's status) until the user maps it.
+        if (!project) continue;
         if (only && project.id !== only) continue;
         try {
           await pullProject(peer, project, sharedId, tip);
@@ -900,6 +934,11 @@ export function createSyncEngine(deps: SyncDeps) {
 
   function servesPeer(deviceId: string): boolean {
     return filesOn() && settings().peers.includes(deviceId);
+  }
+
+  /** Project names and git facts go to any listed peer, even with file sync off. */
+  function servesProjects(deviceId: string): boolean {
+    return settings().enabled && settings().peers.includes(deviceId);
   }
 
   async function tips(): Promise<Array<{ projectId: string; tip: string }>> {
@@ -1137,6 +1176,12 @@ export function createSyncEngine(deps: SyncDeps) {
     tips,
     openBundle,
     servesPeer,
+    servesProjects,
+    projects: () => catalog.served(),
+    /** The local project a peer's project is mapped to here, by the peer's id or its shared id. */
+    localProjectFor: (deviceId: string, peerProjectId: string) =>
+      catalog.localFor(deviceId, peerProjectId),
+    emitStatus,
     onPush(listener: (push: SyncPush) => void) {
       listeners.add(listener);
       return () => void listeners.delete(listener);

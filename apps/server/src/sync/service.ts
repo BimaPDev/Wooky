@@ -31,6 +31,7 @@ export function createSyncService(options: {
     projects: () =>
       Object.values(store.model.projects).map((p) => ({
         id: p.id,
+        name: p.name,
         root: p.root,
         scratch: p.scratch,
       })),

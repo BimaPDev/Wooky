@@ -1,4 +1,4 @@
-import type { Thread } from "@wooky/contracts";
+import type { SyncPeerProject, Thread } from "@wooky/contracts";
 import { useEffect, useState } from "react";
 import { confirm, dispatch, selectThread } from "../../../state/actions.ts";
 import {
@@ -8,6 +8,8 @@ import {
 } from "../../../state/anywhere-history.ts";
 import { useStore } from "../../../state/store.ts";
 import { claimView, resolveLocalProject } from "./helpers.ts";
+import { MapProject } from "../mapping/MapProject.tsx";
+import { peerProjectOf } from "../mapping/mapping.ts";
 
 export function ClaimBanner({
   deviceId,
@@ -32,12 +34,25 @@ export function ClaimBanner({
     model,
     failure,
   });
-  const localProject = resolveLocalProject(
-    thread.projectId,
-    model.projects,
-    projectMap ?? {},
-    localDeviceId,
-  );
+  const syncStatus = useAnywhereHistory((state) => state.syncStatus);
+  const listed = peerProjectOf(syncStatus, deviceId, thread.projectId);
+  // The peer's listing says which local project it is mapped to; without one, the settings map
+  // (and a project with the same id) still apply.
+  const localProject =
+    (listed?.mappedTo ? model.projects[listed.mappedTo] : undefined) ??
+    resolveLocalProject(thread.projectId, model.projects, projectMap ?? {}, localDeviceId);
+  // A peer that sends no project list can still be mapped by hand, under the id its thread carries.
+  const unmapped: SyncPeerProject = listed ?? {
+    id: thread.projectId,
+    sharedId: thread.projectId,
+    name: "",
+    folder: "",
+    remote: null,
+    branch: null,
+    mappedTo: null,
+    suggestion: null,
+  };
+  const projectName = listed?.name || listed?.folder || "this project";
   const doneThreadId = view.kind === "done" ? view.threadId : null;
 
   // sync: store navigation opens the new local thread once a claim started here has landed
@@ -72,7 +87,7 @@ export function ClaimBanner({
     });
 
   const blocker = !localProject
-    ? "Map this project to a folder on this device in Settings, Anywhere, to continue it here."
+    ? `${projectName === "this project" ? "This project" : projectName} is not mapped on this device. Pick the local project it is, or add its folder.`
     : syncEnabled === false
       ? "Turn on sync in Settings, Anywhere. Files have to arrive before the conversation moves."
       : null;
@@ -85,6 +100,7 @@ export function ClaimBanner({
             This thread runs on <strong>{device}</strong>.
             {blocker ? <span className="muted"> {blocker}</span> : null}
           </span>
+          {!localProject ? <MapProject project={unmapped} /> : null}
           <button
             type="button"
             className="button primary"

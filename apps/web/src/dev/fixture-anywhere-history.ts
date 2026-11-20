@@ -142,8 +142,9 @@ function snapshot(
       ? { filesChanged: summary[0], insertions: summary[1], deletions: summary[2] }
       : null,
     parentId: `s-${String(n + 1).padStart(2, "0")}`,
+    label: null,
     ...extra,
-  };
+  } as Snapshot;
 }
 
 /** Newest first. 32 rows, so a page of 25 leaves a second page behind "Load older". */
@@ -215,8 +216,22 @@ function syncStatus(): SyncStatus {
   return {
     enabled: true,
     peers: [
-      { deviceId: WORK, name: "Work Mac", state: "idle", lastSyncAt: ago(3), error: null },
-      { deviceId: PC, name: "Windows PC", state: "offline", lastSyncAt: ago(1500), error: null },
+      {
+        deviceId: WORK,
+        name: "Work Mac",
+        state: "idle",
+        lastSyncAt: ago(3),
+        error: null,
+        projects: [],
+      },
+      {
+        deviceId: PC,
+        name: "Windows PC",
+        state: "offline",
+        lastSyncAt: ago(1500),
+        error: null,
+        projects: [],
+      },
     ],
     conflicts,
   };

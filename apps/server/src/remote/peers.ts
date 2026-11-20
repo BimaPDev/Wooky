@@ -119,10 +119,24 @@ export function createPeers(options: {
     writePrivateJson(path, { peers: next });
   }
 
+  /** The label the user gave the machine when adding it, else the name the device calls itself. */
+  function labelFor(peer: StoredPeer): string {
+    try {
+      const environment = options
+        .getSettings()
+        .environments.find((item) => item.id === peer.environmentId);
+      const label = environment?.label.trim();
+      if (label) return label;
+    } catch {
+      // settings not readable yet: fall back to the device's own name
+    }
+    return peer.name;
+  }
+
   function toRecord(peer: StoredPeer): PeerRecord {
     return {
       deviceId: peer.hostDeviceId,
-      name: peer.name,
+      name: labelFor(peer),
       baseUrl: httpBase(peer.connection, peer.localPort),
       token: peer.token,
     };

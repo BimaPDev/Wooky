@@ -26,6 +26,17 @@ export function createSyncRoutes(engine: SyncEngine, authenticate: AuthenticateR
       reply(res, 405, { error: "method not allowed" });
       return true;
     }
+    if (url.pathname === "/sync/projects") {
+      if (!engine.servesProjects(caller.deviceId)) {
+        reply(res, 403, { error: "this device does not sync with you" });
+        return true;
+      }
+      engine.projects().then(
+        (projects) => reply(res, 200, { projects }),
+        () => reply(res, 500, { error: "could not read projects" }),
+      );
+      return true;
+    }
     if (!engine.servesPeer(caller.deviceId)) {
       reply(res, 403, { error: "this device does not sync with you" });
       return true;

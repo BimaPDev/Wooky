@@ -56,7 +56,14 @@ let paired: PairedDeviceView[] = [
 const syncStatus: SyncStatus = {
   enabled: false,
   peers: [
-    { deviceId: "dev-home", name: "Home server", state: "idle", lastSyncAt: ago(4), error: null },
+    {
+      deviceId: "dev-home",
+      name: "Home server",
+      state: "idle",
+      lastSyncAt: ago(4),
+      error: null,
+      projects: [],
+    },
   ],
   conflicts: [],
 };

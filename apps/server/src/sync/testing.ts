@@ -60,6 +60,8 @@ export interface Device {
   projectId: string;
   engine: SyncEngine;
   settings: { sync: SyncSettings };
+  /** The device's registered projects; tests add to it. */
+  projects: SyncProject[];
   running: Set<string>;
   pushes: SyncPush[];
   notices: string[];
@@ -75,6 +77,11 @@ export interface Device {
 export interface DeviceOptions {
   deviceId: string;
   projectId?: string;
+  /** The project's display name. Defaults to the id. */
+  name?: string;
+  /** Normalized git remote and branch the project reports to peers. Default: none. */
+  remote?: string | null;
+  branch?: string | null;
   root?: string;
   home?: string;
   sync?: Partial<SyncSettings>;
@@ -98,7 +105,7 @@ export async function makeDevice(options: DeviceOptions): Promise<Device> {
   const peers: PeerEntry[] = [];
   const clock = { time: Date.parse("2026-01-01T00:00:00Z") };
   const timers = fakeTimers();
-  const projects: SyncProject[] = [{ id: projectId, root }];
+  const projects: SyncProject[] = [{ id: projectId, name: options.name ?? projectId, root }];
   const engine = createSyncEngine({
     home,
     deviceId: options.deviceId,
@@ -112,6 +119,7 @@ export async function makeDevice(options: DeviceOptions): Promise<Device> {
     ...(options.maxFileBytes === undefined ? {} : { maxFileBytes: options.maxFileBytes }),
     ...(options.maxApplyBytes === undefined ? {} : { maxApplyBytes: options.maxApplyBytes }),
     ...(options.gitBin ? { gitBin: options.gitBin } : {}),
+    projectFacts: async () => ({ remote: options.remote ?? null, branch: options.branch ?? null }),
   });
   engine.onPush((push) => pushes.push(push));
   cleanups.push(() => engine.stop());
@@ -139,6 +147,7 @@ export async function makeDevice(options: DeviceOptions): Promise<Device> {
     projectId,
     engine,
     settings,
+    projects,
     running,
     pushes,
     notices,

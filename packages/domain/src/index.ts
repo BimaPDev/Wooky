@@ -25,3 +25,11 @@ export {
   threadsForProject,
   threadsSharingWorkspace,
 } from "./selectors.ts";
+export {
+  folderBasename,
+  normalizeRemoteUrl,
+  suggestLocalProject,
+  withLocalMapping,
+  type LocalProjectFacts,
+  type ProjectSuggestion,
+} from "./project-match.ts";

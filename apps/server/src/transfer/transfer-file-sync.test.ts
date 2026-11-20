@@ -212,7 +212,9 @@ describe("createClaimFileSync", () => {
       ...sync,
     },
   });
-  const status = (peer: Partial<SyncStatus["peers"][number]> | null): SyncStatus => ({
+  const status = (
+    peer: Partial<Omit<SyncStatus["peers"][number], "projects">> | null,
+  ): SyncStatus => ({
     enabled: true,
     conflicts: [],
     peers: peer
@@ -223,6 +225,7 @@ describe("createClaimFileSync", () => {
             state: "idle",
             lastSyncAt: null,
             error: null,
+            projects: [],
             ...peer,
           },
         ]
