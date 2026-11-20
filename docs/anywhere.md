@@ -296,6 +296,15 @@ Params → result.
 - `git.pr.create` `{threadId, title, body, base?, draft?}` → `{url, number}`
 - `git.pr.status` `{threadId}` → `Thread["pullRequest"]`
 
+### Terminals
+
+Sessions are owned by the server. A client disconnect detaches; it does not kill the shell.
+
+- A running session with zero subscribers is killed after 24 hours detached (a constant; settings can come later).
+- An exited session stays in `terminal.list` / `terminal.attach` for 10 minutes after exit, then is dropped.
+- At most 16 sessions. `terminal.open` reaps exited sessions first. If all 16 are still live, it returns a conflict that says how many of those are detached.
+- Timers are unref'd and cleared on `closeAll`.
+
 ### Pushes
 
 `SyncPush` joins the websocket push union:
