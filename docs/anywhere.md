@@ -94,6 +94,14 @@ launched, change hosting, or pair or revoke devices. Concretely, these stay loop
 device that touches any of them is rejected whole, not partially applied. A paired device also
 never gets the folder picker.
 
+Who is "the operator" comes only from the authenticated identity: a `/ws` connection is local when
+`authenticateRequest` resolved it to the unpaired `local` client (loopback, no proxy headers, not the
+Tailscale Serve listener, no valid device token). It never depends on how a token was presented. A
+paired device that sends only its `wooky_token` cookie is still that paired device, not the operator,
+so the rules above and the transfer guard (`thread.claim` / `thread.import`) apply to it. Presenting a
+token explicitly (bearer or `wooky.token.` subprotocol) only decides whether the browser `Origin` is
+checked, because a cookie rides along on cross-site requests.
+
 Project settings (scripts, worktree setup, shared files) are editable from paired devices, like
 running commands in the terminal. The pairing token is the trust boundary: revoking a device
 closes its sockets at once, so it can no longer read or change anything.
@@ -153,6 +161,32 @@ Device-local keys never sync: binary paths, env, window state, sync settings the
 - **Retention**: prune snapshot history older than keepDays while keeping at least keepMin,
   by rewriting the chain (squash old ones) and `git gc --prune=now` on the shadow repo.
 
+As built (A2, `apps/server/src/sync/`, git calls in `apps/server/src/git/shadow.ts`):
+
+- The tip ref is `refs/wooky/snap/<deviceId>` in one shadow repo per project. Incoming peer history
+  lands in `refs/wooky/peer/<deviceId>`, and `refs/wooky/applied/<deviceId>` records the last peer
+  commit applied (the merge base next time; an empty tree when there is none).
+- Snapshots use a private index file in the shadow dir (not a throwaway), so unchanged files are not
+  re-hashed. The scan lists candidates with `git ls-files`, stats them (size cap, fingerprint), then
+  `update-index`. Interval scans skip git when the fingerprint is unchanged.
+- Peers share a project through `projectMap`: a project's shared id is the map key whose entry for
+  this device is its folder, else its own id. `GET /sync/tips` and `/sync/bundle?project=` use shared ids.
+- A clean `merge-tree` is applied. A conflict applies nothing. Resolving applies the clean part of the
+  merge too, and `mine` / `theirs` / `both` decide only the conflicting paths (`both` also writes
+  `<name>.theirs<ext>`). Merging needs Git 2.40 (`--merge-base`); older Git raises a conflict on every
+  divergence.
+- Project branch moves are not done: only the working tree syncs. The snapshot message records the
+  project's HEAD and branch for a later station.
+- Only the sender's `refs/wooky/snap/<id>` chain is listed by `sync.snapshots.list`.
+- `/sync/*` runs on the real auth: the guarded HTTP handler checks `authenticateRequest` first, then
+  the sync routes demand a device token (loopback `local` gets 401) and serve only deviceIds listed in
+  `sync.peers` (403 otherwise). Revoking a device makes its token 401 at once. Outgoing pulls read
+  tokens from the `PeerDirectory` (`peers.json`); the device id is `remote.device.id()`, the single
+  `device.json` loader. Pairing must be done both ways for two-way sync. There is no test-peers env
+  hook or `--test-hooks` flag.
+- `scripts/live-sync-proof.mjs` boots two real servers, pairs them, syncs a project at two paths, raises
+  a conflict, reverts from a `before-apply` snapshot and revokes a device.
+
 ### Threads
 
 - Every thread has an **owner device**, the one that runs its turns. Default: the creator.
@@ -164,7 +198,14 @@ Device-local keys never sync: binary paths, env, window state, sync settings the
   `thread.release`, then imports the thread as its own (a new local thread with the
   transcript as handoff context, the same as a provider handoff) and links `movedFrom`. The
   owner's copy shows "moved to <device>" and refuses new turns. Files arrive through file
-  sync, which is required for claim.
+  sync, which is required for claim. When file sync is on, a claim first snapshots and pulls the
+    project from the owner (`apps/server/src/transfer/file-sync.ts`, through the sync engine) and waits
+    at most 30 seconds. If the owner is offline, refuses, or the pull does not finish in time, the claim
+    fails with a reason that says so, and nothing is released or imported. After the owner released
+    (a forced release stops its turn first) the pull is repeated for the final files; if that one fails
+    the claim fails with that reason and can be run again. Which local project a claim lands in is
+    `projectMap[<owner's project id>][<this device>]` (a folder path, as the sync engine reads it; a
+    local project id is also accepted), else the project with the same id.
   - A running turn refuses the release. A claim with `force` first asks the owner to
     interrupt the turn and sends the release again only once the turn ended, so the owner
     never releases a thread with a turn still running.

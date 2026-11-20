@@ -17,6 +17,8 @@ export function createDispatcher(deps: {
   runner: EffectRunner;
   ctx: DecideContext;
   deviceSettings?: () => DeviceSettings;
+  /** True while a sync write is changing the project's folder; turns may not start then. */
+  projectBusy?: (projectId: string) => boolean;
 }): Dispatcher {
   const { store, runner, ctx } = deps;
   let closed = false;
@@ -35,6 +37,16 @@ export function createDispatcher(deps: {
 
       if (command.type === "project.add" && !isDirectory(command.root))
         throw new ServiceError("bad_request", `${command.root} is not a directory.`);
+
+      if (command.type === "turn.start" || command.type === "queue.promote") {
+        const projectId = store.model.threads[command.threadId]?.projectId;
+        if (projectId && deps.projectBusy?.(projectId)) {
+          throw new ServiceError(
+            "conflict",
+            "Wooky is applying a sync to this project. Try again in a moment.",
+          );
+        }
+      }
 
       const settings = deps.deviceSettings?.();
       const decision = decide(store.model, command, {

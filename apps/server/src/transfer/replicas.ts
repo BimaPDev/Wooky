@@ -9,6 +9,7 @@ import { applyReplicaEvents, emptyReplicaModel } from "@wooky/domain";
 import type { EventStore } from "../store/event-store.ts";
 import type { PeerDirectory } from "../remote/peers.ts";
 import { fetchPeerJson } from "./peer-fetch.ts";
+import type { SyncNow } from "./types.ts";
 
 const BATCH = 2_000;
 
@@ -44,7 +45,8 @@ export interface ReplicaService {
   foldOwner(ownerDeviceId: string): void;
   /** Drops an owner's in-memory slice. Call after pruning its stored events, then foldOwner. */
   forget(ownerDeviceId: string): void;
-  pullNow(projectId?: string): Promise<void>;
+  /** Pulls files for `projectId` (a local project id) from `ownerDeviceId`, then every peer's threads. */
+  pullNow(projectId?: string, ownerDeviceId?: string): Promise<void>;
   pullAll(): Promise<void>;
   ownerBatch(
     since: number,
@@ -63,7 +65,9 @@ export function createReplicaService(deps: {
   peers: PeerDirectory;
   settings: () => DeviceSettings;
   onChange(): void;
-  syncNow: (projectId: string) => Promise<void>;
+  syncNow: SyncNow;
+  /** Status with the file-sync state. Defaults to a plain list of the peers. */
+  status?: () => SyncStatus;
 }): ReplicaService {
   let model = emptyReplicaModel();
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -117,6 +121,7 @@ export function createReplicaService(deps: {
       model = { ...model, replicas: rest };
     },
     syncStatus() {
+      if (deps.status) return deps.status();
       const settings = deps.settings();
       return {
         enabled: settings.sync.enabled,
@@ -140,11 +145,12 @@ export function createReplicaService(deps: {
       const nextSince = events.at(-1)?.seq ?? since;
       return { events, nextSince };
     },
-    async pullNow(projectId) {
+    async pullNow(projectId, ownerDeviceId) {
       const settings = deps.settings();
-      if (!settings.sync.enabled || !settings.sync.categories.threads) return;
-      if (projectId) await deps.syncNow(projectId);
-      await pullAllPeers();
+      if (!settings.sync.enabled) return;
+      // Files are a separate category from threads: wait for them even when threads are off.
+      if (projectId) await deps.syncNow(projectId, ownerDeviceId);
+      if (settings.sync.categories.threads) await pullAllPeers();
     },
     async pullAll() {
       await pullAllPeers();

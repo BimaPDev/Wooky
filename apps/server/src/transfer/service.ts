@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { AppearanceTheme, type PendingEvent, type SyncPush } from "@wooky/contracts";
+import {
+  AppearanceTheme,
+  type PendingEvent,
+  type SyncPush,
+  type SyncStatus,
+} from "@wooky/contracts";
 import type { Effect } from "../orchestrator/effects.ts";
 import type { EventStore } from "../store/event-store.ts";
 import type { ThemeStore } from "../settings/themes.ts";
@@ -9,6 +14,7 @@ import { createReplicaService, type ReplicaService } from "./replicas.ts";
 import type { AuthenticateRequest } from "../remote/auth.ts";
 import type { PeerDirectory } from "../remote/peers.ts";
 import type { SyncNow } from "./types.ts";
+import { resolveLocalProjectId } from "./project.ts";
 import { applyRemoteSettings } from "./settings-sync.ts";
 import { fetchPeerJson } from "./peer-fetch.ts";
 
@@ -48,7 +54,10 @@ export function createTransferService(deps: {
   deviceId: string;
   peers: PeerDirectory;
   authenticate: AuthenticateRequest;
+  /** Brings project files from the owner before and after a claim. See `createClaimFileSync`. */
   syncNow: SyncNow;
+  /** Sync status with file-sync state, for pushes. */
+  syncStatus?: () => SyncStatus;
   dispatch: (
     command: import("@wooky/contracts").Command,
   ) => import("@wooky/contracts").RpcResult<"dispatch">;
@@ -77,6 +86,7 @@ export function createTransferService(deps: {
     peers: deps.peers,
     settings: () => deps.themes.getSettings(),
     syncNow: deps.syncNow,
+    ...(deps.syncStatus ? { status: deps.syncStatus } : {}),
     onChange() {
       deps.broadcastSync({
         push: "sync",
@@ -159,8 +169,16 @@ export function createTransferService(deps: {
   async function runClaimOnce(effect: Extract<Effect, { kind: "claimThread" }>): Promise<void> {
     if (!deps.store.model.pendingClaims?.[effect.claimId]) return;
     replicas.foldOwner(effect.ownerDeviceId);
+    const settings = deps.themes.getSettings();
+    const localProjectId =
+      resolveLocalProjectId(
+        effect.projectId,
+        deps.deviceId,
+        settings.sync.projectMap,
+        deps.store.model.projects,
+      ) ?? effect.projectId;
     try {
-      await replicas.pullNow(effect.projectId);
+      await replicas.pullNow(localProjectId, effect.ownerDeviceId);
     } catch (error) {
       if (!deps.store.isClaimReleased(effect.claimId)) {
         failClaim(
@@ -169,10 +187,12 @@ export function createTransferService(deps: {
         );
         return;
       }
+      // Already released to us (a recovered claim): the thread is ours, so it is imported
+      // rather than lost, and the missing files are logged.
+      console.warn(
+        `Claim ${effect.claimId}: files were not synced: ${error instanceof Error ? error.message : error}`,
+      );
     }
-    const settings = deps.themes.getSettings();
-    const map = settings.sync.projectMap[effect.projectId];
-    const localProjectId = map?.[deps.deviceId] ?? effect.projectId;
 
     const result = await executeClaimStep({
       store: deps.store,

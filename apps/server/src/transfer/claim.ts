@@ -62,7 +62,8 @@ export type ClaimStepParams = {
   ownerThreadId: string;
   projectId: string;
   force?: boolean;
-  syncNow: (projectId: string) => Promise<void>;
+  /** Files for `projectId` (local id) from `ownerDeviceId`. Rejects when they did not arrive. */
+  syncNow: (projectId: string, ownerDeviceId: string) => Promise<void>;
   newId: (prefix: string) => string;
   now: () => string;
   settingsProjectMap: (projectId: string) => string | null;
@@ -132,6 +133,11 @@ function prepareImport(
 function releaseFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : "Release failed";
   if (message === "Connection closed") return "The owner is offline.";
+  return message.slice(0, MAX_REASON);
+}
+
+function fileSyncFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Files did not sync.";
   return message.slice(0, MAX_REASON);
 }
 
@@ -229,10 +235,29 @@ export async function executeClaimStep(params: ClaimStepParams): Promise<StepRes
   if (!alreadyReleasedToUs) {
     const peer = params.peers.get(params.ownerDeviceId);
     if (!peer) return { ok: false, reason: "The owner device is not paired." };
-    await params.syncNow(params.projectId);
+    const syncFiles = async (): Promise<StepResult> => {
+      try {
+        await params.syncNow(localProjectId, params.ownerDeviceId);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, reason: fileSyncFailure(error) };
+      }
+    };
+    // First, so a claim that cannot get the files stops before the owner gives anything away.
+    const before = await syncFiles();
+    if (!before.ok) return before;
     const released = await releaseOnOwner(params, peer);
     if (!released.ok) return released;
     params.store.markClaimReleased(params.claimId);
+    // The owner has stopped (a forced release interrupts its turn), so this pull has its final
+    // files. A failure leaves the release in place: the claim can be run again.
+    const after = await syncFiles();
+    if (!after.ok) {
+      return {
+        ok: false,
+        reason: `${after.reason} The owner already released the thread to this device, so claim it again to continue.`,
+      };
+    }
     try {
       await params.pullReplicas?.();
     } catch {

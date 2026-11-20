@@ -28,6 +28,7 @@ import { openEventStore } from "./store/event-store.ts";
 import { setupWorktree, unwatchHeldNotices } from "./scripts/worktree-setup.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
+import { createSyncService } from "./sync/service.ts";
 import { createRemoteRuntime, type RemoteRuntime } from "./remote/runtime.ts";
 import type { Tailscale } from "./remote/tailscale.ts";
 import { createHttpHandler } from "./transport/static.ts";
@@ -37,7 +38,7 @@ import { createLimitsService } from "./usage/limits.ts";
 import { setAgentTokenIssuer } from "./providers/agent-env.ts";
 import { createTransferHttpHandler } from "./transfer/http.ts";
 import { createTransferService } from "./transfer/service.ts";
-import { noopSyncNow } from "./transfer/types.ts";
+import { createClaimFileSync } from "./transfer/file-sync.ts";
 
 const SERVE_OFF_TIMEOUT_MS = 3_000;
 
@@ -81,9 +82,10 @@ export interface ServerOptions {
   now?: () => number;
   /** Test seam. Production uses the socket's remote address. */
   remoteAddress?: (req: IncomingMessage) => string | undefined;
-  /** File sync before a claim. Until the A2 sync engine lands on main this is a no-op. */
+  /** File sync around a claim. Defaults to the sync engine, bounded by `fileSyncTimeoutMs`. */
   transfer?: {
     syncNow?: import("./transfer/types.ts").SyncNow;
+    fileSyncTimeoutMs?: number;
     releaseAttempts?: number;
     sleep?: (ms: number) => Promise<void>;
   };
@@ -164,6 +166,34 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     throw new Error("dispatcher not ready");
   };
   let broadcastSync = (_message: import("@wooky/contracts").SyncPush) => {};
+  /** A prompt whose start was refused during a sync write is started when the write ends. */
+  const resumeQueuedPrompts = (projectId: string) => {
+    for (const thread of Object.values(store.model.threads)) {
+      const head =
+        thread.projectId === projectId && thread.status === "idle" ? thread.queue[0] : undefined;
+      if (!head) continue;
+      try {
+        dispatchCommand({
+          commandId: `queue:${head.id}`,
+          type: "queue.promote",
+          threadId: thread.id,
+          queueId: head.id,
+        });
+      } catch (error) {
+        console.error(`Could not start queued prompt ${head.id}`, error);
+      }
+    }
+  };
+  const sync = createSyncService({
+    home: options.home,
+    deviceId,
+    store,
+    settings: () => themes.getSettings(),
+    authenticate,
+    peers,
+    resumeQueued: resumeQueuedPrompts,
+  });
+  const syncWriting = sync.engine.isWriting;
   const transfer = createTransferService({
     home: options.home,
     store,
@@ -171,7 +201,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     deviceId,
     peers,
     authenticate,
-    syncNow: options.transfer?.syncNow ?? noopSyncNow,
+    syncNow:
+      options.transfer?.syncNow ??
+      createClaimFileSync({
+        settings: () => themes.getSettings(),
+        engine: sync.engine,
+        peerName: (id) => peers.get(id)?.name ?? id,
+        ...(options.transfer?.fileSyncTimeoutMs !== undefined
+          ? { timeoutMs: options.transfer.fileSyncTimeoutMs }
+          : {}),
+      }),
+    syncStatus: () => sync.engine.status(),
     ...(options.transfer?.releaseAttempts !== undefined
       ? { releaseAttempts: options.transfer.releaseAttempts }
       : {}),
@@ -206,6 +246,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     runner,
     ctx,
     deviceSettings: () => themes.getSettings(),
+    projectBusy: (projectId) => syncWriting(projectId),
   });
   dispatchCommand = (command) => dispatcher.dispatch(command);
   runner.recover();
@@ -222,7 +263,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     enabled: () => themes.getSettings().importLocalHistory,
   });
 
-  const staticHandler = createHttpHandler(options.webDist ?? null);
+  const serveStatic = createHttpHandler(options.webDist ?? null);
   const transferHttp = createTransferHttpHandler({
     authenticate,
     replicas: transfer.replicas,
@@ -244,6 +285,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       fleet,
       ship,
       scratch,
+      sync,
       attachments: createAttachmentStore(options.home),
       transfer,
       remote,
@@ -261,7 +303,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await remote.listen({
       handler: (req, res) => {
         if (transferHttp(req, res)) return;
-        staticHandler(req, res);
+        if (!sync.routes(req, res)) serveStatic(req, res);
       },
       onUpgrade: sockets.onUpgrade,
     });
@@ -273,6 +315,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     sockets.close();
     remote.closeTunnels();
     await remote.closeServers();
+    await sync.close();
     closeStore();
     throw error;
   }
@@ -307,6 +350,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         await stopped;
         await history.close();
         transfer.stop();
+        await sync.close();
         closeStore();
       })();
       return closing;

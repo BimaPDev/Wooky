@@ -23,6 +23,7 @@ import {
   threadsSharingWorkspace,
 } from "@wooky/domain";
 import { importTitle, validateHistoryTurns } from "../transfer/history-validation.ts";
+import { projectIsMapped } from "../transfer/project.ts";
 import { cooledDownIfNeeded, expiredCooldownClears } from "../failover/cooldown.ts";
 import {
   decideFanoutPick,
@@ -645,11 +646,8 @@ function claimThread(
       "bad_request",
       "Turn on file and thread sync to continue threads across devices.",
     );
-  const projectMap = sync.projectMap[command.projectId];
-  const projectKnown =
-    Boolean(model.projects[command.projectId]) ||
-    (projectMap && Object.values(projectMap).some((id) => Boolean(model.projects[id])));
-  if (!projectKnown) return notFound("project", command.projectId);
+  if (!projectIsMapped(command.projectId, sync.projectMap, model.projects))
+    return notFound("project", command.projectId);
   const pending = model.pendingClaims ?? {};
   const duplicate = Object.values(pending).some(
     (claim) =>

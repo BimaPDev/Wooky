@@ -4,11 +4,12 @@ import { ServiceError } from "../errors.ts";
 export interface TransferCaller {
   /** The device the token belongs to; "local" for an unpaired client on this machine. */
   deviceId: string;
-  /** The operator's own client, as opposed to a paired peer holding a device token. */
-  local: boolean;
 }
 
 /**
+ * Who the caller is comes from the authenticated device id alone, never from how a token was
+ * presented. The operator is "local"; every other id is a paired device.
+ *
  * A paired device acts only as itself. It can ask this device to give a thread to that same
  * device, and only while it is a sync peer. Claiming and importing run on the device that
  * wants the thread, so they are never accepted from a peer.
@@ -19,7 +20,7 @@ export function guardTransferCommand(
   settings: DeviceSettings,
 ): void {
   if (command.type === "thread.claim" || command.type === "thread.import") {
-    if (!caller.local)
+    if (caller.deviceId !== "local")
       throw new ServiceError("forbidden", "A thread can only be claimed on this machine.");
     return;
   }

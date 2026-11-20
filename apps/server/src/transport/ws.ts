@@ -32,6 +32,7 @@ import type { TerminalManager, TerminalSubscriber } from "../terminal/session.ts
 import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
 import type { ShipService } from "../git/ship.ts";
+import type { SyncService } from "../sync/service.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
 import type { TransferService } from "../transfer/service.ts";
@@ -52,6 +53,7 @@ interface Services {
   fleet: FleetService;
   ship: ShipService;
   scratch: ScratchService;
+  sync: SyncService;
   attachments: AttachmentStore;
   transfer: TransferService;
   remote: RemoteRuntime;
@@ -64,8 +66,10 @@ interface Connection {
   readonly deviceId: string;
   readonly remoteAddress: string | undefined;
   /**
-   * True only for an unpaired client on this machine: loopback, no proxy headers, not the
-   * token-only Tailscale Serve listener, and no device token. Paired devices are never local.
+   * True only when authentication resolved to the operator's own unpaired client
+   * (`deviceId === "local"`: loopback, no proxy headers, not the token-only Tailscale Serve
+   * listener, and no valid device token). It follows the authenticated identity, never how the
+   * token was presented: a paired device is not local, even with only its cookie.
    */
   readonly local: boolean;
   readonly abort: AbortController;
@@ -116,6 +120,7 @@ function createHandlers(
     fleet,
     ship,
     scratch,
+    sync,
     attachments,
     transfer,
     remote,
@@ -175,6 +180,7 @@ function createHandlers(
         providers.invalidate();
       }
       if (settings.activeThemeId !== undefined) notifyThemes([]);
+      if (settings.sync !== undefined) sync.engine.refresh();
       await remote.onSettings(before, next, settings);
       return next;
     },
@@ -267,18 +273,22 @@ function createHandlers(
       requireLocal(conn, "Connection details are only available on this machine.");
       return remote.peers.connectInfo(environmentId);
     },
-    "sync.status": () => transfer.replicas.syncStatus(),
+    "sync.status": () => sync.engine.status(),
     "sync.now": async ({ projectId }) => {
-      await transfer.replicas.pullNow(projectId);
+      const settings = themes.getSettings().sync;
+      // Files first (it throws when file sync is off), then threads, settings and themes.
+      if (settings.enabled && settings.categories.files) await sync.engine.now(projectId);
+      else if (!settings.enabled) throw new ServiceError("conflict", "Sync is turned off.");
+      await transfer.replicas.pullNow();
       await transfer.pullSettingsAndThemes();
       return { ok: true as const };
     },
     "sync.replicas": () => transfer.replicas.model,
-    "sync.snapshots.list": notImplemented,
-    "sync.snapshots.diff": notImplemented,
-    "sync.snapshots.restore": notImplemented,
-    "sync.snapshots.create": notImplemented,
-    "sync.conflicts.resolve": notImplemented,
+    "sync.snapshots.list": (params) => sync.engine.list(params),
+    "sync.snapshots.diff": (params) => sync.engine.diff(params),
+    "sync.snapshots.restore": (params) => sync.engine.restore(params),
+    "sync.snapshots.create": ({ projectId, label }) => sync.engine.createSnapshot(projectId, label),
+    "sync.conflicts.resolve": (params) => sync.engine.resolve(params),
     "terminal.list": () => terminals.list(),
     "terminal.attach": ({ sessionId }, conn) => {
       const attached = terminals.attach(sessionId, conn.terminalSink);
@@ -309,10 +319,6 @@ function createHandlers(
     "git.pr.create": (params) => ship.prCreate(params),
     "git.pr.status": (params) => ship.prStatus(params),
   };
-}
-
-function notImplemented(): never {
-  throw new ServiceError("unavailable", "not implemented");
 }
 
 /** Attaches the RPC WebSocket at WOOKY_WS_PATH. `onUpgrade` is shared by every listener. */
@@ -346,6 +352,9 @@ export function attachWebSocket(
   const folderPicker = options.folderPicker ?? createFolderPicker();
   const handlers = createHandlers(services, notifyThemes, folderPicker);
   const closeThemeWatch = watchThemeFiles(services.themes, broadcastThemes);
+  const closeSyncPush = services.sync.engine.onPush((push) => {
+    for (const conn of connections) conn.send(push);
+  });
   // Theme files may carry an inline background image (capped at 6 MB in the contract).
   const wss = new WebSocketServer({
     noServer: true,
@@ -363,6 +372,9 @@ export function attachWebSocket(
       socket.destroy();
       return;
     }
+    // Whether the token was sent explicitly (bearer or subprotocol) only decides if the browser
+    // origin must be checked: a cookie rides along on cross-site requests. It never decides who
+    // the caller is; that is `auth.deviceId`.
     const cookieAuth = presentedToken(req).source === "cookie";
     const tokenProvesIntent = auth.deviceId !== "local" && !cookieAuth;
     if (!tokenProvesIntent && !originAllowed(req.headers.origin, req.headers.host, allowedHosts)) {
@@ -370,7 +382,7 @@ export function attachWebSocket(
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       services.remote.track(auth.deviceId, ws);
-      serve(ws, auth.deviceId, remoteAddress, !tokenProvesIntent);
+      serve(ws, auth.deviceId, remoteAddress, auth.deviceId === "local");
     });
   }
 
@@ -466,6 +478,7 @@ export function attachWebSocket(
     onUpgrade,
     close() {
       closeThemeWatch();
+      closeSyncPush();
       folderPicker.close();
       for (const client of wss.clients) client.close(1001, "Server is shutting down");
       wss.close();
