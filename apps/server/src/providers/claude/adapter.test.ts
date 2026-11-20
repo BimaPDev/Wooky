@@ -7,11 +7,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TurnInput } from "../types.ts";
 import { createClaudeAdapter } from "./adapter.ts";
 import { setPlanUserHomeForTests } from "./interaction.ts";
+import recordedPlan from "./recorded/plan-mode-exit-plan.json" with { type: "json" };
 import {
   assistant,
   init,
   rateLimitEvent,
   resultSuccess,
+  sentPrompt,
+  taskNotification,
   text,
   toolResult,
   toolUse,
@@ -185,7 +188,7 @@ describe("runTurn options", () => {
     const { fake, calls } = fakeQuery(simple);
     const adapter = createClaudeAdapter({ query: fake });
     await collect(adapter.runTurn(turnInput({ handoffContext: "User: hi\n\nAssistant: hello" })));
-    const prompt = calls[0]?.prompt as string;
+    const prompt = (await sentPrompt(calls[0]?.prompt)).text;
     expect(prompt.startsWith("Earlier conversation in this thread, from another agent:")).toBe(
       true,
     );
@@ -196,7 +199,26 @@ describe("runTurn options", () => {
   it("sends the bare prompt when there is no handoff", async () => {
     const { fake, calls } = fakeQuery(simple);
     await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput()));
-    expect(calls[0]?.prompt).toBe("do it");
+    expect((await sentPrompt(calls[0]?.prompt)).text).toBe("do it");
+  });
+
+  it("ignores a stale notification turn ahead of the stamped prompt turn", async () => {
+    const { fake } = fakeQuery(async function* (params) {
+      const { uuid } = await sentPrompt(params.prompt);
+      yield taskNotification();
+      yield init();
+      yield assistant("stale", [text("No response requested.")]);
+      yield resultSuccess();
+      yield { ...init(), user_message_uuids: [uuid] } as SDKMessage;
+      yield assistant("m1", [text("alive")]);
+      yield resultSuccess();
+    });
+    const events = await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput()));
+    const said = events.flatMap((event) =>
+      event.type === "item" && event.item.kind === "message" ? [event.item.text] : [],
+    );
+    expect(said).toEqual(["alive"]);
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "completed" });
   });
 });
 
@@ -941,6 +963,43 @@ describe("plan mode", () => {
     return { result, events, options: calls[0]?.options as Options };
   }
 
+  it("keeps the plan and completes on the real CLI's interrupted result", async () => {
+    // Recorded from Claude Code 2.1.308: ExitPlanMode is denied with interrupt, the CLI then sends the
+    // rejected tool result, an interrupt marker and an error_during_execution result, and the SDK
+    // throws after it.
+    const messages = recordedPlan as unknown as SDKMessage[];
+    const { fake } = fakeQuery(async function* (params) {
+      for (const message of messages) {
+        yield message;
+        if (message.type !== "assistant") continue;
+        for (const block of message.message.content) {
+          if (block.type !== "tool_use" || block.name !== "ExitPlanMode") continue;
+          await params.options?.canUseTool?.(
+            "ExitPlanMode",
+            block.input as Record<string, unknown>,
+            { ...context(), toolUseID: block.id },
+          );
+        }
+      }
+      throw new Error(
+        "Claude Code returned an error result: [ede_diagnostic] stop_reason=tool_use",
+      );
+    });
+    const events = await collect(
+      createClaudeAdapter({ query: fake }).runTurn(turnInput({ interactionMode: "plan" })),
+    );
+    const finalItems = new Map<string, unknown>();
+    for (const event of events) {
+      if (event.type === "item") finalItems.set(event.item.id, event.item);
+      if (event.type === "plan") finalItems.set(event.itemId, { kind: "plan" });
+    }
+    expect(
+      [...finalItems.values()].filter((item) => (item as { kind: string }).kind === "plan"),
+    ).toHaveLength(1);
+    expectOneDoneLast(events);
+    expect(events.at(-1)).toMatchObject({ status: "completed", error: null });
+  });
+
   it("runs with the SDK's plan permission mode and a permission callback", async () => {
     const { options } = await exitPlan({ plan });
     expect(options.permissionMode).toBe("plan");
@@ -952,7 +1011,7 @@ describe("plan mode", () => {
     const { result, events } = await exitPlan({ plan });
     expect(events.find((event) => event.type === "plan")).toEqual({
       type: "plan",
-      itemId: "t1:tu1",
+      itemId: "t1:tu1:plan",
       markdown: plan,
     });
     expect(result).toEqual({
@@ -986,7 +1045,7 @@ describe("plan mode", () => {
     );
     expect(events.find((event) => event.type === "plan")).toEqual({
       type: "plan",
-      itemId: "t1:tu1",
+      itemId: "t1:tu1:plan",
       markdown: filePlan,
     });
     expect(result).toMatchObject({ behavior: "deny", interrupt: true });

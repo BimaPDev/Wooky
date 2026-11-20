@@ -31,6 +31,8 @@ export interface TranslatorOptions {
   cwd?: string;
   /** Set when a plan event was emitted this turn (ExitPlanMode interrupt should still complete). */
   planProposed?: { value: boolean };
+  /** Client uuid the prompt was sent with; the CLI stamps the frames of the turn answering it. */
+  promptUuid?: string;
 }
 
 type ToolItem = Extract<TimelineItem, { kind: "tool" }>;
@@ -66,6 +68,22 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
   let lastChainUuid: string | null = null;
   let lastRateLimit: SDKRateLimitInfo | null = null;
   const planProposed = options.planProposed;
+  // On resume the CLI may first run a turn for a background task the previous process left behind
+  // (one task_notification before the first init each). That turn is not the user's: drop its frames
+  // and its result. A frame stamped with the prompt's uuid ends this early; without stamps, one
+  // result per stale notification is skipped.
+  let staleTurns = 0;
+  let sawInit = false;
+  let promptSeen = false;
+  const stampedForPrompt = (message: SDKMessage): boolean => {
+    if (!options.promptUuid) return false;
+    const stamps = message as { user_message_uuid?: unknown; user_message_uuids?: unknown };
+    return (
+      stamps.user_message_uuid === options.promptUuid ||
+      (Array.isArray(stamps.user_message_uuids) &&
+        stamps.user_message_uuids.includes(options.promptUuid))
+    );
+  };
 
   const stateFor = (messageId: string): MessageState => {
     let state = messages.get(messageId);
@@ -233,6 +251,11 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
       settleRunningTools("done", out);
       return done("completed", null, out);
     }
+    // Proposing a plan interrupts the CLI on purpose; it then reports error_during_execution.
+    if (planProposed?.value && message.subtype === "error_during_execution") {
+      settleRunningTools("done", out);
+      return done("completed", null, out);
+    }
     settleRunningTools("failed", out);
     const error = resultError(message, authFailed);
     return done("failed", error, out, classifyFailed(error, message.subtype));
@@ -251,6 +274,16 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
         sessionId = id;
         out.push({ type: "session", sessionId: id });
       }
+      if (message.type === "rate_limit_event") lastRateLimit = message.rate_limit_info;
+      if (stampedForPrompt(message)) promptSeen = true;
+      if (message.type === "system" && message.subtype === "task_notification" && !sawInit) {
+        staleTurns += 1;
+      }
+      if (message.type === "system" && message.subtype === "init") sawInit = true;
+      if (staleTurns > 0 && !promptSeen) {
+        if (message.type === "result") staleTurns -= 1;
+        return out;
+      }
       switch (message.type) {
         case "stream_event":
           stream(message, out);
@@ -260,9 +293,6 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
           break;
         case "user":
           toolResults(message, out);
-          break;
-        case "rate_limit_event":
-          lastRateLimit = message.rate_limit_info;
           break;
         case "result":
           return result(message, out);

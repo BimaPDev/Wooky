@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import type {
   ApprovalRequest,
@@ -15,6 +16,7 @@ import {
   type PermissionResult,
   type SDKMessage,
   type SDKRateLimitInfo,
+  type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { fleetChildEnv, instructionsForRole } from "../agent-env.ts";
@@ -144,10 +146,12 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
       }
       const planProposed = { value: false };
       const lastPlanWritePath = { value: null as string | null };
+      const promptUuid = randomUUID();
       const translator = createTranslator({
         turnId: input.turnId,
         cwd: input.cwd,
         planProposed,
+        promptUuid,
       });
       const abort = new AbortController();
       let settleAborted: (value: typeof ABORTED) => void = () => undefined;
@@ -201,7 +205,10 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
 
       let running: ReturnType<typeof sdkQuery> | undefined;
       try {
-        running = runQuery({ prompt: buildPrompt(input), options: sdkOptions });
+        running = runQuery({
+          prompt: promptMessage(buildPrompt(input), promptUuid),
+          options: sdkOptions,
+        });
         const iterator = running[Symbol.asyncIterator]();
         let pending: ReturnType<typeof iterator.next> | null = null;
         let finished = false;
@@ -262,6 +269,17 @@ function fleetQueryOptions(
       preset: "claude_code",
       append: instructionsForRole(input.role),
     },
+  };
+}
+
+/** Sent with a uuid so the CLI stamps the turn that answers it (see the translator). */
+async function* promptMessage(text: string, uuid: string): AsyncGenerator<SDKUserMessage> {
+  yield {
+    type: "user",
+    session_id: "",
+    parent_tool_use_id: null,
+    uuid: uuid as SDKUserMessage["uuid"],
+    message: { role: "user", content: [{ type: "text", text }] },
   };
 }
 
@@ -372,7 +390,8 @@ async function proposePlan(
   if (!resolved.ok) {
     return { behavior: "deny", message: planDenyMessage(resolved.reason) };
   }
-  emit({ type: "plan", itemId: requestId, markdown: resolved.markdown });
+  // Its own id: the ExitPlanMode tool item already uses the request id and would replace the plan.
+  emit({ type: "plan", itemId: `${requestId}:plan`, markdown: resolved.markdown });
   return {
     behavior: "deny",
     message: "The user will review the plan.",

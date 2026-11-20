@@ -7,6 +7,7 @@ import {
   init,
   messageStart,
   rateLimitEvent,
+  taskNotification,
   resultError,
   resultSuccess,
   text,
@@ -18,6 +19,8 @@ import {
   type SDKMessage,
 } from "./fixtures.ts";
 import { createTranslator } from "./translate.ts";
+import stringPrompt from "./recorded/resume-after-interrupt-string-prompt.json" with { type: "json" };
+import stampedPrompt from "./recorded/resume-after-interrupt-stamped-prompt.json" with { type: "json" };
 
 const CWD = "/work";
 
@@ -486,5 +489,65 @@ describe("finish", () => {
     const events = run([init(), resultSuccess()], { kind: "error", error: "late" });
     expectOneDoneLast(events);
     expect(events.at(-1)).toMatchObject({ status: "completed" });
+  });
+});
+
+describe("resume with a stale background task", () => {
+  // Recorded from the real CLI: a turn interrupted while a background Bash ran, then resumed with
+  // "Reply with the single word alive." The CLI first runs a turn for the stopped task's
+  // notification and emits a result for it, then runs the user's prompt.
+  const PROMPT_UUID = "11111111-2222-4333-8444-555555555555";
+  const replay = (messages: unknown[], promptUuid?: string) => {
+    const translator = createTranslator({
+      turnId: "t1",
+      cwd: CWD,
+      ...(promptUuid ? { promptUuid } : {}),
+    });
+    const events = (messages as SDKMessage[]).flatMap((message) => translator.push(message));
+    for (const event of events) ProviderEventSchema.parse(event);
+    return events;
+  };
+  const reply = (events: ProviderEvent[]) =>
+    items(events)
+      .flatMap((item) => (item.kind === "message" ? [item.text] : []))
+      .join("");
+
+  it("closes on the prompt's own result when the CLI does not stamp it", () => {
+    const events = replay(stringPrompt);
+    expectOneDoneLast(events);
+    expect(dones(events)[0]).toMatchObject({ status: "completed" });
+    expect(reply(events)).toBe("alive");
+  });
+
+  it("closes on the result stamped with the prompt uuid", () => {
+    const events = replay(stampedPrompt, PROMPT_UUID);
+    expectOneDoneLast(events);
+    expect(reply(events)).toBe("alive");
+    expect(events.filter((event) => event.type === "usage")).toHaveLength(1);
+  });
+
+  it("drops what the notification turn said", () => {
+    const events = run([
+      taskNotification(),
+      init(),
+      assistant("stale", [text("No response requested.")]),
+      resultSuccess({ result: "No response requested." }),
+      init(),
+      assistant("m1", [text("alive")]),
+      resultSuccess({ result: "alive" }),
+    ]);
+    expectOneDoneLast(events);
+    expect(reply(events)).toBe("alive");
+  });
+
+  it("keeps a notification that arrives during the prompt's own turn", () => {
+    const events = run([
+      init(),
+      assistant("m1", [text("working")]),
+      taskNotification(),
+      resultSuccess(),
+    ]);
+    expectOneDoneLast(events);
+    expect(reply(events)).toBe("working");
   });
 });

@@ -160,4 +160,30 @@ export function rateLimitEvent(info: SDKRateLimitInfo): SDKRateLimitEvent {
   } as unknown as SDKRateLimitEvent;
 }
 
+export function taskNotification(taskId = "task-1"): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_notification",
+    task_id: taskId,
+    status: "stopped",
+    output_file: "",
+    summary: "Background shell command didn't finish before the previous session ended",
+    uuid: uuid(),
+    session_id: SESSION,
+  } as unknown as SDKMessage;
+}
+
+/** The single prompt message the adapter hands to `query`, read back for assertions. */
+export async function sentPrompt(prompt: unknown): Promise<{ text: string; uuid: string }> {
+  for await (const message of prompt as AsyncIterable<SDKUserMessage>) {
+    const content = message.message.content;
+    const body =
+      typeof content === "string"
+        ? content
+        : content.map((block) => (block.type === "text" ? block.text : "")).join("");
+    return { text: body, uuid: message.uuid ?? "" };
+  }
+  throw new Error("no prompt message");
+}
+
 export type { SDKMessage };

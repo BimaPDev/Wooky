@@ -113,6 +113,9 @@ export const SessionResult = z
   .passthrough();
 export type SessionResult = z.infer<typeof SessionResult>;
 
+/** `session/load` answers with the session's config only: the id is the one that was sent. */
+export const LoadSessionResult = SessionResult.extend({ sessionId: z.string().min(1).optional() });
+
 export const PromptResult = z
   .object({
     stopReason: z.string(),
