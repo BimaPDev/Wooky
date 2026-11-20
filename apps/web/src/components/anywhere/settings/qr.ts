@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/no-non-null-assertion */
 /**
  * QR Code encoder, byte mode, error correction M, versions 1–10.
  * Enough for a pairing URL. No lookup tables beyond the spec's constants.
@@ -61,7 +62,7 @@ function mul(a: number, b: number): number {
 export function reedSolomonRemainder(data: readonly number[], eccLength: number): number[] {
   let generator = [1];
   for (let i = 0; i < eccLength; i++) {
-    const next = new Array<number>(generator.length + 1).fill(0);
+    const next = Array.from({ length: generator.length + 1 }, () => 0);
     const root = EXP[i] ?? 0;
     for (let j = 0; j < generator.length; j++) {
       const term = generator[j] ?? 0;
@@ -71,7 +72,7 @@ export function reedSolomonRemainder(data: readonly number[], eccLength: number)
     }
     generator = next;
   }
-  const rest = new Array<number>(eccLength).fill(0);
+  const rest = Array.from({ length: eccLength }, () => 0);
   for (const byte of data) {
     const factor = byte ^ (rest[0] ?? 0);
     rest.copyWithin(0, 1);
@@ -185,11 +186,11 @@ function maskInverts(mask: number, x: number, y: number): boolean {
     case 4:
       return (Math.floor(y / 2) + Math.floor(x / 3)) % 2 === 0;
     case 5:
-      return (x * y) % 2 + (x * y) % 3 === 0;
+      return ((x * y) % 2) + ((x * y) % 3) === 0;
     case 6:
-      return ((x * y) % 2 + (x * y) % 3) % 2 === 0;
+      return (((x * y) % 2) + ((x * y) % 3)) % 2 === 0;
     default:
-      return ((x + y) % 2 + (x * y) % 3) % 2 === 0;
+      return (((x + y) % 2) + ((x * y) % 3)) % 2 === 0;
   }
 }
 
@@ -199,13 +200,7 @@ function blank(size: number): { modules: boolean[][]; fn: boolean[][] } {
   return { modules, fn };
 }
 
-function paint(
-  modules: boolean[][],
-  fn: boolean[][],
-  x: number,
-  y: number,
-  dark: boolean,
-) {
+function paint(modules: boolean[][], fn: boolean[][], x: number, y: number, dark: boolean) {
   const row = modules[y];
   const mark = fn[y];
   if (!row || !mark || x < 0 || x >= row.length) return;

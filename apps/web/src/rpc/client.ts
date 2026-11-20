@@ -198,7 +198,15 @@ export function createRpcClient(options: RpcClientOptions) {
       entry.reject(new RpcCallError(message.error.code, message.error.message));
       return;
     }
-    const result = RpcMethods[entry.method].result.safeParse(message.result);
+    // TODO(A3): methods not in the contract yet (sync.replicas) resolve unparsed; the caller validates.
+    const spec = (RpcMethods as Partial<Record<string, (typeof RpcMethods)[RpcMethod]>>)[
+      entry.method
+    ];
+    if (!spec) {
+      entry.resolve(message.result);
+      return;
+    }
+    const result = spec.result.safeParse(message.result);
     if (result.success) entry.resolve(result.data);
     else entry.reject(new RpcCallError("internal", `Unexpected ${entry.method} result.`));
   }

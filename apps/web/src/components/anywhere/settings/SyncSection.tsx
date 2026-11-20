@@ -31,7 +31,8 @@ const CATEGORIES: { key: keyof SyncCategories; title: string; description: strin
   {
     key: "ignoredFiles",
     title: "Ignored files",
-    description: "Also sync files matched by .gitignore. This can copy .env files and other secrets, and it can be large.",
+    description:
+      "Also sync files matched by .gitignore. This can copy .env files and other secrets, and it can be large.",
   },
 ];
 
@@ -160,7 +161,9 @@ export function SyncSection({ settings }: { settings: DeviceSettings }) {
       </div>
       <div className="anywhere-block">
         <p className="setting-title">Project folders</p>
-        <p className="setting-desc">The path of each project on each peer. Leave a cell empty to skip it.</p>
+        <p className="setting-desc">
+          The path of each project on each peer. Leave a cell empty to skip it.
+        </p>
         {sync.peers.length === 0 || liveProjects.length === 0 ? (
           <p className="setting-desc">Choose a peer, and add a project, to map folders.</p>
         ) : (
@@ -187,7 +190,12 @@ export function SyncSection({ settings }: { settings: DeviceSettings }) {
                           value={sync.projectMap[project.id]?.[deviceId] ?? ""}
                           label={`${project.name} on ${peers.find((peer) => peer.id === deviceId)?.name ?? deviceId}`}
                           onCommit={(path) => {
-                            const projectMap = withPath(sync.projectMap, project.id, deviceId, path);
+                            const projectMap = withPath(
+                              sync.projectMap,
+                              project.id,
+                              deviceId,
+                              path,
+                            );
                             void putSettings({ sync: { projectMap } });
                           }}
                         />
@@ -253,7 +261,7 @@ function withPath(
 ) {
   const next: DeviceSettings["sync"]["projectMap"] = {};
   for (const [id, paths] of Object.entries(map)) next[id] = { ...paths };
-  const row = { ...(next[projectId] ?? {}) };
+  const row = { ...next[projectId] };
   if (path) row[deviceId] = path;
   else delete row[deviceId];
   if (Object.keys(row).length > 0) next[projectId] = row;

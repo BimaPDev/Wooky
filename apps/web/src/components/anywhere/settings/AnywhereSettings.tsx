@@ -63,7 +63,9 @@ export function AnywhereSettings() {
       } catch (error) {
         if (!cancelled) {
           setProblem(
-            error instanceof Error ? error.message : "Anywhere is not available on this server yet.",
+            error instanceof Error
+              ? error.message
+              : "Anywhere is not available on this server yet.",
           );
         }
       }
@@ -171,17 +173,16 @@ function Hosting({ settings }: { settings: DeviceSettings }) {
           . Tailscale bind stays unavailable until it is running.
         </p>
       ) : !tailscaleRunning ? (
-        <p className="settings-help">Tailscale is installed but not running, so that bind is off.</p>
+        <p className="settings-help">
+          Tailscale is installed but not running, so that bind is off.
+        </p>
       ) : null}
       {hosting.bind === "all" ? (
         <p className="anywhere-warn" role="status">
           Anyone on your network can reach the sign-in page. Paired devices still need a token.
         </p>
       ) : null}
-      <PortRow
-        port={hosting.port}
-        onCommit={(port) => void putSettings({ hosting: { port } })}
-      />
+      <PortRow port={hosting.port} onCommit={(port) => void putSettings({ hosting: { port } })} />
       {tailscaleRunning ? (
         <Row
           title="Serve over HTTPS with Tailscale"
@@ -276,9 +277,7 @@ function Environments() {
                     confirmLabel: "Remove",
                     onConfirm: () => {
                       void putSettings({
-                        environments: environments.filter(
-                          (entry) => entry.id !== environment.id,
-                        ),
+                        environments: environments.filter((entry) => entry.id !== environment.id),
                       });
                     },
                   })
@@ -299,7 +298,9 @@ function Environments() {
   );
 }
 
-function connectionSummary(connection: DeviceSettings["environments"][number]["connection"]): string {
+function connectionSummary(
+  connection: DeviceSettings["environments"][number]["connection"],
+): string {
   switch (connection.kind) {
     case "tailscale":
       return `${connection.hostName}:${connection.port}${connection.https ? " · https" : ""}`;

@@ -1,4 +1,8 @@
-import { PairingCodeText, RemoteConnection, type RemoteConnection as Connection } from "@wooky/contracts";
+import {
+  PairingCodeText,
+  RemoteConnection,
+  type RemoteConnection as Connection,
+} from "@wooky/contracts";
 import { useState } from "react";
 import { remoteJoin } from "../../../rpc/anywhere-extra.ts";
 import { loadDeviceSettings } from "../../../state/appearance.ts";
@@ -91,8 +95,8 @@ export function AddMachineForm({
     >
       <h2 className="modal-title">Add machine</h2>
       <p className="modal-body">
-        Enter the pairing code shown on the other machine. The connection is how this client
-        reaches it.
+        Enter the pairing code shown on the other machine. The connection is how this client reaches
+        it.
       </p>
       <label className="field">
         <span>Name</span>
@@ -137,7 +141,11 @@ export function AddMachineForm({
           </p>
           <PortField label="Port" value={port} onChange={setPort} />
           <label className="option">
-            <input type="checkbox" checked={https} onChange={(event) => setHttps(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={https}
+              onChange={(event) => setHttps(event.target.checked)}
+            />
             <span>Use HTTPS</span>
           </label>
         </>
@@ -148,7 +156,9 @@ export function AddMachineForm({
           <input
             className="mono"
             value={url}
-            placeholder={kind === "direct" ? "http://192.168.1.20:4317" : "https://wooky.example.com"}
+            placeholder={
+              kind === "direct" ? "http://192.168.1.20:4317" : "https://wooky.example.com"
+            }
             spellCheck={false}
             autoComplete="off"
             aria-label={kind === "direct" ? "Direct URL" : "Custom URL"}
@@ -264,7 +274,8 @@ function hasDraft(
   fields: { hostName: string; url: string; target: string; identityFile: string },
 ) {
   if (kind === "tailscale") return fields.hostName.trim().length > 0;
-  if (kind === "ssh") return fields.target.trim().length > 0 || fields.identityFile.trim().length > 0;
+  if (kind === "ssh")
+    return fields.target.trim().length > 0 || fields.identityFile.trim().length > 0;
   return fields.url.trim().length > 0;
 }
 

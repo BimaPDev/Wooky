@@ -14,7 +14,9 @@ function stubStorage() {
 const host = { deviceId: "host-1", name: "Home server", platform: "linux", version: "1.0.0" };
 
 function answer(status: number, body: unknown): typeof fetch {
-  return vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+  return vi.fn<typeof fetch>(
+    async () => new Response(JSON.stringify(body), { status }),
+  ) as unknown as typeof fetch;
 }
 
 describe("pairWithHost", () => {
@@ -53,7 +55,7 @@ describe("pairWithHost", () => {
   });
 
   it("reports an unreachable host", async () => {
-    const fetcher = vi.fn(async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => {
       throw new TypeError("network");
     }) as unknown as typeof fetch;
     const outcome = await pairWithHost("ABCD2345", "Phone", fetcher);

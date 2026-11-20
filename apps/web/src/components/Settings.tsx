@@ -15,6 +15,7 @@ import {
 } from "../state/actions.ts";
 import { useStore, type SettingsPage } from "../state/store.ts";
 import { AppearanceSettings } from "./AppearanceSettings.tsx";
+import { NotificationSettings } from "./anywhere/notifications/NotificationSettings.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import { FailoverSettings } from "./FailoverSettings.tsx";
 import {
@@ -225,6 +226,7 @@ function GeneralPage() {
           />
         </SettingRow>
       </SettingsSection>
+      <NotificationSettings />
       <SettingsSection title="Usage">
         <SettingRow
           title="Import usage from local agent history"

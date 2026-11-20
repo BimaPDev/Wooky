@@ -4,6 +4,11 @@ import { browserDeviceName } from "./device.ts";
 import { pairWithHost } from "./pair.ts";
 
 /** `/#/pair?code=…`: pair this browser with the host that served the page, then open the app. */
+function openPaired() {
+  location.hash = "";
+  location.reload();
+}
+
 export function PairPage() {
   const initial = pairRoute(location.hash)?.code ?? "";
   const [code, setCode] = useState(initial);
@@ -21,11 +26,6 @@ export function PairPage() {
     else setError(outcome.message);
   };
 
-  const open = () => {
-    location.hash = "";
-    location.reload();
-  };
-
   return (
     <main className="pair-page">
       <form
@@ -41,7 +41,7 @@ export function PairPage() {
             <p className="pair-body" role="status">
               Paired with {host}.
             </p>
-            <button type="button" className="button primary" autoFocus onClick={open}>
+            <button type="button" className="button primary" autoFocus onClick={openPaired}>
               Open Wooky
             </button>
           </>

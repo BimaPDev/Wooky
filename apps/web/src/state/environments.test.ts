@@ -1,4 +1,10 @@
-import type { DeviceSettings, Environment, RpcMethod, RpcParams, RpcResult } from "@wooky/contracts";
+import type {
+  DeviceSettings,
+  Environment,
+  RpcMethod,
+  RpcParams,
+  RpcResult,
+} from "@wooky/contracts";
 import { DeviceSettings as DeviceSettingsSchema } from "@wooky/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setBackend } from "./backend.ts";
@@ -51,7 +57,9 @@ describe("environments", () => {
 
   it("opens a remote with its token, then returns to the local server without one", async () => {
     const { reconnects } = setup((method, params) =>
-      method === "remote.connectInfo" ? info((params as { environmentId: string }).environmentId) : undefined,
+      method === "remote.connectInfo"
+        ? info((params as { environmentId: string }).environmentId)
+        : undefined,
     );
     await switchEnvironment("env-home");
     expect(reconnects).toEqual([{ url: "ws://env-home/ws", token: "token-env-home" }]);
@@ -78,7 +86,9 @@ describe("environments", () => {
 
   it("follows the socket status for an open remote", async () => {
     const { reconnects } = setup((method, params) =>
-      method === "remote.connectInfo" ? info((params as { environmentId: string }).environmentId) : undefined,
+      method === "remote.connectInfo"
+        ? info((params as { environmentId: string }).environmentId)
+        : undefined,
     );
     await switchEnvironment("env-home");
     expect(reconnects).toHaveLength(1);
@@ -91,7 +101,9 @@ describe("environments", () => {
 
   it("asks the local server for the next remote's token and says so when it cannot", async () => {
     const { reconnects } = setup((method, params) =>
-      method === "remote.connectInfo" ? info((params as { environmentId: string }).environmentId) : undefined,
+      method === "remote.connectInfo"
+        ? info((params as { environmentId: string }).environmentId)
+        : undefined,
     );
     await switchEnvironment("env-home");
     await switchEnvironment("env-lab");

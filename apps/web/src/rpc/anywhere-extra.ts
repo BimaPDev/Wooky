@@ -1,9 +1,5 @@
 // TODO(A1): replace with contracts once remote.join and remote.connectInfo are merged.
-import {
-  DeviceInfo,
-  Environment,
-  type RemoteConnection,
-} from "@wooky/contracts";
+import { DeviceInfo, Environment, type RemoteConnection } from "@wooky/contracts";
 import { backend } from "../state/backend.ts";
 
 export interface RemoteJoinParams {

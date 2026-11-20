@@ -105,7 +105,10 @@ export function respondAnywhere(method: string, params: unknown): unknown {
       return { ok: true as const };
     // TODO(A1): remote.join and remote.connectInfo move to contracts when A1 merges.
     case "remote.join": {
-      const { connection, label } = params as { connection: Environment["connection"]; label?: string };
+      const { connection, label } = params as {
+        connection: Environment["connection"];
+        label?: string;
+      };
       const id = `env-${Math.random().toString(36).slice(2, 8)}`;
       return {
         environment: {

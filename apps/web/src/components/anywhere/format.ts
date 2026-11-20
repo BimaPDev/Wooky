@@ -53,7 +53,10 @@ function isPrivateOrLoopback(hostname: string): boolean {
   if (host.includes(":")) {
     const bare = host.split("%")[0] ?? host;
     const first = firstHextet(bare);
-    if (first !== null && ((first >= 0xfd00 && first <= 0xfdff) || (first >= 0xfe80 && first <= 0xfebf)))
+    if (
+      first !== null &&
+      ((first >= 0xfd00 && first <= 0xfdff) || (first >= 0xfe80 && first <= 0xfebf))
+    )
       return true;
   }
   const mapped = host.startsWith("::ffff:") ? host.slice("::ffff:".length) : host;

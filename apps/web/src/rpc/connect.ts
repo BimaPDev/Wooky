@@ -11,6 +11,7 @@ import {
 import { handleThemesPush, loadDeviceSettings } from "../state/appearance.ts";
 import { refreshProviders } from "../state/actions.ts";
 import { setBackend } from "../state/backend.ts";
+import { receiveSyncPush, refreshSync } from "../state/anywhere-history.ts";
 import { receiveTerminal } from "../state/terminal.ts";
 import { receiveEvent, receiveSnapshot, useStore } from "../state/store.ts";
 import { createRpcClient, type SocketHandlers, type SocketLike } from "./client.ts";
@@ -36,7 +37,10 @@ export function startConnection() {
       }
     });
     void refreshProviders();
-    void loadDeviceSettings().then(() => bootEnvironments());
+    void loadDeviceSettings().then(() => {
+      void bootEnvironments();
+      void refreshSync();
+    });
     return;
   }
   let firstOpen = true;
@@ -49,17 +53,24 @@ export function startConnection() {
     onSnapshot: receiveSnapshot,
     onEvent: receiveEvent,
     onTerminal: receiveTerminal,
+    onSync: (push) => {
+      receiveSyncPush(push);
+      noteSyncPush(push);
+    },
     onThemes: (push) => {
       void handleThemesPush(push);
     },
-    onSync: noteSyncPush,
     onStatus: (status) => {
       useStore.setState({ status });
       noteConnectionStatus(status);
+      if (status === "open") void refreshSync();
       if (status === "open" && firstOpen) {
         firstOpen = false;
         void refreshProviders();
-        void loadDeviceSettings().then(() => bootEnvironments());
+        void loadDeviceSettings().then(() => {
+          void bootEnvironments();
+          void refreshSync();
+        });
       } else if (status === "open") {
         void refreshProviders();
       }

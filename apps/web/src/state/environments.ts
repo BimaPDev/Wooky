@@ -77,10 +77,6 @@ export function bindTransport(next: Transport) {
   transport = next;
 }
 
-export function isRemoteSession(): boolean {
-  return snapshot.session.remote;
-}
-
 export function useEnvironmentSession(): EnvironmentSession {
   return useSyncExternalStore(subscribe, () => snapshot.session);
 }

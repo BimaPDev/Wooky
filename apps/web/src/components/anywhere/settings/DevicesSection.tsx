@@ -25,7 +25,13 @@ export function DevicesSection() {
 function DeviceRow({
   device,
 }: {
-  device: { deviceId: string; name: string; platform: string; pairedAt: string; lastSeenAt: string | null };
+  device: {
+    deviceId: string;
+    name: string;
+    platform: string;
+    pairedAt: string;
+    lastSeenAt: string | null;
+  };
 }) {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(device.name);
@@ -86,7 +92,8 @@ function DeviceRow({
               onConfirm: () => {
                 void revokePaired(device.deviceId).catch((error: unknown) => {
                   useStore.setState({
-                    notice: error instanceof Error ? error.message : "Could not revoke that device.",
+                    notice:
+                      error instanceof Error ? error.message : "Could not revoke that device.",
                   });
                 });
               },

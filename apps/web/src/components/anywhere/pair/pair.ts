@@ -36,7 +36,10 @@ export async function pairWithHost(
   const parsed = PairResponse.safeParse(await response.json().catch(() => null));
   if (!parsed.success) return { ok: false, message: "The host sent an unexpected answer." };
   if (!savePairedToken(parsed.data.token)) {
-    return { ok: false, message: "This browser could not keep the pairing. Allow site storage and try again." };
+    return {
+      ok: false,
+      message: "This browser could not keep the pairing. Allow site storage and try again.",
+    };
   }
   return { ok: true, hostName: parsed.data.host.name };
 }

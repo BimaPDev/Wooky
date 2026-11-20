@@ -18,11 +18,3 @@ export function savePairedToken(token: string): boolean {
     return false;
   }
 }
-
-export function clearPairedToken() {
-  try {
-    localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* nothing to clear */
-  }
-}

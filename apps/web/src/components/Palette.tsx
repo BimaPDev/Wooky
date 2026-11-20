@@ -13,6 +13,7 @@ import {
   setPaletteOpen,
   toggleChanges,
 } from "../state/actions.ts";
+import { openHistory } from "../state/anywhere-history.ts";
 import { NO_DISABLED_PROVIDERS, useStore } from "../state/store.ts";
 import { toggleTheme } from "../state/theme.ts";
 import { isAvailable, shortcut } from "./labels.ts";
@@ -89,6 +90,16 @@ function PaletteDialog() {
         },
       },
     ];
+    const historyProject =
+      (selected ? projects[threads[selected]?.projectId ?? ""] : undefined) ??
+      Object.values(projects).find((project) => !project.scratch);
+    if (historyProject)
+      list.push({
+        id: "project-history",
+        label: "Project history",
+        hint: historyProject.name,
+        run: () => openHistory(historyProject.id),
+      });
     if (selected) {
       list.push({
         id: "open-split",

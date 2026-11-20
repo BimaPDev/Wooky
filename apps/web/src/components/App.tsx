@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { dismissNotice, setPaletteOpen } from "../state/actions.ts";
+import { useAnywhereHistory } from "../state/anywhere-history.ts";
+import { titleWithBadge, useWaitingCount } from "../state/notifications.ts";
 import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
 import { isDraftView, useStore, type Theme } from "../state/store.ts";
 import { syncRootThemeClass } from "../state/theme.ts";
@@ -7,6 +9,10 @@ import { EnvironmentBanner } from "./anywhere/EnvironmentSwitcher.tsx";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
 import { CompareView } from "./fleet/CompareView.tsx";
+import { AnywhereHistoryRoot } from "./anywhere/AnywhereHistoryRoot.tsx";
+import { PhoneDrawer } from "./anywhere/phone/phone.tsx";
+import { ComposerGate } from "./anywhere/replicas/MovedBanners.tsx";
+import { ReplicaThreadView } from "./anywhere/replicas/ReplicaThreadView.tsx";
 import { CoordinatorStrip } from "./fleet/CoordinatorStrip.tsx";
 import { FanoutDialog } from "./fleet/FanoutDialog.tsx";
 import { FleetBoard } from "./fleet/FleetBoard.tsx";
@@ -53,6 +59,8 @@ export function App() {
   );
   const fleetBoardOpen = useStore((state) => state.fleetBoardOpen);
   const compareGroupId = useStore((state) => state.compareGroupId);
+  const replicaView = useAnywhereHistory((state) => state.replicaView !== null);
+  const waiting = useWaitingCount();
   const macDesktop = isMacDesktopShell();
   const desktopShell = isElectronShell();
 
@@ -86,7 +94,8 @@ export function App() {
         : projectTitle === ""
           ? `${threadTitle} - Wooky`
           : `${projectTitle} / ${threadTitle} - Wooky`;
-    if (document.title !== title) document.title = title;
+    const badged = titleWithBadge(title, waiting);
+    if (document.title !== badged) document.title = badged;
 
     const href = projectTitle ? projectMonogramIconDataUrl(projectTitle) : null;
     let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
@@ -102,7 +111,7 @@ export function App() {
     }
     link.type = "image/png";
     link.href = href;
-  }, [project?.name, thread?.title]);
+  }, [project?.name, thread?.title, waiting]);
 
   // sync: global keyboard shortcut for the command palette
   useEffect(() => {
@@ -133,6 +142,7 @@ export function App() {
       <Wallpaper />
       <div className={shellClass}>
         {sidebarOpen ? <Sidebar macDesktop={macDesktop} /> : null}
+        <PhoneDrawer />
         <div className="workspace">
           <TopBar macDesktop={macDesktop} />
           <EnvironmentBanner />
@@ -145,6 +155,7 @@ export function App() {
                   splitActive,
                   threadId,
                   draftView,
+                  replicaView,
                 })}
                 {notice ? (
                   <div className="notice-bar" role="alert">
@@ -167,6 +178,7 @@ export function App() {
       </div>
       {settingsOpen ? <Settings /> : null}
       <Palette />
+      <AnywhereHistoryRoot />
       <JumpSwitcher />
       <FanoutDialog />
       <Dialogs />
@@ -180,25 +192,50 @@ function mainView({
   splitActive,
   threadId,
   draftView,
+  replicaView,
 }: {
   fleetBoardOpen: boolean;
   compareGroupId: string | null;
   splitActive: boolean;
   threadId: string | null;
   draftView: boolean;
+  replicaView: boolean;
 }): ReactNode {
   if (fleetBoardOpen) return <FleetBoard />;
   if (compareGroupId) return <CompareView groupId={compareGroupId} />;
-  if (draftView) return <NewThreadView />;
+  if (replicaView) {
+    return (
+      <Conversation>
+        <ReplicaThreadView />
+      </Conversation>
+    );
+  }
+  if (draftView) {
+    return (
+      <Conversation>
+        <NewThreadView />
+      </Conversation>
+    );
+  }
   if (splitActive) return <PaneDock />;
   if (threadId) {
     return (
-      <>
+      <Conversation>
         <CoordinatorStrip threadId={threadId} />
         <ThreadView key={threadId} threadId={threadId} />
-        <Composer key={`composer-${threadId}`} threadId={threadId} />
-      </>
+        <ComposerGate threadId={threadId}>
+          <Composer key={`composer-${threadId}`} threadId={threadId} />
+        </ComposerGate>
+      </Conversation>
     );
   }
   return <p className="empty-state">Pick a thread or start a new one.</p>;
+}
+
+function Conversation({ children }: { children: ReactNode }) {
+  return (
+    <div className="conversation" data-workspace-area="conversation">
+      {children}
+    </div>
+  );
 }
