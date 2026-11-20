@@ -46,6 +46,7 @@ const BINDS: {
 
 export function AnywhereSettings() {
   const settings = useStore((state) => state.deviceSettings);
+  const sessionRemote = useEnvironmentSession().remote;
   const [problem, setProblem] = useState<string | null>(null);
 
   // sync: device, tailscale, paired devices and sync status from the server
@@ -82,8 +83,8 @@ export function AnywhereSettings() {
       {problem ? <p className="anywhere-warn">{problem}</p> : null}
       <ThisDevice />
       <Hosting settings={settings} />
-      <PairingSection />
-      <DevicesSection />
+      {sessionRemote ? null : <PairingSection />}
+      {sessionRemote ? null : <DevicesSection />}
       <Environments />
       <SyncSection settings={settings} />
     </div>

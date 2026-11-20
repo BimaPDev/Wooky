@@ -29,7 +29,10 @@ type Reply = (method: string, params: unknown) => unknown;
 function setup(reply: Reply = () => undefined) {
   const reconnects: { url: string; token: string | null }[] = [];
   bindTransport({
-    reconnect: (url, token) => reconnects.push({ url, token }),
+    reconnect: (url, token) => {
+      reconnects.push({ url, token });
+      useStore.setState({ status: "open" });
+    },
     localUrl: () => "ws://local/ws",
   });
   const calls: string[] = [];

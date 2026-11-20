@@ -38,6 +38,8 @@ interface EnvironmentSnapshot {
   tailscale: TailscaleStatus | null;
   /** The machines this client knows, kept from the local server while another one is open. */
   environments: Environment[];
+  /** Cached copy of the local server's machine list, used while a remote is open. */
+  localEnvironments: Environment[];
   devices: PairedDeviceView[];
   syncStatus: SyncStatus | null;
   probes: Record<string, ProbeState>;
@@ -59,6 +61,7 @@ let snapshot: EnvironmentSnapshot = {
   device: null,
   tailscale: null,
   environments: [],
+  localEnvironments: [],
   devices: [],
   syncStatus: null,
   probes: {},
@@ -83,7 +86,9 @@ export function useEnvironmentSession(): EnvironmentSession {
 }
 
 export function useEnvironments(): Environment[] {
-  return useSyncExternalStore(subscribe, () => snapshot.environments);
+  return useSyncExternalStore(subscribe, () =>
+    snapshot.session.remote ? snapshot.localEnvironments : snapshot.environments,
+  );
 }
 
 export function useDeviceInfo(): DeviceInfo | null {
@@ -220,8 +225,12 @@ export async function refreshSyncStatus() {
 
 function syncEnvironmentsFromStore(settings: DeviceSettings | null) {
   if (snapshot.session.remote || !settings) return;
-  if (settings.environments === snapshot.environments) return;
-  emit({ environments: settings.environments });
+  if (
+    settings.environments === snapshot.environments &&
+    settings.environments === snapshot.localEnvironments
+  )
+    return;
+  emit({ environments: settings.environments, localEnvironments: settings.environments });
 }
 
 // The switcher list belongs to this client's own server. A remote server's settings never replace it.
@@ -296,15 +305,41 @@ async function connectRemote(id: string, reset: boolean) {
   if (reset) await resetModel();
   if (useStore.getState().fixture) {
     if (!reset) await resetModel();
-    void loadDeviceSettings();
+    await loadDeviceSettings();
     return;
   }
   transport?.reconnect(info.wsUrl, info.token);
-  void loadDeviceSettings();
+  const ok = await waitForOpen(10000);
+  if (!ok) {
+    useStore.setState({ notice: `Could not reach ${label}.` });
+    return;
+  }
+  await loadDeviceSettings();
 }
 
 function localLabel() {
   return snapshot.device?.name ?? "this Mac";
+}
+
+async function waitForOpen(timeoutMs: number): Promise<boolean> {
+  if (useStore.getState().status === "open") return true;
+  return new Promise((resolve) => {
+    let done = false;
+    const unsubscribe = useStore.subscribe((state) => {
+      if (done) return;
+      if (state.status === "open") {
+        done = true;
+        unsubscribe();
+        resolve(true);
+      }
+    });
+    setTimeout(() => {
+      if (done) return;
+      done = true;
+      unsubscribe();
+      resolve(false);
+    }, timeoutMs);
+  });
 }
 
 export async function switchEnvironment(id: string) {
@@ -322,8 +357,15 @@ export async function switchEnvironment(id: string) {
       },
     });
     await resetModel();
-    if (!useStore.getState().fixture) transport?.reconnect(transport.localUrl(), null);
-    void loadDeviceSettings();
+    if (!useStore.getState().fixture) {
+      transport?.reconnect(transport.localUrl(), null);
+      const ok = await waitForOpen(10000);
+      if (!ok) {
+        useStore.setState({ notice: "Could not reach This Mac." });
+        return;
+      }
+    }
+    await loadDeviceSettings();
     syncEnvironmentsFromStore(useStore.getState().deviceSettings);
     return;
   }
