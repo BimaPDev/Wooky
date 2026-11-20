@@ -6,6 +6,9 @@ import { discoverServerUrl, pidAlive, publishServerPresence, SERVER_DOWN } from 
 import { startServer } from "./server.ts";
 import { tempDir } from "./testing.ts";
 
+const wookyShimPath = (home: string) =>
+  join(home, "bin", process.platform === "win32" ? "wooky.cmd" : "wooky");
+
 describe("server presence", () => {
   let release: (() => void) | undefined;
   let home = "";
@@ -36,13 +39,11 @@ describe("server presence", () => {
       pid: process.pid,
       startedAt: "2026-01-01T00:00:00.000Z",
     });
-    const shimPath = join(home, "bin", "wooky");
+    const shimPath = wookyShimPath(home);
     const shim = await readFile(shimPath, "utf8");
     expect(shim).toContain(`wooky-shim pid=${process.pid}`);
     expect(shim).toContain(process.execPath);
-    expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
-    const mode = await stat(shimPath);
-    expect(mode.mode & 0o111).not.toBe(0);
+    expect(shim).toMatch(/^(#!\/bin\/sh|@echo off)/);
     expect(currentAgentRuntime()).toEqual({
       serverUrl: "http://127.0.0.1:4317",
       wookyBin: shimPath,
@@ -55,6 +56,15 @@ describe("server presence", () => {
     expect(currentAgentRuntime()).toBeNull();
   });
 
+  it.runIf(process.platform !== "win32")("sets the execute bit on the POSIX shim", async () => {
+    home = await tempDir("wooky-home");
+    release = publishServerPresence(home, "http://127.0.0.1:4317", () => "t");
+    const mode = await stat(wookyShimPath(home));
+    expect(mode.mode & 0o111).not.toBe(0);
+    release();
+    release = undefined;
+  });
+
   it("replaces a dead age shim and leaves a live one's alone", async () => {
     home = await tempDir("wooky-home");
     await mkdir(join(home, "bin"), { recursive: true });
@@ -63,7 +73,7 @@ describe("server presence", () => {
     release = publishServerPresence(home, "http://127.0.0.1:4317", () => "t");
     await expect(readFile(join(home, "bin", "age"), "utf8")).rejects.toThrow(/ENOENT/);
     await expect(readFile(join(home, "bin", "age.cmd"), "utf8")).rejects.toThrow(/ENOENT/);
-    expect(await readFile(join(home, "bin", "wooky"), "utf8")).toContain("wooky-shim");
+    expect(await readFile(wookyShimPath(home), "utf8")).toContain("wooky-shim");
 
     await writeFile(
       join(home, "bin", "age"),
@@ -81,12 +91,17 @@ describe("server presence", () => {
       join(home, "server.json"),
       `${JSON.stringify({ url: "http://127.0.0.1:2", pid: process.pid + 1, startedAt: "later" })}\n`,
     );
-    await writeFile(join(home, "bin", "wooky"), "#!/bin/sh\n# wooky-shim pid=0\nexec true\n");
+    await writeFile(
+      wookyShimPath(home),
+      process.platform === "win32"
+        ? "@echo off\r\nrem wooky-shim pid=0\r\n"
+        : "#!/bin/sh\n# wooky-shim pid=0\nexec true\n",
+    );
     release();
     release = undefined;
     const kept = JSON.parse(await readFile(join(home, "server.json"), "utf8")) as { url: string };
     expect(kept.url).toBe("http://127.0.0.1:2");
-    expect(await readFile(join(home, "bin", "wooky"), "utf8")).toContain("pid=0");
+    expect(await readFile(wookyShimPath(home), "utf8")).toContain("pid=0");
   });
 
   it("discovers a live server.json and rejects a stale pid", async () => {
@@ -128,7 +143,7 @@ describe("startServer presence", () => {
       };
       expect(record.url).toBe(server.url);
       expect(record.pid).toBe(process.pid);
-      expect(await readFile(join(home, "bin", "wooky"), "utf8")).toContain(process.execPath);
+      expect(await readFile(wookyShimPath(home), "utf8")).toContain(process.execPath);
       expect(currentAgentRuntime()?.serverUrl).toBe(server.url);
     } finally {
       await server.close();

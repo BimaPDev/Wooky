@@ -1,4 +1,10 @@
 import { spawn } from "node:child_process";
+import {
+  isTreeAlive,
+  killTree,
+  killTreeSync,
+  type KillTreeSignal,
+} from "../../process/kill-tree.ts";
 import { StringDecoder } from "node:string_decoder";
 import type { z } from "zod";
 import { type JsonRpcErrorPayload, type JsonRpcId, parseJsonRpcMessage } from "./protocol.ts";
@@ -9,6 +15,7 @@ const SIGKILL_GRACE_MS = 3_000;
 // can inherit them) before we destroy them so the close event still fires.
 const STDIO_CLOSE_GRACE_MS = 250;
 const GROUP_POLL_MS = 20;
+const WIN32_STDIO_KILL_MS = 500;
 // Polls allowed after SIGKILL before we stop waiting for an unreaped group member.
 const GROUP_POLL_ATTEMPTS = 100;
 
@@ -125,20 +132,13 @@ export class JsonRpcClient {
   });
   private interruptPromise: Promise<void> | null = null;
   private teardownPromise: Promise<ProcessExitInfo> | null = null;
+  private win32KillRequested = false;
 
   // Last resort if the Wooky server dies without closing the client: the child
   // is detached, so nothing else would stop its group. Must stay synchronous.
   private readonly exitGuard = (): void => {
     if (this.groupGone || typeof this.pid !== "number") return;
-    try {
-      if (process.platform === "win32") {
-        if (this.processAlive) process.kill(this.pid, "SIGKILL");
-      } else {
-        process.kill(-this.pid, "SIGKILL");
-      }
-    } catch {
-      // Already gone.
-    }
+    killTreeSync(this.pid, "SIGKILL", { mode: "group" });
   };
 
   constructor(options: JsonRpcClientOptions) {
@@ -406,11 +406,42 @@ export class JsonRpcClient {
       this.child.stdin.end();
     }
 
-    this.signalGroup("SIGTERM");
-    this.watchGroup();
+    if (process.platform === "win32") {
+      await this.win32TeardownKill();
+    } else {
+      this.signalGroup("SIGTERM");
+      this.watchGroup();
+    }
 
     const [info] = await Promise.all([this.closed, this.groupGonePromise]);
     return info;
+  }
+
+  private async win32TeardownKill(): Promise<void> {
+    this.win32KillRequested = true;
+    const waitMs = Math.min(WIN32_STDIO_KILL_MS, this.stdioGraceMs);
+    let stdioTimer: ReturnType<typeof setTimeout> | undefined;
+    const stdioTimeout = new Promise<void>((resolve) => {
+      stdioTimer = setTimeout(resolve, waitMs);
+    });
+    const stdioClosed = new Promise<void>((resolve) => {
+      if (!this.processAlive) resolve();
+      else this.child.once("close", () => resolve());
+    });
+    await Promise.race([stdioClosed, stdioTimeout]);
+    if (stdioTimer !== undefined) clearTimeout(stdioTimer);
+    void killTree(this.pid as number, "SIGKILL", { mode: "group" });
+    let polls = 0;
+    while (!this.groupGone && polls < GROUP_POLL_ATTEMPTS) {
+      polls += 1;
+      if (!this.refreshGroup()) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, GROUP_POLL_MS));
+    }
+    const pid = this.pid;
+    if (!this.groupGone && typeof pid === "number") {
+      killTreeSync(pid, "SIGKILL", { mode: "group" });
+      this.markGroupGone();
+    }
   }
 
   /** Whether anything in the app-server's process group is still running. */
@@ -423,19 +454,16 @@ export class JsonRpcClient {
     }
     if (process.platform === "win32") {
       if (this.processAlive) return true;
-      this.markGroupGone();
+      if (!this.win32KillRequested) {
+        this.markGroupGone();
+        return false;
+      }
       return false;
     }
-    try {
-      process.kill(-pid, 0);
-      return true;
-    } catch (err) {
-      // EPERM means the group exists but we may not signal it: still alive.
-      if (isErrnoCode(err, "EPERM")) return true;
-      // Once the group is seen empty, never signal it again: the pid may be reused.
-      this.markGroupGone();
-      return false;
-    }
+    if (isTreeAlive(pid)) return true;
+    // Once the group is seen empty, never signal it again: the pid may be reused.
+    this.markGroupGone();
+    return false;
   }
 
   private markGroupGone(): void {
@@ -449,14 +477,9 @@ export class JsonRpcClient {
   private signalGroup(signal: NodeJS.Signals): void {
     const pid = this.pid;
     if (typeof pid !== "number" || !this.refreshGroup()) return;
-    try {
-      // Negative pid targets the whole group we lead (detached: true), so any
-      // grandchildren die with the app-server. Never fall back to the bare pid:
-      // after the child exits it may belong to someone else.
-      process.kill(process.platform === "win32" ? pid : -pid, signal);
-    } catch {
-      // The group went away between the check and the signal.
-    }
+    this.win32KillRequested = true;
+    const treeSignal: KillTreeSignal = signal === "SIGKILL" ? "SIGKILL" : "SIGTERM";
+    void killTree(pid, treeSignal, { mode: "group" });
   }
 
   // After SIGTERM, poll the group so teardown ends as soon as it is gone, and escalate
@@ -615,10 +638,6 @@ export class JsonRpcClient {
     const base = `Codex app-server exited (${detail})`;
     return new Error(stderr ? `${base}: ${stderr}` : base);
   }
-}
-
-function isErrnoCode(err: unknown, code: string): boolean {
-  return typeof err === "object" && err !== null && "code" in err && err.code === code;
 }
 
 export class UnhandledServerRequestError extends Error {

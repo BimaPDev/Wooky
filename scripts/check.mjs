@@ -2,6 +2,7 @@
 // Single entry point for every gate. `--fast` is what the pre-commit hook runs;
 // the full run is what CI and the head chef run before accepting a worker's dish.
 import { spawnSync } from "node:child_process";
+import { pnpmCommand } from "./pnpm-spawn.mjs";
 
 const fast = process.argv.includes("--fast");
 
@@ -18,11 +19,22 @@ const steps = [
       ]),
 ];
 
+function runCommand(cmd, args) {
+  if (cmd === "node") {
+    return spawnSync(process.execPath, args, { stdio: "inherit" });
+  }
+  if (cmd === "pnpm") {
+    const { file, args: argv } = pnpmCommand(args, process.env);
+    return spawnSync(file, argv, { stdio: "inherit", env: process.env });
+  }
+  return spawnSync(cmd, args, { stdio: "inherit" });
+}
+
 const results = [];
 for (const [name, [cmd, ...args]] of steps) {
   const started = Date.now();
   process.stdout.write(`\n── ${name} ──\n`);
-  const run = spawnSync(cmd, args, { stdio: "inherit" });
+  const run = runCommand(cmd, args);
   results.push({ name, ok: run.status === 0, ms: Date.now() - started });
 }
 

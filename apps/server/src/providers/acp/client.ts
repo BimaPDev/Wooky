@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { killTree, killTreeSync, type KillTreeSignal } from "../../process/kill-tree.ts";
 import type { z } from "zod";
 import { parseIncoming, type RpcIdValue } from "./protocol.ts";
 
@@ -9,6 +10,7 @@ export function acpDebug(message: string): void {
   if (process.env.WOOKY_DEBUG === "1") console.info(message);
 }
 const STDERR_CAP_BYTES = 4 * 1024;
+const WIN32_STDIO_KILL_MS = 500;
 
 export class AcpRpcError extends Error {
   readonly code: number;
@@ -129,7 +131,7 @@ export class AcpClient {
     this.pid = this.child.pid;
     this.exitGuard = () => {
       if (this.exitInfo || this.pid === undefined) return;
-      this.signalGroup("SIGKILL");
+      killTreeSync(this.pid, "SIGKILL", { mode: "group" });
     };
     if (this.pid !== undefined) trackGuard(this.exitGuard);
 
@@ -163,6 +165,14 @@ export class AcpClient {
   /** SIGTERM the process group we spawned, then SIGKILL after the grace period. */
   terminate(): void {
     if (this.exitInfo || this.killTimer) return;
+    if (process.platform === "win32") {
+      this.child.stdin?.end();
+      this.killTimer = setTimeout(() => {
+        this.killTimer = null;
+        if (!this.exitInfo) this.signalGroup("SIGKILL");
+      }, WIN32_STDIO_KILL_MS);
+      return;
+    }
     this.signalGroup("SIGTERM");
     this.killTimer = setTimeout(() => {
       this.killTimer = null;
@@ -325,16 +335,8 @@ export class AcpClient {
   private signalGroup(signal: NodeJS.Signals): void {
     const pid = this.pid;
     if (pid === undefined) return;
-    try {
-      if (process.platform === "win32") process.kill(pid, signal);
-      else process.kill(-pid, signal);
-    } catch {
-      try {
-        process.kill(pid, signal);
-      } catch {
-        // Already gone.
-      }
-    }
+    const treeSignal: KillTreeSignal = signal === "SIGKILL" ? "SIGKILL" : "SIGTERM";
+    void killTree(pid, treeSignal, { mode: "group" });
   }
 
   private stderrText(): string {

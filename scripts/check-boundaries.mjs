@@ -3,8 +3,9 @@
 // Each rule encodes a project principle; see AGENTS.md "Boundaries".
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const SKIP = new Set(["node_modules", "dist", "out", "release", ".git", ".wooky", ".wooky-dev"]);
 
 function walk(dir, files = []) {

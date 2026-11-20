@@ -213,7 +213,7 @@ describe("JsonRpcClient", () => {
     }
   }, 30_000);
 
-  describe("process-group teardown", () => {
+  describe.skipIf(process.platform === "win32")("process-group teardown", () => {
     function startStubbornClient(
       mode: "quiet" | "shared-stdio" | "exit-early" | "graceful",
       grace: "short" | "default" = "short",
@@ -358,58 +358,62 @@ describe("JsonRpcClient", () => {
       expect(process.listenerCount("exit")).toBe(before);
     });
 
-    it("kills the app-server's group when the Wooky process exits without closing the client", async () => {
-      // The host's exit listener is registered after the client's guard, so it runs
-      // once the guard has signalled the group. It then waits (Atomics.wait, bounded,
-      // not a spin) for the group to disappear and reports what it saw before it dies.
-      const script = [
-        'import { spawnSync } from "node:child_process";',
-        'import { writeSync } from "node:fs";',
-        `import { JsonRpcClient } from ${JSON.stringify(jsonRpcModulePath)};`,
-        "const client = new JsonRpcClient({",
-        "  bin: process.execPath,",
-        '  args: ["-e", "setInterval(() => {}, 1 << 30);"],',
-        "  cwd: process.cwd(),",
-        "  onNotification: () => {},",
-        "  onServerRequest: async () => ({}),",
-        "});",
-        "const pid = client.pid;",
-        "const groupAlive = () => {",
-        "  try { process.kill(-pid, 0); } catch { return false; }",
-        // A killed child stays a zombie until this host reaps it; count that as gone.
-        '  const ps = spawnSync("ps", ["-o", "stat=", "-g", String(pid)], { encoding: "utf8" });',
-        '  const states = ps.stdout.split("\\n").filter((line) => line.trim().length > 0);',
-        '  return !states.every((state) => state.trim().startsWith("Z"));',
-        "};",
-        'process.on("exit", () => {',
-        "  const deadline = Date.now() + 5000;",
-        "  while (groupAlive() && Date.now() < deadline) {",
-        // wooky-allow sleep: synchronous exit handler; no event exists for process-group exit
-        "    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);",
-        "  }",
-        "  writeSync(1, JSON.stringify({ pid, groupGone: !groupAlive() }));",
-        "});",
-        "process.exit(0);",
-      ].join("\n");
+    it.skipIf(process.platform === "win32")(
+      "kills the app-server's group when the Wooky process exits without closing the client",
+      async () => {
+        // The host's exit listener is registered after the client's guard, so it runs
+        // once the guard has signalled the group. It then waits (Atomics.wait, bounded,
+        // not a spin) for the group to disappear and reports what it saw before it dies.
+        const script = [
+          'import { spawnSync } from "node:child_process";',
+          'import { writeSync } from "node:fs";',
+          `import { JsonRpcClient } from ${JSON.stringify(jsonRpcModulePath)};`,
+          "const client = new JsonRpcClient({",
+          "  bin: process.execPath,",
+          '  args: ["-e", "setInterval(() => {}, 1 << 30);"],',
+          "  cwd: process.cwd(),",
+          "  onNotification: () => {},",
+          "  onServerRequest: async () => ({}),",
+          "});",
+          "const pid = client.pid;",
+          "const groupAlive = () => {",
+          "  try { process.kill(-pid, 0); } catch { return false; }",
+          // A killed child stays a zombie until this host reaps it; count that as gone.
+          '  const ps = spawnSync("ps", ["-o", "stat=", "-g", String(pid)], { encoding: "utf8" });',
+          '  const states = ps.stdout.split("\\n").filter((line) => line.trim().length > 0);',
+          '  return !states.every((state) => state.trim().startsWith("Z"));',
+          "};",
+          'process.on("exit", () => {',
+          "  const deadline = Date.now() + 5000;",
+          "  while (groupAlive() && Date.now() < deadline) {",
+          // wooky-allow sleep: synchronous exit handler; no event exists for process-group exit
+          "    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);",
+          "  }",
+          "  writeSync(1, JSON.stringify({ pid, groupGone: !groupAlive() }));",
+          "});",
+          "process.exit(0);",
+        ].join("\n");
 
-      const host = spawn(process.execPath, ["--input-type=module", "-e", script], {
-        cwd: workDir,
-        stdio: ["ignore", "pipe", "inherit"],
-      });
-      let output = "";
-      host.stdout.on("data", (chunk: Buffer) => {
-        output += chunk.toString("utf8");
-      });
-      await new Promise<void>((resolve) => host.on("close", () => resolve()));
+        const host = spawn(process.execPath, ["--input-type=module", "-e", script], {
+          cwd: workDir,
+          stdio: ["ignore", "pipe", "inherit"],
+        });
+        let output = "";
+        host.stdout.on("data", (chunk: Buffer) => {
+          output += chunk.toString("utf8");
+        });
+        await new Promise<void>((resolve) => host.on("close", () => resolve()));
 
-      const report = JSON.parse(output) as { pid: number; groupGone: boolean };
-      try {
-        expect(Number.isInteger(report.pid)).toBe(true);
-        expect(report.groupGone).toBe(true);
-      } finally {
-        if (isPidAlive(report.pid)) process.kill(report.pid, "SIGKILL");
-      }
-    }, 20_000);
+        const report = JSON.parse(output) as { pid: number; groupGone: boolean };
+        try {
+          expect(Number.isInteger(report.pid)).toBe(true);
+          expect(report.groupGone).toBe(true);
+        } finally {
+          if (isPidAlive(report.pid)) process.kill(report.pid, "SIGKILL");
+        }
+      },
+      20_000,
+    ); // POSIX process groups and `ps -g`
   });
 
   // Must match PENDING_APPROVALS in the fake app-server.
