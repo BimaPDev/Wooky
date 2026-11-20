@@ -244,7 +244,7 @@ function NewThreadDialog({ initialProjectId }: { initialProjectId: string | null
             ))}
           </select>
         </label>
-        <label className="toggle">
+        <label className="checkbox-row">
           <input
             type="checkbox"
             checked={isolate}

@@ -4,10 +4,16 @@ import { saveTerminalOpen } from "../../lib/shell.ts";
 import { backend } from "../../state/backend.ts";
 import { requestTerminalSession, subscribeTerminal } from "../../state/terminal.ts";
 import { draftProjectId, useStore } from "../../state/store.ts";
+import { IconStop } from "../Icons.tsx";
 import { Tooltip } from "../Tooltip.tsx";
+import { countHiddenChips } from "./fit-chips.ts";
 import { ScriptIcon } from "./icons.tsx";
 import { detectPreviewPort, previewTemplate, resolvePreviewUrl } from "./preview-port.ts";
 import { openExternalUrl } from "../terminal/links.ts";
+
+/** Matches `.scripts-bar` gap and the width of `.script-overflow`, in px. */
+const CHIP_GAP = 4;
+const OVERFLOW_BUTTON_WIDTH = 32;
 
 export function ScriptsBar() {
   const project = useStore((state) => {
@@ -84,14 +90,8 @@ export function ScriptsBar() {
     if (!bar || !measure || typeof ResizeObserver === "undefined") return;
     const fit = () => {
       const chips = [...measure.querySelectorAll<HTMLElement>("[data-script-chip]")];
-      const budget = bar.clientWidth;
-      let used = 0;
-      let hidden = 0;
-      for (const chip of chips) {
-        used += chip.offsetWidth + 4;
-        if (used > budget) hidden += 1;
-      }
-      setHiddenCount(hidden);
+      const widths = chips.map((chip) => chip.offsetWidth);
+      setHiddenCount(countHiddenChips(widths, bar.clientWidth, CHIP_GAP, OVERFLOW_BUTTON_WIDTH));
     };
     fit();
     const observer = new ResizeObserver(fit);
@@ -123,6 +123,22 @@ export function ScriptsBar() {
     }
   };
 
+  const stop = async (script: ProjectScript) => {
+    const sessionId = live[script.id];
+    if (!sessionId) return;
+    try {
+      await backend().call("terminal.close", { sessionId });
+      setLive((current) => {
+        const { [script.id]: _gone, ...rest } = current;
+        return rest;
+      });
+    } catch (error) {
+      useStore.setState({
+        notice: error instanceof Error ? error.message : "Could not stop the script.",
+      });
+    }
+  };
+
   const preview = (script: ProjectScript) => {
     const sessionId = live[script.id];
     const template = previewTemplate(script.previewUrl, project.settings.defaultPreviewUrl);
@@ -150,6 +166,18 @@ export function ScriptsBar() {
             {running ? <span className="script-dot" aria-label="Running" /> : null}
           </button>
         </Tooltip>
+        {running ? (
+          <Tooltip label="Stop">
+            <button
+              type="button"
+              className="script-stop"
+              aria-label={`Stop ${script.name}`}
+              onClick={() => void stop(script)}
+            >
+              <IconStop />
+            </button>
+          </Tooltip>
+        ) : null}
         {template ? (
           <Tooltip label={waitingPort ? "Waiting for the server to print its URL" : "Open preview"}>
             <button

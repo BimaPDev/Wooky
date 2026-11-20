@@ -2555,6 +2555,20 @@ button.tool-line:active {
   accent-color: var(--accent);
 }
 
+/* A labelled checkbox in a form. Not the pill switch (.toggle). */
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  flex: none;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
 .suggestions {
   list-style: none;
   margin: calc(-1 * var(--space-2)) 0 0;
@@ -7253,12 +7267,19 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 /* Project scripts bar and settings */
+/* Both bars share one cell, so the wrap is as wide as every chip (the measuring copy) up to the
+   max width, whatever the visible bar currently shows. */
 .scripts-bar-wrap {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 0 1 auto;
   min-width: 0;
   max-width: 45vw;
+}
+
+.scripts-bar-wrap > * {
+  grid-area: 1 / 1;
 }
 
 .scripts-bar {
@@ -7269,7 +7290,6 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .scripts-bar.measure {
-  position: absolute;
   visibility: hidden;
   pointer-events: none;
   height: 0;
@@ -7287,6 +7307,7 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .script-run,
+.script-stop,
 .script-preview,
 .script-overflow {
   display: inline-flex;
@@ -7302,7 +7323,13 @@ html[data-wallpaper] .popover.popover-picker {
   cursor: pointer;
 }
 
+.script-stop {
+  padding: 0 var(--space-1);
+  border-left: 1px solid var(--line);
+}
+
 .script-run:hover,
+.script-stop:hover,
 .script-preview:hover:not(:disabled),
 .script-overflow:hover {
   background: var(--bg-hover);
@@ -7310,6 +7337,7 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .script-run:active,
+.script-stop:active,
 .script-preview:active:not(:disabled),
 .script-overflow:active {
   background: var(--bg-active);
@@ -7327,6 +7355,7 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .script-run:focus-visible,
+.script-stop:focus-visible,
 .script-preview:focus-visible,
 .script-overflow:focus-visible {
   outline: 2px solid var(--accent);

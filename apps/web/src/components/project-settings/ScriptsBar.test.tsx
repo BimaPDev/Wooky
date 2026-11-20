@@ -106,6 +106,7 @@ beforeEach(() => {
     call: <M extends RpcMethod>(method: M, params: RpcParams<M>) => {
       calls.push({ method, params });
       if (method === "terminal.list") return Promise.resolve(listed as RpcResult<M>);
+      if (method === "terminal.close") return Promise.resolve(undefined as RpcResult<M>);
       if (method === "scripts.run") {
         return Promise.resolve(liveSession as RpcResult<M>);
       }
@@ -194,6 +195,23 @@ describe("ScriptsBar", () => {
     });
     expect(useStore.getState().terminalOpen).toBe(true);
     expect(host?.querySelector(".script-dot")).not.toBeNull();
+  });
+
+  it("stops a running script by closing its terminal session", async () => {
+    listed = [liveSession];
+    render(<ScriptsBar />);
+    await flush();
+    const stop = host?.querySelector<HTMLButtonElement>('[aria-label="Stop Dev"]');
+    expect(stop).not.toBeNull();
+    await act(async () => {
+      stop?.click();
+      await Promise.resolve();
+    });
+    expect(calls.find((call) => call.method === "terminal.close")?.params).toEqual({
+      sessionId: "term_dev",
+    });
+    expect(host?.querySelector(".script-dot")).toBeNull();
+    expect(host?.querySelector('[aria-label="Stop Dev"]')).toBeNull();
   });
 
   it("reads a live script session from terminal.list as running", async () => {
