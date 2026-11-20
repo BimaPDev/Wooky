@@ -1,3 +1,7 @@
+import type { AppearanceTheme } from "@wooky/contracts";
+
+export type SceneTuning = { dim: number; panelBlur: number; surfaceOpacity: number };
+
 export type WallpaperScene = {
   id: string;
   name: string;
@@ -5,6 +9,18 @@ export type WallpaperScene = {
   canvas: string;
   accent: string;
   svg: string;
+  /** Overrides the built-in wallpaper defaults for this scene. */
+  tuning?: SceneTuning;
+  colors?: AppearanceTheme["colors"];
+  css?: string;
+  /** Palette and picture for the other colour mode. */
+  variant?: {
+    canvas: string;
+    accent: string;
+    svg: string;
+    tuning: SceneTuning;
+    colors?: AppearanceTheme["colors"];
+  };
 };
 
 const SVG_WIDTH = 1920;
