@@ -1,4 +1,6 @@
 export { applyEvent, applyEvents, emptyReadModel } from "./project.ts";
+export { applyReplicaEvents, emptyReplicaModel } from "./replicas.ts";
+export { applySettingsPatch } from "./settings.ts";
 export {
   cooldownUntil,
   DEFAULT_MODEL_RANKING,

@@ -152,4 +152,11 @@ describe("DeviceSettingsPatch", () => {
       confirmDelete: false,
     });
   });
+
+  it("patching sync.enabled leaves hosting and environments untouched", () => {
+    const patch = DeviceSettingsPatch.parse({ sync: { enabled: true } });
+    expect(patch.hosting).toBeUndefined();
+    expect(patch.environments).toBeUndefined();
+    expect(patch).toEqual({ sync: { enabled: true } });
+  });
 });

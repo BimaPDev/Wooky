@@ -115,6 +115,7 @@ describe("transport", () => {
         cooldowns: {},
         groups: {},
         reviewNotes: {},
+        pendingClaims: {},
       },
     });
     expect(await client.call("subscribe", { fromSeq: 0 })).toMatchObject({

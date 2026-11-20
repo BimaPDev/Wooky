@@ -8,3 +8,5 @@ coverage
 .wooky-dev
 .evidence
 .kitchen
+# Copied verbatim from the Anywhere design. Prettier rewrites emphasis and table padding.
+docs/anywhere.md

@@ -200,7 +200,33 @@ function createHandlers(
         reserveWait: conn.reserveAgentWait,
         releaseWait: conn.releaseAgentWait,
       }),
+    "device.info": notImplemented,
+    "device.rename": notImplemented,
+    "remote.tailscaleStatus": notImplemented,
+    "remote.pairingCode.create": notImplemented,
+    "remote.devices.list": notImplemented,
+    "remote.devices.revoke": notImplemented,
+    "remote.devices.rename": notImplemented,
+    "sync.status": notImplemented,
+    "sync.now": notImplemented,
+    "sync.snapshots.list": notImplemented,
+    "sync.snapshots.diff": notImplemented,
+    "sync.snapshots.restore": notImplemented,
+    "sync.snapshots.create": notImplemented,
+    "sync.conflicts.resolve": notImplemented,
+    "terminal.list": notImplemented,
+    "terminal.attach": notImplemented,
+    "scripts.run": notImplemented,
+    "git.status": notImplemented,
+    "git.commit": notImplemented,
+    "git.push": notImplemented,
+    "git.pr.create": notImplemented,
+    "git.pr.status": notImplemented,
   };
+}
+
+function notImplemented(): never {
+  throw new ServiceError("unavailable", "not implemented");
 }
 
 /** Attaches the RPC WebSocket at WOOKY_WS_PATH. Returns a function that closes every socket. */

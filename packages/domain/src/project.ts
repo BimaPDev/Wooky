@@ -1,5 +1,6 @@
 import type {
   AgeEvent,
+  Project,
   ReadModel,
   ReviewNote,
   Thread,
@@ -22,6 +23,7 @@ export function emptyReadModel(): ReadModel {
     cooldowns: {},
     groups: {},
     reviewNotes: {},
+    pendingClaims: {},
   };
 }
 
@@ -41,7 +43,22 @@ export function applyEvent(model: ReadModel, event: AgeEvent): ReadModel {
 function reduce(model: ReadModel, event: AgeEvent): ReadModel {
   switch (event.type) {
     case "project.added":
-      return { ...model, projects: { ...model.projects, [event.project.id]: event.project } };
+      return {
+        ...model,
+        projects: { ...model.projects, [event.project.id]: presentProject(event.project) },
+      };
+
+    case "project.configured": {
+      const project = model.projects[event.projectId];
+      if (!project) return model;
+      return {
+        ...model,
+        projects: {
+          ...model.projects,
+          [event.projectId]: { ...project, settings: event.settings },
+        },
+      };
+    }
 
     case "project.removed": {
       const { [event.projectId]: _removed, ...projects } = model.projects;
@@ -62,12 +79,14 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       return { ...model, projects, threads, turns, groups, reviewNotes };
     }
 
-    case "thread.created":
+    case "thread.created": {
+      const thread = presentThread(event.thread);
       return {
         ...model,
-        threads: { ...model.threads, [event.thread.id]: event.thread },
-        turns: { ...model.turns, [event.thread.id]: [] },
+        threads: { ...model.threads, [thread.id]: thread },
+        turns: { ...model.turns, [thread.id]: [] },
       };
+    }
 
     case "thread.renamed":
       return patchThread(model, event.threadId, event.at, { title: event.title });
@@ -333,11 +352,11 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
     case "thread.spawned": {
       // One event records the worker and promotes the parent. A later spawn of the
       // same parent leaves an existing coordinator role untouched.
-      const thread: Thread = {
+      const thread: Thread = presentThread({
         ...event.thread,
         role: event.thread.role ?? "worker",
         parentThreadId: event.parentThreadId,
-      };
+      });
       let threads: ReadModel["threads"] = { ...model.threads, [thread.id]: thread };
       const parent = threads[event.parentThreadId];
       if (parent && parent.id !== thread.id && parent.role !== "coordinator") {
@@ -420,7 +439,86 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         },
       });
     }
+
+    case "thread.released":
+      return patchThread(model, event.threadId, event.at, {
+        movedTo: { deviceId: event.toDeviceId, at: event.at },
+      });
+
+    case "thread.claimRequested": {
+      const pending = model.pendingClaims ?? {};
+      if (pending[event.claimId]) return model;
+      const duplicate = Object.values(pending).some(
+        (claim) =>
+          claim.ownerDeviceId === event.ownerDeviceId &&
+          claim.ownerThreadId === event.ownerThreadId,
+      );
+      if (duplicate) return model;
+      return {
+        ...model,
+        pendingClaims: {
+          ...pending,
+          [event.claimId]: {
+            claimId: event.claimId,
+            ownerDeviceId: event.ownerDeviceId,
+            ownerThreadId: event.ownerThreadId,
+            projectId: event.projectId,
+            at: event.at,
+          },
+        },
+      };
+    }
+
+    case "thread.claimFailed": {
+      const pending = model.pendingClaims ?? {};
+      if (!pending[event.claimId]) return model;
+      const { [event.claimId]: _gone, ...rest } = pending;
+      return { ...model, pendingClaims: rest };
+    }
+
+    case "thread.imported": {
+      const thread = presentThread({
+        ...event.thread,
+        movedFrom: {
+          deviceId: event.sourceDeviceId,
+          threadId: event.sourceThreadId,
+        },
+      });
+      const history = (event.historyTurns ?? []).map((turn) => ({
+        ...turn,
+        threadId: thread.id,
+      }));
+      const pending = model.pendingClaims ?? {};
+      const pendingClaims =
+        event.claimId && pending[event.claimId]
+          ? Object.fromEntries(Object.entries(pending).filter(([id]) => id !== event.claimId))
+          : pending;
+      return {
+        ...model,
+        threads: { ...model.threads, [thread.id]: thread },
+        turns: { ...model.turns, [thread.id]: history },
+        pendingClaims,
+      };
+    }
+
+    case "thread.prLinked":
+      return patchThread(model, event.threadId, event.at, { pullRequest: event.pullRequest });
   }
+}
+
+/** Old events omit these. Null means the thread still belongs to this device. */
+function presentThread(thread: Thread): Thread {
+  return {
+    ...thread,
+    ownerDeviceId: thread.ownerDeviceId ?? null,
+    movedTo: thread.movedTo ?? null,
+    movedFrom: thread.movedFrom ?? null,
+    pullRequest: thread.pullRequest ?? null,
+  };
+}
+
+function presentProject(project: Project): Project {
+  return { ...project, settings: project.settings ?? { scripts: [] } };
 }
 
 function withNotes(model: ReadModel, threadId: string, notes: ReviewNote[]): ReadModel {

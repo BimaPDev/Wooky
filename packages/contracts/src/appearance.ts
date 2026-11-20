@@ -2,6 +2,8 @@ import { z } from "zod";
 import { FailoverSettings, ModelTarget } from "./failover.ts";
 import { ProviderKind } from "./model.ts";
 import { AcpAgentConfig, ProviderSettings } from "./provider-settings.ts";
+import { DeviceId, Environment, HostingSettings } from "./remote.ts";
+import { SyncSettings } from "./sync.ts";
 
 /** Hex color like #rgb or #rrggbb / #rrggbbaa. */
 export const HexColor = z
@@ -206,23 +208,116 @@ export const DeviceSettings = z.object({
   failover: FailoverSettings,
   /** Models starred in the picker, in the order they were added. */
   favoriteModels: z.array(ModelTarget).max(30).default([]),
+  /** User-facing name of this install. Absent until the user sets one. */
+  deviceName: z.string().min(1).optional(),
+  hosting: HostingSettings,
+  sync: SyncSettings,
+  /** Remote servers this client can switch to. The local server is not an entry. */
+  environments: z.array(Environment).default([]),
 });
 export type DeviceSettings = z.infer<typeof DeviceSettings>;
 
+const SyncCategoriesPatch = z.object({
+  files: z.boolean().optional(),
+  threads: z.boolean().optional(),
+  settings: z.boolean().optional(),
+  themes: z.boolean().optional(),
+  ignoredFiles: z.boolean().optional(),
+});
+
+const SyncSettingsPatch = z.object({
+  enabled: z.boolean().optional(),
+  categories: SyncCategoriesPatch.optional(),
+  intervalSec: z.number().int().min(5).max(3600).optional(),
+  retention: z
+    .object({
+      keepDays: z.number().int().nonnegative().optional(),
+      keepMin: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+  peers: z.array(DeviceId).optional(),
+  projectMap: z.record(z.string(), z.record(DeviceId, z.string())).optional(),
+});
+
+const HostingSettingsPatch = z.object({
+  enabled: z.boolean().optional(),
+  bind: z.enum(["loopback", "tailscale", "all"]).optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  tailscaleServe: z.boolean().optional(),
+});
+
+const FailoverSettingsPatch = z.object({
+  enabled: z.boolean().optional(),
+  chain: z.array(ModelTarget).max(12).optional(),
+  maxSwitchesPerPrompt: z.number().int().min(1).max(6).optional(),
+  switchBack: z.boolean().optional(),
+  triggers: z.array(z.enum(["rate_limit", "quota", "overloaded"])).optional(),
+});
+
 /**
- * A settings.put patch. `.partial()` alone would fill every missing key with its
- * default, so one partial save would reset all other settings. Keep only sent keys.
+ * Nested objects are partial and have no defaults. A patch names only the keys
+ * the client sent, including inside `sync`, `hosting`, and `failover`.
+ */
+const SettingsPatchObject = z.object({
+  activeThemeId: z.string().optional(),
+  colorMode: z.enum(["dark", "light", "system"]).optional(),
+  appearanceContrast: z.number().int().min(50).max(150).optional(),
+  glassOpacity: z.number().int().min(40).max(100).optional(),
+  chatWidth: z.enum(["comfortable", "wide", "full"]).optional(),
+  threadNotifications: z.enum(["off", "banner"]).optional(),
+  inAppNotifications: z.boolean().optional(),
+  projectGrouping: z.boolean().optional(),
+  confirmDelete: z.boolean().optional(),
+  confirmArchive: z.boolean().optional(),
+  disabledProviders: z.array(ProviderKind).optional(),
+  providers: z.partialRecord(ProviderKind, ProviderSettings).optional(),
+  acpAgents: z
+    .array(AcpAgentConfig)
+    .max(20)
+    .refine(
+      (agents) => new Set(agents.map((agent) => agent.id)).size === agents.length,
+      "ACP agent ids must be unique",
+    )
+    .optional(),
+  followUp: z.enum(["queue", "off"]).optional(),
+  importLocalHistory: z.boolean().optional(),
+  wallpaperMotion: z.enum(["on", "off"]).optional(),
+  failover: FailoverSettingsPatch.optional(),
+  favoriteModels: z.array(ModelTarget).max(30).optional(),
+  deviceName: z.string().min(1).optional(),
+  hosting: HostingSettingsPatch.optional(),
+  sync: SyncSettingsPatch.optional(),
+  environments: z.array(Environment).optional(),
+});
+type SettingsPatch = z.infer<typeof SettingsPatchObject>;
+
+function keepSent(raw: unknown, parsed: unknown): unknown {
+  if (Array.isArray(raw) || Array.isArray(parsed)) return parsed;
+  if (!raw || typeof raw !== "object" || !parsed || typeof parsed !== "object") return parsed;
+  const source = raw as Record<string, unknown>;
+  const checked = parsed as Record<string, unknown>;
+  const kept: Record<string, unknown> = {};
+  for (const key of Object.keys(source)) {
+    if (!Object.hasOwn(checked, key)) continue;
+    kept[key] = keepSent(source[key], checked[key]);
+  }
+  return kept;
+}
+
+/**
+ * A settings.put patch. `.partial()` on DeviceSettings would fill missing keys
+ * with defaults, including inside `sync`. Keep only the keys that were sent.
  */
 export const DeviceSettingsPatch = z
   .record(z.string(), z.unknown())
-  .transform((raw, ctx): Partial<DeviceSettings> => {
-    const parsed = DeviceSettings.partial().safeParse(raw);
+  .transform((raw, ctx): SettingsPatch => {
+    const parsed = SettingsPatchObject.safeParse(raw);
     if (!parsed.success) {
       for (const issue of parsed.error.issues) {
         ctx.addIssue({ code: "custom", path: issue.path, message: issue.message, input: raw });
       }
       return z.NEVER;
     }
-    const kept = Object.entries(parsed.data).filter(([key]) => Object.hasOwn(raw, key));
-    return Object.fromEntries(kept) as Partial<DeviceSettings>;
+    return keepSent(raw, parsed.data) as SettingsPatch;
   });
+export type DeviceSettingsPatch = z.infer<typeof DeviceSettingsPatch>;
