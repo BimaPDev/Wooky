@@ -28,6 +28,7 @@ import { openEventStore } from "./store/event-store.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
 import { createRemoteRuntime } from "./remote/runtime.ts";
+import type { Tailscale } from "./remote/tailscale.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
@@ -46,14 +47,14 @@ export interface ServerOptions {
   gh?: GhClient;
   /** Directory whose children `fs.pickable` suggests. Defaults to the OS home. */
   userHome?: string;
-  /** When set, a non-loopback client may open the folder chooser. */
-  allowRemotePicker?: boolean;
   /** Test seam. Production builds one from the operating system. */
   folderPicker?: FolderPicker;
   /** `--host` was passed. Hosting settings do not add listeners. */
   hostExplicit?: boolean;
   /** `--port` or WOOKY_PORT was set. Hosting settings do not move the listen port. */
   portExplicit?: boolean;
+  /** Test seam. Production shells out to the `tailscale` CLI. */
+  tailscale?: Tailscale;
   /** Test seam for pairing expiry and the rate-limit window. Milliseconds. */
   now?: () => number;
   /** Test seam. Production uses the socket's remote address. */
@@ -64,6 +65,8 @@ export interface RunningServer {
   url: string;
   port: number;
   addresses(): string[];
+  /** Loopback port of the token-only listener behind Tailscale Serve, when open. */
+  servePort(): number | null;
   close(): Promise<void>;
 }
 
@@ -153,6 +156,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     portExplicit: options.portExplicit === true,
     ...(options.now ? { now: options.now } : {}),
     ...(options.remoteAddress ? { remoteAddress: options.remoteAddress } : {}),
+    ...(options.tailscale ? { tailscale: options.tailscale } : {}),
   });
   const sockets = attachWebSocket(
     {
@@ -171,10 +175,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       remote,
     },
     new Set(options.allowedHosts ?? []),
-    {
-      allowRemotePicker: options.allowRemotePicker === true,
-      ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
-    },
+    options.folderPicker ? { folderPicker: options.folderPicker } : {},
   );
   let unpublish: () => void = () => {};
   try {
@@ -202,6 +203,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return remote.port();
     },
     addresses: () => remote.addresses(),
+    servePort: () => remote.servePort(),
     close() {
       // Stop new work first, then drain running turns while open sockets still get their
       // final events, and close the store last.

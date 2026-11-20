@@ -1,6 +1,7 @@
 import { delimiter } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  AGENT_INTERNAL_ENV_KEYS,
   agentEnv,
   coordinatorInstructions,
   currentAgentRuntime,
@@ -14,6 +15,14 @@ import {
 describe("agentEnv", () => {
   afterEach(() => {
     setAgentRuntime(null);
+  });
+
+  it("lists the server-internal keys a user terminal must not inherit", () => {
+    expect([...AGENT_INTERNAL_ENV_KEYS]).toEqual([
+      "WOOKY_THREAD_ID",
+      "WOOKY_SERVER_URL",
+      "WOOKY_AGENT_TOKEN",
+    ]);
   });
 
   it("sets the thread, the server, and a PATH prefix for the wooky shim", () => {

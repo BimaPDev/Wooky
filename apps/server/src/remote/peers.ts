@@ -25,6 +25,8 @@ const StoredPeer = z.object({
 });
 type StoredPeer = z.infer<typeof StoredPeer>;
 
+const JOIN_TIMEOUT_MS = 15_000;
+
 const StoreFile = z.object({ peers: z.array(StoredPeer) });
 
 export interface PeerRecord {
@@ -86,6 +88,8 @@ export function createPeers(options: {
   getSettings: () => DeviceSettings;
   putSettings: (patch: { environments: EnvironmentRecord[] }) => DeviceSettings;
   tunnels?: ReturnType<typeof createSshTunnels>;
+  /** How long `join` waits for the remote to answer. Default 15 seconds. */
+  joinTimeoutMs?: number;
 }): PeerDirectory & {
   join(input: {
     connection: RemoteConnectionRecord;
@@ -152,11 +156,18 @@ export function createPeers(options: {
       if (input.connection.kind === "ssh") {
         localPort = await openSsh(environmentId, input.connection);
       }
+      // The code and device identity go only to the address the user typed. A redirect
+      // would carry them to a host the user never chose.
       const response = await fetch(new URL("/pair", httpBase(input.connection, localPort)), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ code: input.code, device: options.deviceInfo() }),
+        redirect: "manual",
+        signal: AbortSignal.timeout(options.joinTimeoutMs ?? JOIN_TIMEOUT_MS),
       });
+      if (response.status >= 300 && response.status < 400) {
+        throw new ServiceError("bad_request", "The remote redirected the pairing request.");
+      }
       const text = await response.text();
       if (!response.ok) {
         throw new ServiceError(
@@ -201,6 +212,9 @@ export function createPeers(options: {
     } catch (error) {
       tunnels.stop(environmentId);
       if (error instanceof ServiceError) throw error;
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new ServiceError("unavailable", "The remote did not answer within 15 seconds.");
+      }
       throw new ServiceError(
         "unavailable",
         error instanceof Error ? error.message : "Could not join that device.",

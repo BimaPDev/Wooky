@@ -8,7 +8,7 @@ import { createDevice } from "./device.ts";
 import { createGuardedHandler } from "./http.ts";
 import { createPairing } from "./pairing.ts";
 import { createPeers, type PeerDirectory } from "./peers.ts";
-import { createTailscale, type TailscaleReport } from "./tailscale.ts";
+import { createTailscale, type Tailscale, type TailscaleReport } from "./tailscale.ts";
 
 export interface RemoteRuntime {
   authenticateRequest: AuthenticateRequest;
@@ -27,6 +27,8 @@ export interface RemoteRuntime {
     handler: (req: IncomingMessage, res: ServerResponse) => void;
     onUpgrade: (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
   }): Promise<{ url: string; port: number }>;
+  /** Loopback port of the token-only listener behind Tailscale Serve, when open. */
+  servePort(): number | null;
   servers(): import("node:http").Server[];
   addresses(): string[];
   port(): number;
@@ -44,9 +46,10 @@ export function createRemoteRuntime(options: {
   portExplicit?: boolean;
   now?: () => number;
   remoteAddress?: (req: IncomingMessage) => string | undefined;
+  tailscale?: Tailscale;
 }): RemoteRuntime {
   const now = options.now ?? Date.now;
-  const tailscale = createTailscale();
+  const tailscale = options.tailscale ?? createTailscale();
   const device = createDevice({
     home: options.home,
     getSettings: () => options.themes.getSettings(),
@@ -85,12 +88,28 @@ export function createRemoteRuntime(options: {
     putSettings: (patch) => options.themes.putSettings(patch),
   });
 
+  /**
+   * Tailscale Serve proxies from loopback, so it gets its own listener that always
+   * demands a device token. The main listener's loopback trust never reaches it.
+   */
+  async function enableServe(): Promise<void> {
+    try {
+      await tailscale.serve(await bind.openServe());
+    } catch (error) {
+      tailscale.reportServeError(error instanceof Error ? error.message : "serve listener failed");
+    }
+  }
+
+  async function disableServe(): Promise<void> {
+    await tailscale.serveOff();
+    await bind.closeServe();
+  }
+
   async function syncServe(before: HostingSettings, after: HostingSettings): Promise<void> {
     const was = before.enabled && before.tailscaleServe;
     const enabled = after.enabled && after.tailscaleServe;
-    const port = bind.port();
-    if (enabled && (!was || before.port !== after.port)) await tailscale.serve(port);
-    else if (was && !enabled) await tailscale.serveOff();
+    if (enabled && !was) await enableServe();
+    else if (was && !enabled) await disableServe();
   }
 
   async function onSettings(
@@ -125,9 +144,10 @@ export function createRemoteRuntime(options: {
       bind.setUpgrade(onUpgrade);
       const listening = await bind.apply();
       const hosting = options.themes.getSettings().hosting;
-      if (hosting.enabled && hosting.tailscaleServe) await tailscale.serve(listening.port);
+      if (hosting.enabled && hosting.tailscaleServe) await enableServe();
       return listening;
     },
+    servePort: () => bind.servePort(),
     servers: () => bind.servers(),
     addresses: () => bind.addresses(),
     port: () => bind.port(),

@@ -26,6 +26,8 @@ export interface TailscaleReport extends TailscaleStatus {
   serveError?: string;
 }
 
+export type Tailscale = ReturnType<typeof createTailscale>;
+
 export function createTailscale(options: { timeoutMs?: number } = {}) {
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
   let serveError: string | undefined;
@@ -83,5 +85,10 @@ export function createTailscale(options: { timeoutMs?: number } = {}) {
     console.error(`tailscale serve: ${serveError}`);
   }
 
-  return { status, serve, serveOff };
+  function reportServeError(message: string): void {
+    serveError = message;
+    console.error(`tailscale serve: ${message}`);
+  }
+
+  return { status, serve, serveOff, reportServeError };
 }

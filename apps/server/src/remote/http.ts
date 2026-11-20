@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { extname } from "node:path";
 import { isLoopbackAddress, type AuthenticateRequest } from "./auth.ts";
 import type { PairOutcome } from "./pairing.ts";
 
@@ -133,6 +134,43 @@ function sendJson(
   res.end(payload);
 }
 
+const PUBLIC_ASSET_EXT = new Set([
+  ".js",
+  ".mjs",
+  ".css",
+  ".map",
+  ".svg",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".ico",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".wasm",
+  ".webmanifest",
+]);
+
+/** The UI shell holds no user data. Data routes stay authenticated. */
+export function isPublicShell(method: string, pathname: string): boolean {
+  if (method !== "GET" && method !== "HEAD") return false;
+  if (
+    pathname === "/healthz" ||
+    pathname === "/ws" ||
+    pathname === "/sync" ||
+    pathname.startsWith("/sync/")
+  ) {
+    return false;
+  }
+  if (pathname === "/" || pathname === "/index.html") return true;
+  if (pathname.endsWith("/manifest.json")) return true;
+  const ext = extname(pathname).toLowerCase();
+  if (PUBLIC_ASSET_EXT.has(ext)) return true;
+  return ext.length === 0;
+}
+
 export function createGuardedHandler(options: {
   authenticateRequest: AuthenticateRequest;
   addressOf: (req: IncomingMessage) => string | undefined;
@@ -154,6 +192,10 @@ export function createGuardedHandler(options: {
         "cache-control": "no-store",
       });
       res.end(req.method === "HEAD" ? undefined : PAIR_PAGE);
+      return;
+    }
+    if (isPublicShell(req.method ?? "GET", url.pathname)) {
+      options.staticHandler(req, res);
       return;
     }
     if (!options.authenticateRequest(req)) {

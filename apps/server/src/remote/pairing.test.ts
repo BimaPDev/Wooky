@@ -183,9 +183,8 @@ describe("pairing", () => {
     expect((await postPair(server, { code, device })).status).toBe(401);
   });
 
-  it("locks pairing for everyone after five failures from one address", async () => {
+  it("locks only the failing address, and doubles the lock on a repeat offence", async () => {
     let now = Date.parse("2026-06-01T00:00:00.000Z");
-    let address = "203.0.113.10";
     const { server } = await boot(
       () => now,
       (header) => header,
@@ -194,19 +193,44 @@ describe("pairing", () => {
     const created = await client.call("remote.pairingCode.create");
     if (!created.ok) throw new Error("code was not created");
     const code = (created.result as { code: string }).code;
-    const headers = { "x-wooky-remote-address": address };
+    const from = (address: string) => ({ "x-wooky-remote-address": address });
+    const bad = { code: "23456789", device };
     for (let i = 0; i < 4; i += 1) {
-      expect((await postPair(server, { code: "23456789", device }, headers)).status).toBe(401);
+      expect((await postPair(server, bad, from("203.0.113.10"))).status).toBe(401);
     }
-    expect((await postPair(server, { code: "23456789", device }, headers)).status).toBe(429);
-    expect(
-      (await postPair(server, { code, device }, { "x-wooky-remote-address": "203.0.113.11" }))
-        .status,
-    ).toBe(429);
+    expect((await postPair(server, bad, from("203.0.113.10"))).status).toBe(429);
+    // A stranger is not locked out by someone else's failures, and the live code still works.
+    expect((await postPair(server, { code, device }, from("203.0.113.11"))).status).toBe(200);
+
     now += 60_000 + 1;
-    address = "203.0.113.12";
-    expect(
-      (await postPair(server, { code, device }, { "x-wooky-remote-address": address })).status,
-    ).toBe(200);
+    for (let i = 0; i < 4; i += 1) {
+      expect((await postPair(server, bad, from("203.0.113.10"))).status).toBe(401);
+    }
+    expect((await postPair(server, bad, from("203.0.113.10"))).status).toBe(429);
+    now += 60_000 + 1;
+    expect((await postPair(server, bad, from("203.0.113.10"))).status).toBe(429);
+    now += 60_000;
+    expect((await postPair(server, bad, from("203.0.113.10"))).status).toBe(401);
+  });
+
+  it("locks everyone briefly when many addresses fail together", async () => {
+    let now = Date.parse("2026-06-01T00:00:00.000Z");
+    const { server } = await boot(
+      () => now,
+      (header) => header,
+    );
+    const client = await rpc(server);
+    const created = await client.call("remote.pairingCode.create");
+    if (!created.ok) throw new Error("code was not created");
+    const code = (created.result as { code: string }).code;
+    const bad = { code: "23456789", device };
+    for (let i = 0; i < 50; i += 1) {
+      const headers = { "x-wooky-remote-address": `198.51.100.${(i % 25) + 1}` };
+      await postPair(server, bad, headers);
+    }
+    const fresh = { "x-wooky-remote-address": "192.0.2.77" };
+    expect((await postPair(server, { code, device }, fresh)).status).toBe(429);
+    now += 60_000 + 1;
+    expect((await postPair(server, { code, device }, fresh)).status).toBe(200);
   });
 });

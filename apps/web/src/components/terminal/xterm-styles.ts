@@ -1,0 +1,4 @@
+import "@xterm/xterm/css/xterm.css";
+import "./terminal.css";
+
+export const xtermStyles = true;

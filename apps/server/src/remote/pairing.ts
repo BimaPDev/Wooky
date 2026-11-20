@@ -21,10 +21,14 @@ import { writePrivateJson } from "./files.ts";
 const ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 const CODE_TTL_MS = 10 * 60 * 1000;
 const FAIL_WINDOW_MS = 60 * 1000;
-const LOCKOUT_MS = 60 * 1000;
+const BASE_LOCK_MS = 60 * 1000;
+const MAX_LOCK_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 5;
+const GLOBAL_FAILURES = 50;
+const GLOBAL_ADDRESSES = 10;
 const LAST_SEEN_MS = 60 * 1000;
 const MAX_CODES = 20;
+const MAX_TRACKED_ADDRESSES = 1000;
 
 const StoreFile = z.object({ devices: z.array(PairedDevice) });
 
@@ -65,8 +69,9 @@ export function createPairing(options: {
   const path = join(options.home, "paired-devices.json");
   let devices = readDevices();
   const codes = new Map<string, number>();
-  const failures = new Map<string, number[]>();
-  let lockedUntil = 0;
+  const failures = new Map<string, { recent: number[]; strikes: number; lockedUntil: number }>();
+  const globalFailures: { at: number; address: string }[] = [];
+  let globalLockedUntil = 0;
 
   function readDevices(): PairedDeviceRecord[] {
     try {
@@ -143,36 +148,63 @@ export function createPairing(options: {
     return matched;
   }
 
-  function locked(): boolean {
-    return now() < lockedUntil;
+  function lockMs(strikes: number): number {
+    return Math.min(BASE_LOCK_MS * 2 ** Math.max(0, strikes - 1), MAX_LOCK_MS);
+  }
+
+  function locked(address: string): boolean {
+    const at = now();
+    if (at < globalLockedUntil) return true;
+    const entry = failures.get(address);
+    return entry !== undefined && at < entry.lockedUntil;
   }
 
   function noteFailure(address: string): void {
     const at = now();
-    const recent = (failures.get(address) ?? []).filter((stamp) => at - stamp < FAIL_WINDOW_MS);
-    recent.push(at);
-    failures.set(address, recent);
-    if (recent.length >= MAX_FAILURES) {
-      lockedUntil = at + LOCKOUT_MS;
-      failures.clear();
+    if (failures.size >= MAX_TRACKED_ADDRESSES) {
+      for (const [key, value] of failures) {
+        if (
+          at >= value.lockedUntil &&
+          value.recent.every((stamp) => at - stamp >= FAIL_WINDOW_MS)
+        ) {
+          failures.delete(key);
+        }
+      }
+    }
+    const entry = failures.get(address) ?? { recent: [], strikes: 0, lockedUntil: 0 };
+    entry.recent = entry.recent.filter((stamp) => at - stamp < FAIL_WINDOW_MS);
+    entry.recent.push(at);
+    failures.set(address, entry);
+    while (globalFailures.length > 0 && at - (globalFailures[0]?.at ?? at) >= FAIL_WINDOW_MS) {
+      globalFailures.shift();
+    }
+    globalFailures.push({ at, address });
+    const distinct = new Set(globalFailures.map((failure) => failure.address));
+    if (globalFailures.length >= GLOBAL_FAILURES && distinct.size >= GLOBAL_ADDRESSES) {
+      globalLockedUntil = at + BASE_LOCK_MS;
+    }
+    if (entry.recent.length >= MAX_FAILURES) {
+      entry.strikes += 1;
+      entry.lockedUntil = at + lockMs(entry.strikes);
+      entry.recent = [];
     }
   }
 
   function lockBody(): PairOutcome {
-    return { status: 429, body: { error: "Pairing is locked. Try again in a minute." } };
+    return { status: 429, body: { error: "Pairing is locked. Try again shortly." } };
   }
 
   function redeem(raw: unknown, remoteAddress: string): PairOutcome {
-    if (locked()) return lockBody();
+    if (locked(remoteAddress)) return lockBody();
     const parsed = PairRequest.safeParse(raw);
     if (!parsed.success) {
       noteFailure(remoteAddress);
-      if (locked()) return lockBody();
+      if (locked(remoteAddress)) return lockBody();
       return { status: 400, body: { error: "Expected a pairing code and a device." } };
     }
     if (!consumeCode(parsed.data.code)) {
       noteFailure(remoteAddress);
-      if (locked()) return lockBody();
+      if (locked(remoteAddress)) return lockBody();
       return { status: 401, body: { error: "That pairing code is not valid." } };
     }
     const token = randomBytes(32).toString("base64url");

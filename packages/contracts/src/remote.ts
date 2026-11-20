@@ -219,5 +219,7 @@ export const TailscaleStatus = z.object({
   running: z.boolean(),
   hostName: z.string().nullable(),
   ips: z.array(z.string()),
+  /** Set when `tailscale serve` could not be enabled or disabled. */
+  serveError: z.string().optional(),
 });
 export type TailscaleStatus = z.infer<typeof TailscaleStatus>;

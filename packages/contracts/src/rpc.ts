@@ -466,7 +466,7 @@ export const RpcRequest = z.object({
 export type RpcRequest = z.infer<typeof RpcRequest>;
 
 export const RpcError = z.object({
-  code: z.enum(["bad_request", "not_found", "conflict", "unavailable", "internal"]),
+  code: z.enum(["bad_request", "not_found", "conflict", "unavailable", "forbidden", "internal"]),
   message: z.string(),
 });
 export type RpcError = z.infer<typeof RpcError>;

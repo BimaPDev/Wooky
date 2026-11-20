@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import type { HostingSettings } from "@wooky/contracts";
+import { requireDeviceToken } from "./auth.ts";
 
 export function desiredHosts(options: {
   hosting: HostingSettings;
@@ -43,6 +44,8 @@ export function createBindManager(options: {
 }) {
   const listeners = new Map<string, Server>();
   let assignedPort: number | null = null;
+  let serveServer: Server | null = null;
+  let serveBound: number | null = null;
   let handler: (req: IncomingMessage, res: ServerResponse) => void = (_req, res) => {
     res.writeHead(500);
     res.end();
@@ -59,7 +62,7 @@ export function createBindManager(options: {
     return `http://${formatHost(host)}:${port}`;
   }
 
-  function listen(host: string, port: number): Promise<Server> {
+  function listen(host: string, port: number, trackPort = true): Promise<Server> {
     const server = createServer((req, res) => handler(req, res));
     server.on("upgrade", (req, socket, head) => onUpgrade(req, socket, head));
     return new Promise((resolve, reject) => {
@@ -72,7 +75,7 @@ export function createBindManager(options: {
         server.off("error", fail);
         server.on("error", (error) => console.error(`listen ${host} failed`, error));
         const address = server.address() as AddressInfo;
-        assignedPort = address.port;
+        if (trackPort) assignedPort = address.port;
         console.error(`listening on http://${formatHost(host)}:${address.port}`);
         resolve(server);
       });
@@ -155,9 +158,55 @@ export function createBindManager(options: {
     return { url: primaryUrl(), port: bound };
   }
 
+  async function closeServer(server: Server): Promise<void> {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections();
+    });
+  }
+
+  async function openServe(): Promise<number> {
+    if (serveServer && serveBound !== null) return serveBound;
+    const server = createServer((req, res) => {
+      requireDeviceToken(req);
+      handler(req, res);
+    });
+    server.on("upgrade", (req, socket, head) => {
+      requireDeviceToken(req);
+      onUpgrade(req, socket, head);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const fail = (error: Error) => {
+        server.close();
+        reject(error);
+      };
+      server.once("error", fail);
+      server.once("listening", () => {
+        server.off("error", fail);
+        const address = server.address() as AddressInfo;
+        serveBound = address.port;
+        console.error(`listening on http://127.0.0.1:${address.port} for tailscale serve`);
+        resolve();
+      });
+      server.listen(0, "127.0.0.1");
+    });
+    serveServer = server;
+    return serveBound ?? 0;
+  }
+
+  async function closeServe(): Promise<void> {
+    const server = serveServer;
+    serveServer = null;
+    serveBound = null;
+    if (server) await closeServer(server);
+  }
+
   return {
     apply,
-    servers: () => [...listeners.values()],
+    openServe,
+    closeServe,
+    servePort: () => serveBound,
+    servers: () => [...listeners.values(), ...(serveServer ? [serveServer] : [])],
     addresses: () => [...listeners.keys()],
     port: () => assignedPort ?? options.port,
     url: primaryUrl,
@@ -168,17 +217,11 @@ export function createBindManager(options: {
       onUpgrade = next;
     },
     async closeServers(): Promise<void> {
-      const all = [...listeners.values()];
+      const all = [...listeners.values(), ...(serveServer ? [serveServer] : [])];
       listeners.clear();
-      await Promise.all(
-        all.map(
-          (server) =>
-            new Promise<void>((resolve) => {
-              server.close(() => resolve());
-              server.closeAllConnections();
-            }),
-        ),
-      );
+      serveServer = null;
+      serveBound = null;
+      await Promise.all(all.map((server) => closeServer(server)));
     },
   };
 }

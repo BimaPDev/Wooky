@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -6,6 +8,7 @@ import { RpcResponse, WOOKY_WS_PATH } from "@wooky/contracts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer } from "../server.ts";
 import { tempDir } from "../testing.ts";
+import { createPeers } from "./peers.ts";
 
 const servers: RunningServer[] = [];
 const sockets: WebSocket[] = [];
@@ -113,5 +116,78 @@ describe("remote join", () => {
       peers: unknown[];
     };
     expect(after.peers).toEqual([]);
+  });
+});
+
+describe("remote join hardening", () => {
+  const stubs: Server[] = [];
+  afterEach(async () => {
+    for (const stub of stubs.splice(0)) {
+      stub.closeAllConnections();
+      await new Promise<void>((resolve) => stub.close(() => resolve()));
+    }
+  });
+
+  function listen(handler: Parameters<typeof createServer>[1]): Promise<Server> {
+    const stub = createServer(handler);
+    stubs.push(stub);
+    return new Promise((resolve) => stub.listen(0, "127.0.0.1", () => resolve(stub)));
+  }
+
+  async function peersFor(home: string, joinTimeoutMs?: number) {
+    return createPeers({
+      home,
+      deviceInfo: () => ({
+        deviceId: "33333333-3333-4333-8333-333333333333",
+        name: "Guest",
+        platform: "other",
+        version: "0.0.0",
+      }),
+      getSettings: () => ({ environments: [] }) as never,
+      putSettings: () => ({}) as never,
+      ...(joinTimeoutMs ? { joinTimeoutMs } : {}),
+    });
+  }
+
+  it("does not follow a redirect, so the code never reaches another host", async () => {
+    let followed = 0;
+    const target = await listen((_req, res) => {
+      followed += 1;
+      res.end("{}");
+    });
+    const redirector = await listen((_req, res) => {
+      res.writeHead(307, {
+        location: `http://127.0.0.1:${(target.address() as AddressInfo).port}/pair`,
+      });
+      res.end();
+    });
+    const peers = await peersFor(await tempDir("join-redirect"));
+    await expect(
+      peers.join({
+        connection: {
+          kind: "direct",
+          url: `http://127.0.0.1:${(redirector.address() as AddressInfo).port}`,
+        },
+        code: "23456789",
+      }),
+    ).rejects.toMatchObject({ code: "bad_request", message: expect.stringMatching(/redirect/) });
+    expect(followed).toBe(0);
+  });
+
+  it("gives up when the remote does not answer", async () => {
+    const silent = await listen(() => {});
+    const peers = await peersFor(await tempDir("join-timeout"), 100);
+    await expect(
+      peers.join({
+        connection: {
+          kind: "direct",
+          url: `http://127.0.0.1:${(silent.address() as AddressInfo).port}`,
+        },
+        code: "23456789",
+      }),
+    ).rejects.toMatchObject({
+      code: "unavailable",
+      message: expect.stringMatching(/did not answer/),
+    });
   });
 });
