@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { coordinatorInstructions, setAgentRuntime, workerNote } from "../agent-env.ts";
 import type { TurnInput } from "../types.ts";
 import { createClaudeAdapter } from "./adapter.ts";
-import { assistant, init, resultSuccess, text, type SDKMessage } from "./fixtures.ts";
+import { assistant, init, resultSuccess, sentPrompt, text, type SDKMessage } from "./fixtures.ts";
 
 function fakeQuery() {
   const calls: Array<Parameters<typeof query>[0]> = [];
@@ -65,7 +65,7 @@ describe("claude fleet env", () => {
       expect(options.env?.WOOKY_SERVER_URL).toBe("http://127.0.0.1:4317");
       expect(options.env?.PATH?.startsWith(`/tmp/wooky-home/bin${delimiter}`)).toBe(true);
     }
-    expect(calls[0]?.prompt).toBe("do it");
+    expect((await sentPrompt(calls[0]?.prompt)).text).toBe("do it");
   });
 
   it("appends the one-line worker note", async () => {

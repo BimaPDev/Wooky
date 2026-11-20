@@ -12,6 +12,8 @@ import {
   init,
   rateLimitEvent,
   resultSuccess,
+  sentPrompt,
+  taskNotification,
   text,
   toolResult,
   toolUse,
@@ -185,7 +187,7 @@ describe("runTurn options", () => {
     const { fake, calls } = fakeQuery(simple);
     const adapter = createClaudeAdapter({ query: fake });
     await collect(adapter.runTurn(turnInput({ handoffContext: "User: hi\n\nAssistant: hello" })));
-    const prompt = calls[0]?.prompt as string;
+    const prompt = (await sentPrompt(calls[0]?.prompt)).text;
     expect(prompt.startsWith("Earlier conversation in this thread, from another agent:")).toBe(
       true,
     );
@@ -196,7 +198,26 @@ describe("runTurn options", () => {
   it("sends the bare prompt when there is no handoff", async () => {
     const { fake, calls } = fakeQuery(simple);
     await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput()));
-    expect(calls[0]?.prompt).toBe("do it");
+    expect((await sentPrompt(calls[0]?.prompt)).text).toBe("do it");
+  });
+
+  it("ignores a stale notification turn ahead of the stamped prompt turn", async () => {
+    const { fake } = fakeQuery(async function* (params) {
+      const { uuid } = await sentPrompt(params.prompt);
+      yield taskNotification();
+      yield init();
+      yield assistant("stale", [text("No response requested.")]);
+      yield resultSuccess();
+      yield { ...init(), user_message_uuids: [uuid] } as SDKMessage;
+      yield assistant("m1", [text("alive")]);
+      yield resultSuccess();
+    });
+    const events = await collect(createClaudeAdapter({ query: fake }).runTurn(turnInput()));
+    const said = events.flatMap((event) =>
+      event.type === "item" && event.item.kind === "message" ? [event.item.text] : [],
+    );
+    expect(said).toEqual(["alive"]);
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "completed" });
   });
 });
 
