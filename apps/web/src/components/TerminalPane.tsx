@@ -1,156 +1,220 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
+import type { RpcResult, TerminalInfo } from "@wooky/contracts";
 import { toggleTerminal } from "../state/actions.ts";
 import { backend } from "../state/backend.ts";
 import { useStore } from "../state/store.ts";
-import { subscribeTerminal } from "../state/terminal.ts";
-import { IconClose } from "./Icons.tsx";
+import { IconClose, IconPlus } from "./Icons.tsx";
 import { Tooltip } from "./Tooltip.tsx";
+import { XtermSession } from "./terminal/XtermSession.tsx";
 
 /** Ending comes from `terminal.open`. Older servers omit it; those shells want LF. */
 export function terminalLine(text: string, lineEnding: "\n" | "\r\n" = "\n"): string {
   return `${text}${lineEnding}`;
 }
 
-export function TerminalPane() {
-  const thread = useStore((state) =>
-    state.selectedThreadId ? state.model.threads[state.selectedThreadId] : undefined,
-  );
-  const project = useStore((state) =>
-    thread ? state.model.projects[thread.projectId] : undefined,
-  );
-  const cwd = thread?.worktree?.path ?? project?.root ?? null;
-  const [generation, setGeneration] = useState(0);
+type Tab = {
+  sessionId: string;
+  title: string;
+  pty: boolean;
+  lineEnding: "\n" | "\r\n";
+};
 
-  // A new cwd or a restart remounts the session, which resets its state.
-  return (
-    <TerminalSession
-      key={`${cwd ?? ""}:${generation}`}
-      cwd={cwd}
-      onRestart={() => setGeneration((value) => value + 1)}
-    />
-  );
+function lineEndingOf(value: string | undefined): "\n" | "\r\n" {
+  return value === "\r\n" ? "\r\n" : "\n";
 }
 
-function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: () => void }) {
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [output, setOutput] = useState("");
-  const [line, setLine] = useState("");
-  const [status, setStatus] = useState<"starting" | "ready" | "exited" | "error">("starting");
+function tabFromInfo(info: TerminalInfo, lineEnding?: "\n" | "\r\n"): Tab {
+  return {
+    sessionId: info.sessionId,
+    title: info.title || info.shell,
+    pty: info.pty,
+    lineEnding: lineEnding ?? "\n",
+  };
+}
+
+function tabFromOpen(result: RpcResult<"terminal.open">): Tab {
+  return {
+    sessionId: result.sessionId,
+    title: result.title || result.shell,
+    pty: result.pty ?? false,
+    lineEnding: lineEndingOf(result.lineEnding),
+  };
+}
+
+function openCwd(): { cwd: string | null; projectId: string | undefined } {
+  const state = useStore.getState();
+  const thread = state.selectedThreadId ? state.model.threads[state.selectedThreadId] : undefined;
+  const project = thread ? state.model.projects[thread.projectId] : undefined;
+  return {
+    cwd: thread?.worktree?.path ?? project?.root ?? null,
+    projectId: thread?.projectId ?? project?.id,
+  };
+}
+
+async function openSession(): Promise<Tab> {
+  const { cwd, projectId } = openCwd();
+  const result = await backend().call("terminal.open", {
+    ...(cwd ? { cwd } : {}),
+    ...(projectId ? { projectId } : {}),
+  });
+  return tabFromOpen(result);
+}
+
+export function TerminalPane() {
+  const status = useStore((state) => state.status);
+
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLPreElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const sessionRef = useRef<string | null>(null);
-  const lineEndingRef = useRef<"\n" | "\r\n">("\n");
+  const [starting, setStarting] = useState(true);
 
-  const writeTo = (id: string, text: string) =>
-    backend()
-      .call("terminal.write", { sessionId: id, data: terminalLine(text, lineEndingRef.current) })
-      .then(
-        () => setOutput((prev) => prev + `$ ${text}\n`),
-        (err: unknown) => {
-          setStatus("error");
-          setError(err instanceof Error ? err.message : "Write failed.");
-        },
-      );
-
-  const onReady = useEffectEvent((id: string, lineEnding: "\n" | "\r\n") => {
-    sessionRef.current = id;
-    lineEndingRef.current = lineEnding;
-    setSessionId(id);
-    setStatus("ready");
-  });
-
-  const onOpenFailed = useEffectEvent((err: unknown) => {
-    setStatus("error");
-    setError(err instanceof Error ? err.message : "Could not start the shell.");
-  });
-
-  // sync: open a server shell session for this cwd; close it on unmount
+  // sync: existing server sessions on connect/reconnect; open one when the list is empty
   useEffect(() => {
+    if (status !== "open") return;
     let cancelled = false;
-    const open = async () => {
+    const sync = async () => {
+      setStarting(true);
+      setError(null);
+      let listed: TerminalInfo[] = [];
       try {
-        const result = await backend().call("terminal.open", cwd ? { cwd } : {});
-        if (cancelled) {
-          void backend().call("terminal.close", { sessionId: result.sessionId });
-          return;
-        }
-        onReady(result.sessionId, result.lineEnding === "\r\n" ? "\r\n" : "\n");
+        const result = await backend().call("terminal.list", {});
+        if (Array.isArray(result)) listed = result.filter((session) => !session.exited);
+      } catch {
+        listed = [];
+      }
+      if (cancelled) return;
+      if (listed.length > 0) {
+        const next = listed.map((info) => tabFromInfo(info));
+        setTabs(next);
+        setActiveId((current) =>
+          next.some((tab) => tab.sessionId === current) ? current : (next[0]?.sessionId ?? null),
+        );
+        setStarting(false);
+        return;
+      }
+      try {
+        const opened = await openSession();
+        if (cancelled) return;
+        setTabs([opened]);
+        setActiveId(opened.sessionId);
       } catch (err) {
-        if (!cancelled) onOpenFailed(err);
+        if (!cancelled) setError(err instanceof Error ? err.message : "Could not start the shell.");
+      } finally {
+        if (!cancelled) setStarting(false);
       }
     };
-    void open();
+    void sync();
     return () => {
       cancelled = true;
-      const id = sessionRef.current;
-      sessionRef.current = null;
-      if (id) void backend().call("terminal.close", { sessionId: id });
     };
-  }, [cwd]);
+  }, [status]);
 
-  // sync: append terminal chunks pushed over the websocket for this session
-  useEffect(() => {
-    return subscribeTerminal((message) => {
-      if (!sessionRef.current || message.sessionId !== sessionRef.current) return;
-      if (message.kind === "data" && message.data) {
-        setOutput((prev) => prev + message.data);
-      } else if (message.kind === "exit") {
-        if (message.data) setOutput((prev) => prev + message.data);
-        setStatus("exited");
-        sessionRef.current = null;
-        setSessionId(null);
-      } else if (message.kind === "error") {
-        setStatus("error");
-        setError(message.data ?? "Shell error.");
-        sessionRef.current = null;
-        setSessionId(null);
-      }
-    });
-  }, []);
-
-  // sync: keep the output element's scroll pinned to the bottom as chunks arrive
-  useEffect(() => {
-    const node = scrollRef.current;
-    if (!node || output.length === 0) return;
-    node.scrollTop = node.scrollHeight;
-  }, [output]);
-
-  const writeLine = async (text: string) => {
-    if (!sessionId || status !== "ready") return;
-    await writeTo(sessionId, text);
-  };
-
-  const sendLine = async () => {
-    if (!line) return;
-    const text = line;
-    setLine("");
-    await writeLine(text);
-  };
-
-  const sendInterrupt = async () => {
-    if (!sessionId || status !== "ready") return;
+  const addTab = async () => {
     try {
-      await backend().call("terminal.write", { sessionId, data: "\u0003" });
+      const opened = await openSession();
+      setTabs((current) => [...current, opened]);
+      setActiveId(opened.sessionId);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start the shell.");
+    }
+  };
+
+  const closeTab = async (sessionId: string) => {
+    const remaining = tabs.filter((tab) => tab.sessionId !== sessionId);
+    setTabs(remaining);
+    if (activeId === sessionId) setActiveId(remaining[0]?.sessionId ?? null);
+    setRenamingId((current) => (current === sessionId ? null : current));
+    try {
+      await backend().call("terminal.close", { sessionId });
     } catch {
-      // ignore
+      // already gone
+    }
+    if (remaining.length === 0) void addTab();
+  };
+
+  const renameTab = (sessionId: string, title: string) => {
+    const next = title.trim();
+    if (next) {
+      setTabs((current) =>
+        current.map((tab) => (tab.sessionId === sessionId ? { ...tab, title: next } : tab)),
+      );
+    }
+    setRenamingId(null);
+  };
+
+  const onRenameKey = (sessionId: string, event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      renameTab(sessionId, event.currentTarget.value);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setRenamingId(null);
     }
   };
 
   return (
     <section className="terminal-pane" aria-label="Terminal">
       <header className="terminal-head">
-        <div className="terminal-tabs" role="tablist" aria-label="Side panel">
-          <button type="button" role="tab" className="terminal-tab active" aria-selected={true}>
-            Terminal
-          </button>
+        <div className="terminal-tabs" role="tablist" aria-label="Terminal sessions">
+          {tabs.map((tab) => {
+            const selected = tab.sessionId === activeId;
+            return (
+              <div
+                key={tab.sessionId}
+                role="tab"
+                tabIndex={0}
+                className={selected ? "terminal-tab active" : "terminal-tab"}
+                aria-selected={selected}
+                onClick={() => setActiveId(tab.sessionId)}
+                onDoubleClick={() => setRenamingId(tab.sessionId)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setActiveId(tab.sessionId);
+                  }
+                }}
+              >
+                {renamingId === tab.sessionId ? (
+                  <input
+                    className="terminal-tab-rename"
+                    defaultValue={tab.title}
+                    aria-label="Rename terminal"
+                    autoFocus
+                    onBlur={(event) => renameTab(tab.sessionId, event.currentTarget.value)}
+                    onKeyDown={(event) => onRenameKey(tab.sessionId, event)}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                ) : (
+                  <span className="terminal-tab-title">{tab.title}</span>
+                )}
+                <button
+                  type="button"
+                  className="icon-button terminal-tab-close"
+                  aria-label={`Close ${tab.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void closeTab(tab.sessionId);
+                  }}
+                >
+                  <IconClose />
+                </button>
+              </div>
+            );
+          })}
+          <Tooltip label="New terminal">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="New terminal"
+              onClick={() => void addTab()}
+            >
+              <IconPlus />
+            </button>
+          </Tooltip>
         </div>
         <div className="terminal-head-actions">
-          {status === "exited" || status === "error" ? (
-            <button type="button" className="ghost-button" onClick={onRestart}>
-              Restart
-            </button>
-          ) : null}
           <Tooltip label="Close">
             <button
               type="button"
@@ -163,46 +227,22 @@ function TerminalSession({ cwd, onRestart }: { cwd: string | null; onRestart: ()
           </Tooltip>
         </div>
       </header>
-      <div
-        className="terminal-scroll"
-        onClick={() => inputRef.current?.focus()}
-        onKeyDown={() => inputRef.current?.focus()}
-        role="presentation"
-      >
-        <pre className="terminal-output" ref={scrollRef}>
-          {status === "starting" ? <span className="terminal-muted">Starting shell…</span> : null}
-          {error ? <span className="terminal-error">{error}</span> : null}
-          {output}
-        </pre>
-        {status === "ready" ? (
-          <form
-            className="terminal-input-row"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void sendLine();
-            }}
-          >
-            <span className="terminal-prompt" aria-hidden="true">
-              $
-            </span>
-            <input
-              ref={inputRef}
-              className="terminal-input"
-              value={line}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-              aria-label="Terminal input"
-              onChange={(event) => setLine(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "c" && event.ctrlKey) {
-                  event.preventDefault();
-                  void sendInterrupt();
-                }
-              }}
-            />
-          </form>
+      <div className="terminal-xterm">
+        {starting ? <div className="terminal-status">Starting shell…</div> : null}
+        {error ? (
+          <div className="terminal-status terminal-error" role="alert">
+            {error}
+          </div>
         ) : null}
+        {tabs.map((tab) => (
+          <XtermSession
+            key={tab.sessionId}
+            sessionId={tab.sessionId}
+            active={tab.sessionId === activeId && !starting}
+            pty={tab.pty}
+            lineEnding={tab.lineEnding}
+          />
+        ))}
       </div>
     </section>
   );
