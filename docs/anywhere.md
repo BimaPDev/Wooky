@@ -43,6 +43,14 @@ Binding: by default the server binds 127.0.0.1 only (today's behaviour). Enablin
 binds the chosen interfaces: the tailnet IP (default), all interfaces, or stays loopback-only
 for `ssh`/`url` (the tunnel does the exposure).
 
+`tailscale serve --https=443` never points at the normal loopback listener: Tailscale proxies
+from 127.0.0.1, which would let any tailnet peer inherit loopback trust. Enabling
+`hosting.tailscaleServe` opens a **separate** loopback listener on its own ephemeral port and
+points Serve at that port instead. On this listener every request needs a device token; the
+loopback bypass is disabled. The normal loopback listener is unchanged. As defence in depth,
+any request carrying `Tailscale-User-Login`, `Tailscale-User-Name`, `X-Forwarded-For`,
+`X-Forwarded-Host` or `Forwarded` is treated as remote on every listener.
+
 ## Pairing and auth
 
 - Any non-loopback connection needs a **device token**. Loopback stays as today, plus a
@@ -62,6 +70,29 @@ for `ssh`/`url` (the tunnel does the exposure).
   registered projects.
 - Desktop clients keep tokens in Electron `safeStorage`. A server acting as a sync peer keeps them in
   WOOKY_HOME/peers.json, mode 0600 (on Windows, under the user profile ACL).
+
+A bearer token or `wooky.token.*` websocket subprotocol is an explicit presentation: if one is
+presented and its lookup fails, the request gets 401 even from loopback. The only exception is a
+stale `wooky_token` cookie on plain loopback with no proxy headers, which may be ignored so the
+local UI does not lock itself out.
+
+The public/private split is deliberate:
+
+- **Public, no token:** `GET`/`HEAD` for `index.html`, built static assets (js/css/fonts/images,
+  manifest and icons) and SPA routes such as `/project/abc`, plus `GET /pair` as the no-JS
+  fallback. The QR target `<url>/#/pair?code=…` must load on an unpaired phone. These hold no
+  user data.
+- **Authenticated:** `/ws`, `/sync/*`, `POST /pair`, and every data or API route. `/healthz` answers
+  only `ok` and stays authenticated (401 without a token on a remote listener).
+
+### Trust model
+
+A paired device is trusted like you at the keyboard, except it cannot change how agents are
+launched, change hosting, or pair or revoke devices. Concretely, these stay loopback-only:
+`providers.signIn`, `settings.put` touching `hosting`, a provider's `binaryPath`, `env` or
+`extraArgs`, or `acpAgents`, and every `remote.*` admin RPC. A `settings.put` patch from a paired
+device that touches any of them is rejected whole, not partially applied. A paired device also
+never gets the folder picker.
 
 ## Sync
 
@@ -194,7 +225,8 @@ Schemas live in `packages/contracts`. Old logs omit the new fields and decode to
   `23456789ABCDEFGHJKMNPQRSTUVWXYZ`
 - `HostingSettings` `{enabled: false, bind: "tailscale", port: 4317, tailscaleServe: false}`
 - `PairRequest` `{code, device: DeviceInfo}`, `PairResponse` `{token, host: DeviceInfo}`
-- `TailscaleStatus` `{installed, running, hostName, ips}`
+- `TailscaleStatus` `{installed, running, hostName, ips, serveError?}` — `serveError` is set when
+  `tailscale serve` could not be enabled or disabled, and stays on the wire.
 - `SyncCategories` `{files: true, threads: true, settings: true, themes: true, ignoredFiles: false}`
 - `SyncRetention` `{keepDays: 30, keepMin: 50}`
 - `SyncSettings` `{enabled: false, categories, intervalSec: 30 (5–3600), retention, peers: [], projectMap: {}}`

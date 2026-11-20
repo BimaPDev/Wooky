@@ -120,6 +120,19 @@ describe("rpc client", () => {
     client.close();
   });
 
+  it("surfaces forbidden as a normal error, not a timeout", async () => {
+    const { client, socket } = setup({ timeoutMs: 500 });
+    socket().open();
+    const call = client.call("settings.put", { settings: { hosting: { enabled: true } } });
+    socket().fail(socket().last("settings.put").id, "forbidden", "Loopback only.");
+    const error = await call.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RpcCallError);
+    expect(error).toMatchObject({ code: "forbidden", message: "Loopback only." });
+    vi.advanceTimersByTime(500);
+    expect(error).not.toMatchObject({ code: "timeout" });
+    client.close();
+  });
+
   it("rejects a call that gets no answer within the timeout", async () => {
     const { client, socket } = setup({ timeoutMs: 500 });
     socket().open();

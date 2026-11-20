@@ -26,7 +26,16 @@ import {
   ThreadGroup,
   Turn,
 } from "./model.ts";
-import { DeviceId, DeviceInfo, PairingCode, PairedDeviceView, TailscaleStatus } from "./remote.ts";
+import {
+  DeviceId,
+  DeviceInfo,
+  Environment,
+  PairingCode,
+  PairingCodeText,
+  PairedDeviceView,
+  RemoteConnection,
+  TailscaleStatus,
+} from "./remote.ts";
 import { ConflictResolution, Snapshot, SnapshotKind, SyncPush, SyncStatus } from "./sync.ts";
 import { TerminalInfo, TerminalPush, TerminalSessionId, TerminalSize } from "./terminal.ts";
 import { ProviderLimits, UsageHistoryParams, UsageHistoryResult } from "./usage.ts";
@@ -344,6 +353,26 @@ export const RpcMethods = {
     params: z.object({ deviceId: DeviceId, name: z.string().min(1) }),
     result: PairedDeviceView,
   },
+  /** This server pairs itself with another Wooky and stores the token locally. */
+  "remote.join": {
+    params: z.object({
+      connection: RemoteConnection,
+      code: PairingCodeText,
+      label: z.string().min(1).optional(),
+    }),
+    result: z.object({
+      environment: Environment,
+      host: DeviceInfo,
+    }),
+  },
+  /** Loopback only. The local UI opens a websocket to the paired environment. */
+  "remote.connectInfo": {
+    params: z.object({ environmentId: z.string().min(1) }),
+    result: z.object({
+      wsUrl: z.string().min(1),
+      token: z.string().min(1),
+    }),
+  },
   "sync.status": { params: z.object({}), result: SyncStatus },
   "sync.now": {
     params: z.object({ projectId: Id.optional() }),
@@ -437,7 +466,7 @@ export const RpcRequest = z.object({
 export type RpcRequest = z.infer<typeof RpcRequest>;
 
 export const RpcError = z.object({
-  code: z.enum(["bad_request", "not_found", "conflict", "unavailable", "internal"]),
+  code: z.enum(["bad_request", "not_found", "conflict", "unavailable", "forbidden", "internal"]),
   message: z.string(),
 });
 export type RpcError = z.infer<typeof RpcError>;
