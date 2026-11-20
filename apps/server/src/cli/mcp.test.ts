@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { PassThrough, Writable } from "node:stream";
+import type { ProviderEvent, ProviderStatus, ReadModel } from "@wooky/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanupTestRepos, makeRepo } from "../git/test-repo.ts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
+import type { ProviderAdapter } from "../providers/types.ts";
 import { startServer, type RunningServer } from "../server.ts";
 import { tempDir } from "../testing.ts";
+import {
+  assertWaitingThread,
+  formatToolResult,
+  resolveDefaultTarget,
+  rpcSessionLoad,
+} from "./mcp-tools.ts";
 import { runMcpCli, type McpIo } from "./mcp.ts";
 import { rpcCall } from "./rpc-client.ts";
 
@@ -132,7 +140,9 @@ function resultOf(message: unknown): { isError: boolean; text: string; json: unk
   return { isError: result.isError === true, text, json };
 }
 
-async function boot(projectCount = 1): Promise<{ env: NodeJS.ProcessEnv; projectIds: string[] }> {
+async function boot(
+  projectCount = 1,
+): Promise<{ env: NodeJS.ProcessEnv; projectIds: string[]; url: string }> {
   const home = await tempDir("mcp");
   const server = await startServer({
     home,
@@ -158,7 +168,55 @@ async function boot(projectCount = 1): Promise<{ env: NodeJS.ProcessEnv; project
     if (!project) throw new Error("Project was not created.");
     projectIds.push(project.id);
   }
-  return { env: { WOOKY_HOME: home }, projectIds };
+  return { env: { WOOKY_HOME: home }, projectIds, url: server.url };
+}
+
+function agentStatus(kind: ProviderStatus["kind"], models: string[]): ProviderStatus {
+  return {
+    kind,
+    label: kind,
+    installed: true,
+    authenticated: true,
+    version: null,
+    models: models.map((id) => ({ id, label: id })),
+    problem: null,
+  };
+}
+
+/** A demo turn that stays running until the server aborts it. */
+function holdDemo(): ProviderAdapter {
+  return {
+    kind: "demo",
+    async probe() {
+      return {
+        kind: "demo",
+        label: "Demo",
+        installed: true,
+        authenticated: true,
+        version: null,
+        models: [{ id: "demo", label: "Demo" }],
+        problem: null,
+      };
+    },
+    runTurn(input) {
+      return (async function* (): AsyncGenerator<ProviderEvent> {
+        yield { type: "session", sessionId: `hold-${input.threadId}` };
+        await new Promise<void>((resolve) => {
+          if (input.signal.aborted) {
+            resolve();
+            return;
+          }
+          input.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield {
+          type: "done",
+          status: "interrupted",
+          error: null,
+          nativeRef: `hold-${input.turnId}`,
+        };
+      })();
+    },
+  };
 }
 
 describe("wooky mcp", () => {
@@ -182,9 +240,14 @@ describe("wooky mcp", () => {
       }),
       request(4, "ping"),
       request(5, "tools/nope"),
+      request(6, "initialize", {
+        protocolVersion: "1999-01-01",
+        capabilities: {},
+        clientInfo: { name: "future", version: "0" },
+      }),
     ]);
     expect(stderr).toBe("");
-    expect(messages).toHaveLength(5);
+    expect(messages).toHaveLength(6);
     expect(messages[0]).toMatchObject({
       jsonrpc: "2.0",
       id: 1,
@@ -198,6 +261,7 @@ describe("wooky mcp", () => {
       id: 5,
       error: { code: -32601, message: "Method not found" },
     });
+    expect(messages[5]).toMatchObject({ id: 6, result: { protocolVersion: "2025-06-18" } });
   });
 
   it("lists tools and hides approve unless --allow-approvals is set", async () => {
@@ -227,7 +291,7 @@ describe("wooky mcp", () => {
 
   it("creates a demo task, waits for it, and reads the answer", async () => {
     const { env, projectIds } = await boot();
-    const session = openMcp([], env);
+    const session = openMcp(["--allow-full"], env);
     try {
       const created = resultOf(
         await session.send(
@@ -330,6 +394,178 @@ describe("wooky mcp", () => {
     } finally {
       await session.end();
     }
+  });
+
+  it("creates in approve mode, rejects full without the flag, and accepts full with it", async () => {
+    const denied = await mcp([], {}, [
+      tool(1, "wooky_create_task", { projectId: "p", prompt: "x", runtimeMode: "full" }),
+    ]);
+    expect(resultOf(denied.messages[0]).isError).toBe(true);
+    expect(resultOf(denied.messages[0]).text).toBe(
+      "Start `wooky mcp --allow-full` to allow full runtime.",
+    );
+
+    const { env, projectIds, url } = await boot();
+    const projectId = projectIds[0] ?? "";
+    const plain = openMcp([], env);
+    try {
+      const created = resultOf(
+        await plain.send(tool(1, "wooky_create_task", { projectId, prompt: "Add a demo note" })),
+      );
+      const threadId = (created.json as { threadId?: string }).threadId ?? "";
+      const snap = await rpcCall(url, "snapshot", {});
+      expect(snap.threads[threadId]?.runtimeMode).toBe("approve");
+      expect(snap.threads[threadId]?.provider).toBe("demo");
+      const waited = resultOf(
+        await plain.send(tool(2, "wooky_wait", { threadId, timeoutMs: 10_000 })),
+      );
+      expect(waited.json).toMatchObject({
+        state: "blocked",
+        waitingOn: "approval",
+        threadId,
+      });
+      expect((waited.json as { approvalId?: string }).approvalId).toBeTruthy();
+    } finally {
+      await plain.end();
+    }
+
+    const allowed = openMcp(["--allow-full"], env);
+    try {
+      const created = resultOf(
+        await allowed.send(
+          tool(1, "wooky_create_task", {
+            projectId,
+            prompt: "note",
+            provider: "demo",
+            model: "demo",
+            runtimeMode: "full",
+            isolate: false,
+          }),
+        ),
+      );
+      const threadId = (created.json as { threadId?: string }).threadId ?? "";
+      const snap = await rpcCall(url, "snapshot", {});
+      expect(snap.threads[threadId]?.runtimeMode).toBe("full");
+    } finally {
+      await allowed.end();
+    }
+  }, 20_000);
+
+  it("resolves the default provider to the first available one", () => {
+    const claude = agentStatus("claude", ["haiku", "sonnet"]);
+    const demo = agentStatus("demo", ["demo"]);
+    expect(
+      resolveDefaultTarget([claude, demo], {
+        disabledProviders: [],
+        providers: { claude: { defaultModel: "sonnet" } },
+      }),
+    ).toEqual({ provider: "claude", model: "sonnet" });
+    expect(resolveDefaultTarget([claude, demo], { disabledProviders: [], providers: {} })).toEqual({
+      provider: "claude",
+      model: "haiku",
+    });
+    expect(
+      resolveDefaultTarget([claude, demo], { disabledProviders: ["claude"], providers: {} }),
+    ).toEqual({ provider: "demo", model: "demo" });
+  });
+
+  it("rejects read, send, wait, and interrupt outside --projects", async () => {
+    const { env, projectIds, url } = await boot(2);
+    const [allowed, other] = projectIds;
+    await rpcCall(url, "dispatch", {
+      commandId: randomUUID(),
+      type: "thread.create",
+      projectId: other ?? "",
+      provider: "demo",
+      model: "demo",
+      runtimeMode: "approve",
+      isolate: false,
+    });
+    const snap = await rpcCall(url, "snapshot", {});
+    const threadId =
+      Object.values(snap.threads).find((thread) => thread.projectId === other)?.id ?? "";
+    const session = openMcp(["--projects", allowed ?? ""], env);
+    try {
+      const read = resultOf(await session.send(tool(1, "wooky_read", { threadId })));
+      const sent = resultOf(
+        await session.send(tool(2, "wooky_send", { threadId, prompt: "later" })),
+      );
+      const waited = resultOf(
+        await session.send(tool(3, "wooky_wait", { threadId, timeoutMs: 1000 })),
+      );
+      const interrupted = resultOf(await session.send(tool(4, "wooky_interrupt", { threadId })));
+      for (const result of [read, sent, waited, interrupted]) {
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("outside");
+        expect(result.text).toContain(other);
+      }
+    } finally {
+      await session.end();
+    }
+  }, 20_000);
+
+  it("drops listeners after 50 short waits", async () => {
+    const home = await tempDir("mcp-hold");
+    const root = await tempDir("mcp-hold-root");
+    const server = await startServer({
+      home,
+      port: 0,
+      host: "127.0.0.1",
+      adapters: [holdDemo()],
+    });
+    cleanups.push(async () => {
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
+    });
+    await rpcCall(server.url, "dispatch", {
+      commandId: randomUUID(),
+      type: "project.add",
+      root,
+      name: "held",
+    });
+    const snap = await rpcCall(server.url, "snapshot", {});
+    const projectId =
+      Object.values(snap.projects).find((project) => project.root === root)?.id ?? "";
+    const session = openMcp([], { WOOKY_HOME: home });
+    try {
+      const created = resultOf(
+        await session.send(
+          tool(1, "wooky_create_task", {
+            projectId,
+            prompt: "hold",
+            provider: "demo",
+            model: "demo",
+            isolate: false,
+          }),
+        ),
+      );
+      const threadId = (created.json as { threadId?: string }).threadId ?? "";
+      expect(rpcSessionLoad()).toEqual({ listeners: 0, pending: 0 });
+      for (let index = 0; index < 50; index += 1) {
+        const waited = resultOf(
+          await session.send(tool(index + 2, "wooky_wait", { threadId, timeoutMs: 20 })),
+        );
+        expect(waited.json).toMatchObject({ state: "timeout", threadId });
+        expect(rpcSessionLoad()).toEqual({ listeners: 0, pending: 0 });
+      }
+    } finally {
+      await session.end();
+    }
+  }, 20_000);
+
+  it("truncates an oversized turn and reports a removed thread", () => {
+    const encoded = formatToolResult({
+      threadId: "t",
+      title: "big",
+      turns: [{ turnId: "u", status: "completed", text: "x".repeat(30_000) }],
+      diffStat: null,
+    });
+    expect(encoded.length).toBeLessThanOrEqual(20_000);
+    expect(JSON.parse(encoded)).toMatchObject({ note: "Truncated to 20000 characters." });
+    expect(() => assertWaitingThread({ threads: {} } as ReadModel, "t1")).toThrow(
+      "Thread was removed.",
+    );
   });
 
   it("returns a parse error for a bad line and keeps reading", async () => {

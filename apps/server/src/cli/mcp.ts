@@ -9,7 +9,7 @@ import {
 const PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18"] as const;
 const LATEST_PROTOCOL = "2025-06-18";
 
-const USAGE = `Usage: wooky mcp [--projects <id,id>] [--read-only] [--allow-approvals]
+const USAGE = `Usage: wooky mcp [--projects <id,id>] [--read-only] [--allow-approvals] [--allow-full]
 
 Speak MCP (JSON-RPC 2.0, one JSON object per line) to a running Wooky server.
 The server is $WOOKY_SERVER_URL, or WOOKY_HOME/server.json when that process is still alive.
@@ -17,7 +17,8 @@ Stdout is protocol only.
 
 --projects <id,id>   Only these projects. Other project ids are rejected.
 --read-only          Expose overview, list, read, and wait.
---allow-approvals    Also expose wooky_approve. Off by default.`;
+--allow-approvals    Also expose wooky_approve. Off by default.
+--allow-full         Let a task request full runtime. Otherwise the ceiling is approve.`;
 
 export interface McpIo {
   stdin: ReadableStream<Uint8Array> | NodeJS.ReadableStream;
@@ -78,6 +79,7 @@ function parseMcpArgs(args: string[]): McpFlags | "help" {
   let projects: Set<string> | null = null;
   let readOnly = false;
   let allowApprovals = false;
+  let allowFull = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? "";
     if (arg === "--help" || arg === "-h" || arg === "help") return "help";
@@ -87,6 +89,10 @@ function parseMcpArgs(args: string[]): McpFlags | "help" {
     }
     if (arg === "--allow-approvals") {
       allowApprovals = true;
+      continue;
+    }
+    if (arg === "--allow-full") {
+      allowFull = true;
       continue;
     }
     const inline = arg.startsWith("--projects=") ? arg.slice("--projects=".length) : undefined;
@@ -106,7 +112,7 @@ function parseMcpArgs(args: string[]): McpFlags | "help" {
     }
     throw new Error(`Unknown argument ${arg}.`);
   }
-  return { projects, readOnly, allowApprovals };
+  return { projects, readOnly, allowApprovals, allowFull };
 }
 
 async function drain(
@@ -178,6 +184,7 @@ async function dispatch(method: string, params: unknown, ctx: ToolContext): Prom
 function initialize(params: unknown): unknown {
   const body = objectParams(params);
   const requested = body.protocolVersion;
+  // MCP negotiation: a version this server does not implement is answered with the newest it does.
   const protocolVersion =
     typeof requested === "string" && (PROTOCOL_VERSIONS as readonly string[]).includes(requested)
       ? requested

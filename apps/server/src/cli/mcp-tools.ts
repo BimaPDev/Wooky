@@ -4,8 +4,11 @@ import {
   AgeEvent,
   ProviderKind,
   RpcMethods,
+  RuntimeMode,
   WOOKY_WS_PATH,
   type AgeEventOf,
+  type ProviderKind as ProviderKindName,
+  type ProviderStatus,
   type ReadModel,
   type RpcMethod,
   type RpcParams,
@@ -30,6 +33,83 @@ export interface McpFlags {
   projects: ReadonlySet<string> | null;
   readOnly: boolean;
   allowApprovals: boolean;
+  allowFull: boolean;
+}
+
+const FULL_RUNTIME_ERROR = "Start `wooky mcp --allow-full` to allow full runtime.";
+const RUNTIME_RANK: Record<RuntimeMode, number> = { approve: 0, "auto-edits": 1, full: 2 };
+
+/** No requested mode uses the ceiling: approve, or full when the process was started with --allow-full. */
+export function resolveRuntimeMode(requested: string | undefined, allowFull: boolean): RuntimeMode {
+  const ceiling: RuntimeMode = allowFull ? "full" : "approve";
+  if (requested === undefined) return ceiling;
+  const parsed = RuntimeMode.safeParse(requested);
+  if (!parsed.success) throw new ToolError("runtimeMode must be approve, auto-edits, or full.");
+  if (RUNTIME_RANK[parsed.data] > RUNTIME_RANK[ceiling]) throw new ToolError(FULL_RUNTIME_ERROR);
+  return parsed.data;
+}
+
+export interface AgentChoice {
+  provider: ProviderKindName;
+  model: string;
+}
+
+/**
+ * Same default as the composer's draft: the requested provider when it is usable, otherwise the
+ * first available one. The model is the one asked for on that provider, else its defaultModel,
+ * else its first model. Demo is used only when that walk selects it.
+ */
+export function resolveDefaultTarget(
+  providers: readonly ProviderStatus[],
+  settings: {
+    disabledProviders?: readonly ProviderKindName[];
+    providers?: Partial<Record<ProviderKindName, { defaultModel?: string } | undefined>>;
+  } | null,
+  requested?: { provider?: ProviderKindName; model?: string },
+): AgentChoice | null {
+  const disabled = new Set(settings?.disabledProviders ?? []);
+  const usable = (kind: ProviderKindName | undefined) =>
+    kind === undefined
+      ? undefined
+      : providers.find((entry) => entry.kind === kind && providerAvailable(entry, disabled));
+  const chosen =
+    usable(requested?.provider) ?? providers.find((entry) => providerAvailable(entry, disabled));
+  if (!chosen) return null;
+  const model =
+    requested?.model && requested.provider === chosen.kind
+      ? requested.model
+      : defaultModelId(chosen, settings);
+  if (!model) return null;
+  return { provider: chosen.kind, model };
+}
+
+function providerAvailable(
+  provider: ProviderStatus,
+  disabled: ReadonlySet<ProviderKindName>,
+): boolean {
+  return (
+    !disabled.has(provider.kind) &&
+    provider.installed &&
+    provider.authenticated !== false &&
+    !provider.problem
+  );
+}
+
+function defaultModelId(
+  status: ProviderStatus,
+  settings: {
+    providers?: Partial<Record<ProviderKindName, { defaultModel?: string } | undefined>>;
+  } | null,
+): string {
+  const configured = settings?.providers?.[status.kind]?.defaultModel;
+  const ids = status.models.map((model) => model.id);
+  if (configured && ids.includes(configured)) return configured;
+  return ids[0] ?? "";
+}
+
+/** The wait loop calls this after each snapshot. A missing thread was removed while it waited. */
+export function assertWaitingThread(model: ReadModel, threadId: string): void {
+  if (!model.threads[threadId]) throw new ToolError("Thread was removed.");
 }
 
 export interface ToolContext {
@@ -110,7 +190,7 @@ const TOOLS: Tool[] = [
   {
     name: "wooky_create_task",
     description:
-      "Create a thread and start its first turn. Returns the thread id. The turn runs in full mode, so edits and commands do not stop for approval. isolate defaults to true (its own git worktree). provider and model default to demo.",
+      "Create a thread and start its first turn. Returns the thread id. runtimeMode defaults to approve, the composer's default, unless this process was started with --allow-full. In approve mode the Wooky UI shows each approval; wooky_wait returns blocked, and wooky_approve needs --allow-approvals. isolate defaults to true (its own git worktree). provider and model default to the first available provider and its default model.",
     inputSchema: {
       type: "object",
       properties: {
@@ -119,9 +199,14 @@ const TOOLS: Tool[] = [
         provider: {
           type: "string",
           enum: [...ProviderKind.options],
-          description: "Defaults to demo.",
+          description: "Defaults to the first available provider.",
         },
-        model: { type: "string", description: "Defaults to demo when provider is demo." },
+        model: { type: "string", description: "Defaults to that provider's default model." },
+        runtimeMode: {
+          type: "string",
+          enum: ["approve", "auto-edits", "full"],
+          description: "Cannot exceed approve unless started with --allow-full.",
+        },
         isolate: { type: "boolean", description: "Own worktree. Default true." },
         title: { type: "string" },
       },
@@ -240,12 +325,10 @@ export async function callTool(
     return toolError(`${name} is not available in read-only mode.`);
   }
   if (tool.gated && !ctx.flags.allowApprovals) {
-    return toolError(
-      "wooky_approve is off. Start the server with `wooky mcp --allow-approvals` to enable it.",
-    );
+    return toolError("wooky_approve is off. Start `wooky mcp` with --allow-approvals.");
   }
   try {
-    return { content: [{ type: "text", text: encode(await tool.run(args, ctx)) }] };
+    return { content: [{ type: "text", text: formatToolResult(await tool.run(args, ctx)) }] };
   } catch (error) {
     return toolError(error instanceof Error ? error.message : "The tool failed.");
   }
@@ -253,6 +336,10 @@ export async function callTool(
 
 function toolError(text: string): ToolCallResult {
   return { content: [{ type: "text", text }], isError: true };
+}
+
+export function formatToolResult(value: unknown): string {
+  return encode(value);
 }
 
 function encode(value: unknown): string {
@@ -317,33 +404,35 @@ async function listThreads(args: Record<string, unknown>, ctx: ToolContext): Pro
 }
 
 async function createTask(args: Record<string, unknown>, ctx: ToolContext): Promise<unknown> {
-  knownKeys(args, ["projectId", "prompt", "provider", "model", "isolate", "title"]);
+  knownKeys(args, ["projectId", "prompt", "provider", "model", "runtimeMode", "isolate", "title"]);
   const projectId = requireString(args, "projectId");
   const prompt = requireString(args, "prompt");
-  const providerText = optionalString(args, "provider") ?? "demo";
-  const provider = ProviderKind.safeParse(providerText);
-  if (!provider.success) {
-    throw new ToolError(`provider must be ${ProviderKind.options.join(", ")}.`);
-  }
-  let model = optionalString(args, "model");
-  if (!model) {
-    if (provider.data !== "demo") throw new ToolError("Pass a model for this provider.");
-    model = "demo";
-  }
+  const requestedProvider = optionalProvider(args);
+  const requestedModel = optionalString(args, "model");
+  const runtimeMode = resolveRuntimeMode(optionalString(args, "runtimeMode"), ctx.flags.allowFull);
   const isolate = booleanArg(args, "isolate", true);
   const title = optionalString(args, "title");
   assertProject(ctx.flags, projectId);
   return withServer(ctx.env, async (session) => {
     const before = await session.call("snapshot", {});
     if (!before.projects[projectId]) throw new ToolError(`No project with id ${projectId}.`);
+    const [listed, settings] = await Promise.all([
+      session.call("providers.list", {}),
+      session.call("settings.get", {}),
+    ]);
+    const target = resolveDefaultTarget(listed, settings, {
+      ...(requestedProvider ? { provider: requestedProvider } : {}),
+      ...(requestedModel ? { model: requestedModel } : {}),
+    });
+    if (!target) throw new ToolError("No agent is available.");
     const commandId = newCommandId();
     await session.call("dispatch", {
       commandId,
       type: "thread.create",
       projectId,
-      provider: provider.data,
-      model,
-      runtimeMode: "full",
+      provider: target.provider,
+      model: target.model,
+      runtimeMode,
       isolate,
       ...(title ? { title } : {}),
     });
@@ -436,14 +525,16 @@ async function waitForTurn(args: Record<string, unknown>, ctx: ToolContext): Pro
               (candidate) =>
                 candidate.seq > afterSeq &&
                 eventThreadId(candidate) === threadId &&
-                eventTurnId(candidate) === turnId &&
-                (candidate.type === "turn.finished" ||
-                  candidate.type === "approval.requested" ||
-                  candidate.type === "question.requested"),
+                (candidate.type === "thread.removed" ||
+                  (eventTurnId(candidate) === turnId &&
+                    (candidate.type === "turn.finished" ||
+                      candidate.type === "approval.requested" ||
+                      candidate.type === "question.requested"))),
               remaining,
             )
           : null;
       model = await session.call("snapshot", {});
+      assertWaitingThread(model, threadId);
       const next = judgeTurn(model, threadId, turnId);
       if (next.kind === "settled") return { threadId, ...next.body };
       if (!event) return { threadId, state: "timeout", turnId, timeoutMs };
@@ -617,6 +708,14 @@ function requireString(input: Record<string, unknown>, key: string): string {
   return value.trim();
 }
 
+function optionalProvider(input: Record<string, unknown>): ProviderKindName | undefined {
+  const value = optionalString(input, "provider");
+  if (value === undefined) return undefined;
+  const parsed = ProviderKind.safeParse(value);
+  if (!parsed.success) throw new ToolError(`provider must be ${ProviderKind.options.join(", ")}.`);
+  return parsed.data;
+}
+
 function optionalString(input: Record<string, unknown>, key: string): string | undefined {
   if (input[key] === undefined) return undefined;
   const value = input[key];
@@ -708,6 +807,21 @@ function webSocketUrl(serverUrl: string): string {
   return url.toString();
 }
 
+let listenerBalance = 0;
+let pendingBalance = 0;
+
+export function rpcSessionLoad(): { listeners: number; pending: number } {
+  return { listeners: listenerBalance, pending: pendingBalance };
+}
+
+function noteListenerAdded(): void {
+  listenerBalance += 1;
+}
+
+function noteListenerRemoved(): void {
+  listenerBalance -= 1;
+}
+
 class RpcSession {
   private readonly pending = new Map<
     number,
@@ -761,10 +875,11 @@ class RpcSession {
     const id = this.nextId++;
     const result = new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
+        this.dropPending(id);
         reject(new Error(`${method} timed out.`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
+      pendingBalance += 1;
       this.ws.send(JSON.stringify({ id, method, params }));
     });
     return result.then((value) => {
@@ -789,7 +904,7 @@ class RpcSession {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        this.listeners.delete(onEvent);
+        if (this.listeners.delete(onEvent)) noteListenerRemoved();
         this.aborts.delete(abort);
         if (error) reject(error);
         else resolve(event ?? null);
@@ -799,10 +914,16 @@ class RpcSession {
         if (match(event)) settle(null, event);
       };
       this.listeners.add(onEvent);
+      noteListenerAdded();
       this.aborts.add(abort);
       const raced = this.events.find(match);
       if (raced) settle(null, raced);
     });
+  }
+
+  private dropPending(id: number): void {
+    if (!this.pending.delete(id)) return;
+    pendingBalance -= 1;
   }
 
   close(): void {
@@ -819,9 +940,11 @@ class RpcSession {
       clearTimeout(pending.timer);
       pending.reject(error);
     }
+    pendingBalance -= this.pending.size;
     this.pending.clear();
     for (const abort of [...this.aborts]) abort(error);
     this.aborts.clear();
+    listenerBalance -= this.listeners.size;
     this.listeners.clear();
   }
 
@@ -841,7 +964,7 @@ class RpcSession {
     if (typeof message.id !== "number") return;
     const pending = this.pending.get(message.id);
     if (!pending) return;
-    this.pending.delete(message.id);
+    this.dropPending(message.id);
     clearTimeout(pending.timer);
     if (message.ok === true) pending.resolve(message.result);
     else {
