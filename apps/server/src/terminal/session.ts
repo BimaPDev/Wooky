@@ -225,6 +225,11 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     sessions.delete(session.id);
   }
 
+  /** Sessions a caller can still reach: one being killed is already gone to them. */
+  function liveSessions(): Session[] {
+    return [...sessions.values()].filter((session) => !session.closing);
+  }
+
   function detachedCount() {
     let count = 0;
     for (const session of sessions.values()) {
@@ -475,8 +480,9 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     input: TerminalOpenInput,
     subscriber: TerminalSubscriber,
   ): Promise<TerminalOpenResult> {
-    if (sessions.size >= MAX_SESSIONS) reapExited();
-    if (sessions.size >= MAX_SESSIONS) {
+    // A closing session is already gone to a caller, so it must not hold a slot.
+    if (liveSessions().length >= MAX_SESSIONS) reapExited();
+    if (liveSessions().length >= MAX_SESSIONS) {
       throw new ServiceError(
         "conflict",
         `At most ${MAX_SESSIONS} terminal sessions (${detachedCount()} detached).`,
@@ -544,9 +550,7 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
   }
 
   function list(): TerminalInfo[] {
-    // A session that is being killed is already gone to a caller; it only lingers
-    // so its exit message still reaches whoever is attached.
-    return [...sessions.values()].filter((session) => !session.closing).map(toInfo);
+    return liveSessions().map(toInfo);
   }
 
   function write(sessionId: string, data: string) {
