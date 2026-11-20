@@ -194,12 +194,13 @@ function FinishedTurn({
           <button
             type="button"
             className="turn-action"
+            aria-label="Revert to before this turn"
             disabled={!canRevert || running}
             title={canRevert ? "Revert files to before this turn" : "No checkpoint for this turn"}
             onClick={() => revertTurn(turn.threadId, turn.id)}
           >
             <IconUndo />
-            Revert to before this turn
+            <span className="turn-action-label">Revert to before this turn</span>
           </button>
         )}
       </div>

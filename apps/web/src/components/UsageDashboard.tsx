@@ -651,102 +651,106 @@ function UsageOverview({
         </div>
 
         {breakdown === "model" ? (
-          <table className="usage-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Model</th>
-                <th className="num">Cost</th>
-                <th className="num">Share</th>
-                <th className="num">Tokens</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.models.length === 0 ? (
+          <div className="usage-table-scroll">
+            <table className="usage-table">
+              <thead>
                 <tr>
-                  <td colSpan={5} className="muted">
-                    No activity in this window.
-                  </td>
+                  <th>#</th>
+                  <th>Model</th>
+                  <th className="num">Cost</th>
+                  <th className="num">Share</th>
+                  <th className="num">Tokens</th>
                 </tr>
-              ) : (
-                stats.models.map((model, index) => {
-                  const value = metric === "cost" ? model.cost : model.tokens;
-                  const share =
-                    metric === "cost"
-                      ? stats.cost > 0
-                        ? model.cost / stats.cost
-                        : 0
-                      : stats.tokens > 0
-                        ? model.tokens / stats.tokens
-                        : 0;
-                  const bar =
-                    peakModel > 0 && value > 0 ? Math.max(2, (value / peakModel) * 100) : 0;
-                  const meta = SERIES_META[model.series];
+              </thead>
+              <tbody>
+                {stats.models.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="muted">
+                      No activity in this window.
+                    </td>
+                  </tr>
+                ) : (
+                  stats.models.map((model, index) => {
+                    const value = metric === "cost" ? model.cost : model.tokens;
+                    const share =
+                      metric === "cost"
+                        ? stats.cost > 0
+                          ? model.cost / stats.cost
+                          : 0
+                        : stats.tokens > 0
+                          ? model.tokens / stats.tokens
+                          : 0;
+                    const bar =
+                      peakModel > 0 && value > 0 ? Math.max(2, (value / peakModel) * 100) : 0;
+                    const meta = SERIES_META[model.series];
+                    return (
+                      <tr key={`${model.series}:${model.name}`}>
+                        <td className="muted">{index + 1}</td>
+                        <td>
+                          <div className="usage-model-cell">
+                            <span className="usage-model-name">
+                              <UsageProviderMark kind={model.series} />
+                              <span className="mono">{model.name}</span>
+                            </span>
+                            {bar > 0 ? (
+                              <span
+                                className="usage-model-bar"
+                                style={{
+                                  width: `${bar}%`,
+                                  background: meta.color,
+                                }}
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="num tabular">{formatUsd(model.cost)}</td>
+                        <td className="num tabular muted">{formatPercent(share)}</td>
+                        <td className="num tabular muted">{formatTokens(model.tokens)}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="usage-table-scroll">
+            <table className="usage-table">
+              <thead>
+                <tr>
+                  <th>{stats.resolution === "hour" ? "Hour" : "Day"}</th>
+                  <th className="num">{metric === "cost" ? "Cost" : "Tokens"}</th>
+                  {stats.providers.map((provider) => (
+                    <th key={provider.id} className="num">
+                      {SERIES_META[provider.id].label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {stats.periods.toReversed().map((period) => {
+                  const total = metric === "cost" ? period.costTotal : period.tokensTotal;
+                  const bySeries = metric === "cost" ? period.costBySeries : period.tokensBySeries;
                   return (
-                    <tr key={`${model.series}:${model.name}`}>
-                      <td className="muted">{index + 1}</td>
-                      <td>
-                        <div className="usage-model-cell">
-                          <span className="usage-model-name">
-                            <UsageProviderMark kind={model.series} />
-                            <span className="mono">{model.name}</span>
-                          </span>
-                          {bar > 0 ? (
-                            <span
-                              className="usage-model-bar"
-                              style={{
-                                width: `${bar}%`,
-                                background: meta.color,
-                              }}
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                        </div>
+                    <tr key={period.key}>
+                      <td>{period.label}</td>
+                      <td className="num tabular">
+                        {metric === "cost" ? formatUsd(total) : formatTokens(total)}
                       </td>
-                      <td className="num tabular">{formatUsd(model.cost)}</td>
-                      <td className="num tabular muted">{formatPercent(share)}</td>
-                      <td className="num tabular muted">{formatTokens(model.tokens)}</td>
+                      {stats.providers.map((provider) => (
+                        <td key={provider.id} className="num tabular muted">
+                          {metric === "cost"
+                            ? formatUsd(bySeries.get(provider.id) ?? 0)
+                            : formatTokens(bySeries.get(provider.id) ?? 0)}
+                        </td>
+                      ))}
                     </tr>
                   );
-                })
-              )}
-            </tbody>
-          </table>
-        ) : (
-          <table className="usage-table">
-            <thead>
-              <tr>
-                <th>{stats.resolution === "hour" ? "Hour" : "Day"}</th>
-                <th className="num">{metric === "cost" ? "Cost" : "Tokens"}</th>
-                {stats.providers.map((provider) => (
-                  <th key={provider.id} className="num">
-                    {SERIES_META[provider.id].label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {stats.periods.toReversed().map((period) => {
-                const total = metric === "cost" ? period.costTotal : period.tokensTotal;
-                const bySeries = metric === "cost" ? period.costBySeries : period.tokensBySeries;
-                return (
-                  <tr key={period.key}>
-                    <td>{period.label}</td>
-                    <td className="num tabular">
-                      {metric === "cost" ? formatUsd(total) : formatTokens(total)}
-                    </td>
-                    {stats.providers.map((provider) => (
-                      <td key={provider.id} className="num tabular muted">
-                        {metric === "cost"
-                          ? formatUsd(bySeries.get(provider.id) ?? 0)
-                          : formatTokens(bySeries.get(provider.id) ?? 0)}
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </div>

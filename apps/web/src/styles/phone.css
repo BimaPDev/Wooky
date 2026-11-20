@@ -15,6 +15,17 @@
     height: 100dvh;
   }
 
+  /* No hover on a phone: keep the revert action visible, as an icon so the summary keeps its room. */
+  .turn-action {
+    opacity: 1;
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  .turn-action-label {
+    display: none;
+  }
+
   /* Sidebar drawer */
   .sidebar {
     position: fixed;
@@ -126,8 +137,44 @@
     border-left: 0;
   }
 
+  /* A wallpaper theme makes panels see-through; a full-screen panel must cover the thread. */
+  html[data-wallpaper] .workspace-body.split .panel,
+  html[data-wallpaper] .panel {
+    background: var(--bg-1);
+  }
+
   .panel-head {
     height: 48px;
+  }
+
+  /*
+   * Popovers are anchored to a chip, which is too narrow a place for them on a phone: they open as
+   * a sheet across the screen, below the top bar or above the bottom edge.
+   */
+  .popover,
+  .popover.popover-picker,
+  .popover.popover-small,
+  .details-popover {
+    position: fixed;
+    /* important: the per-placement rules (".composer .popover.above.end") are more specific */
+    left: var(--space-2) !important;
+    right: var(--space-2) !important;
+    width: auto !important;
+    max-width: none;
+  }
+
+  .popover.below {
+    top: calc(52px + env(safe-area-inset-top));
+    bottom: auto;
+  }
+
+  .popover.above {
+    top: auto;
+    bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
+  }
+
+  .popover .pk-panel {
+    max-height: min(70dvh, 520px);
   }
 
   /* Conversation and composer */
@@ -215,6 +262,33 @@
 
   .settings-shell {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  /* The page list is one swipeable row, so the page below it keeps the screen. */
+  .settings-nav {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    overflow: auto hidden;
+  }
+
+  .settings-nav .search-field,
+  .settings-nav-label {
+    display: none;
+  }
+
+  .settings-nav-group {
+    flex: none;
+    flex-direction: row;
+    gap: var(--space-1);
+  }
+
+  .settings-nav-item {
+    width: auto;
+    flex: none;
+    white-space: nowrap;
   }
 
   .history-save {

@@ -3626,6 +3626,11 @@ button.tool-line:active {
   gap: var(--space-3);
 }
 
+.usage-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .usage-table {
   width: 100%;
   border-collapse: collapse;
