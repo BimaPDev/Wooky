@@ -38,6 +38,8 @@ describe("anywhere reducer", () => {
         settings: {
           scripts: [{ id: "dev", name: "Dev", command: "pnpm dev", runOnWorktreeCreate: false }],
           defaultPreviewUrl: "http://localhost:${PORT}",
+          sharedPaths: [],
+          prompts: [],
         },
         seq: 3,
         at,
@@ -45,7 +47,7 @@ describe("anywhere reducer", () => {
     ]);
     expect(next.projects.p1?.settings.scripts.map((script) => script.id)).toEqual(["dev"]);
     expect(next.projects.p1?.settings.defaultPreviewUrl).toBe("http://localhost:${PORT}");
-    expect(next.projects.p2?.settings).toEqual({ scripts: [] });
+    expect(next.projects.p2?.settings).toEqual({ scripts: [], sharedPaths: [], prompts: [] });
   });
 
   it("ignores configure for a missing project", () => {
@@ -55,7 +57,7 @@ describe("anywhere reducer", () => {
         type: "project.configured",
         commandId: "c",
         projectId: "missing",
-        settings: { scripts: [] },
+        settings: { scripts: [], sharedPaths: [], prompts: [] },
         seq: 1,
         at,
       },

@@ -186,7 +186,13 @@ describe("failover review fixes", () => {
     const model = {
       ...emptyReadModel(),
       projects: {
-        p1: { id: "p1", name: "p", root: "/p", createdAt: now, settings: { scripts: [] } },
+        p1: {
+          id: "p1",
+          name: "p",
+          root: "/p",
+          createdAt: now,
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
+        },
       },
       threads: {
         t1: {

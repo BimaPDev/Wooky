@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ThreadFailoverState, TurnFailure, TurnOrigin } from "./failover.ts";
 import { ProviderKind } from "./kind.ts";
 import { DeviceId } from "./remote.ts";
-import { ProjectSettings } from "./scripts.ts";
+import { StoredProjectSettings } from "./scripts.ts";
 
 export { ProviderKind };
 
@@ -143,7 +143,7 @@ export const Project = z.object({
   /** The hidden folder behind "No project". The UI shows it as "No project" and lists no row for it. */
   scratch: z.boolean().optional(),
   /** Scripts, worktree setup, and the preview URL. Old projects decode as no scripts. */
-  settings: ProjectSettings,
+  settings: StoredProjectSettings,
 });
 export type Project = z.infer<typeof Project>;
 

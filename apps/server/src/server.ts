@@ -25,6 +25,7 @@ import { createAttachmentStore } from "./attachments.ts";
 import { createScratchService } from "./scratch.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
+import { setupWorktree, unwatchHeldNotices } from "./scripts/worktree-setup.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
 import { createRemoteRuntime, type RemoteRuntime } from "./remote/runtime.ts";
@@ -139,6 +140,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
+  const closeStore = () => {
+    unwatchHeldNotices();
+    store.close();
+  };
   const git = options.git ?? createGitService();
   const remote = createRemoteRuntime({
     home: options.home,
@@ -154,6 +159,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const deviceId = remote.device.id();
   const authenticate = options.transfer?.authenticate ?? remote.authenticateRequest;
   const peers = options.transfer?.peers ?? remote.peers;
+  const terminals = createTerminalManager();
   let dispatchCommand: (command: Command) => ReturnType<Dispatcher["dispatch"]> = () => {
     throw new Error("dispatcher not ready");
   };
@@ -183,6 +189,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     now: ctx.now,
     runClaimThread: (effect) => transfer.runClaimThread(effect),
     recoverClaims: () => transfer.recoverClaims(),
+    onWorktreeCreated: (input) =>
+      setupWorktree({
+        ...input,
+        store,
+        terminals,
+        newId: ctx.newId,
+      }),
   });
   const dispatcher = createDispatcher({
     store,
@@ -199,7 +212,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const ship = createShipService({ store, git, gh: options.gh ?? createGhClient() });
   const stopShipPolling = ship.startPolling();
   const scratch = createScratchService({ home: options.home, store, dispatcher });
-  const terminals = createTerminalManager();
   const history = createHistoryService({
     home: options.home,
     userHome: options.userHome ?? homedir(),
@@ -257,7 +269,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     sockets.close();
     remote.closeTunnels();
     await remote.closeServers();
-    store.close();
+    closeStore();
     throw error;
   }
 
@@ -291,7 +303,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         await stopped;
         await history.close();
         transfer.replicas.stop();
-        store.close();
+        closeStore();
       })();
       return closing;
     },

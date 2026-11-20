@@ -206,7 +206,13 @@ describe("claim crash recovery", () => {
       {
         type: "project.added",
         commandId: null,
-        project: { id: "p1", name: "p", root: home, createdAt: AT, settings: { scripts: [] } },
+        project: {
+          id: "p1",
+          name: "p",
+          root: home,
+          createdAt: AT,
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
+        },
       },
     ]);
     store.appendReplicaEvents("owner", ownerReplicaEvents());
@@ -300,7 +306,13 @@ describe("claim crash recovery", () => {
       {
         type: "project.added",
         commandId: null,
-        project: { id: "p1", name: "p", root: home, createdAt: AT, settings: { scripts: [] } },
+        project: {
+          id: "p1",
+          name: "p",
+          root: home,
+          createdAt: AT,
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
+        },
       },
     ]);
     // Replica already shows the owner released this thread to "local", no local checkpoint saved.

@@ -11,7 +11,13 @@ function modelWithThread(status: Thread["status"] = "idle"): ReadModel {
     {
       type: "project.added",
       commandId: "c1",
-      project: { id: "p1", name: "p", root: "/work/p", createdAt: at, settings: { scripts: [] } },
+      project: {
+        id: "p1",
+        name: "p",
+        root: "/work/p",
+        createdAt: at,
+        settings: { scripts: [], sharedPaths: [], prompts: [] },
+      },
       seq: 1,
       at,
     },

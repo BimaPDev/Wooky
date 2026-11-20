@@ -162,6 +162,22 @@ describe("terminal sessions", () => {
     expect(terminals.list()).toHaveLength(16);
   });
 
+  it("frees a slot as soon as a session starts closing", async () => {
+    const terminals = pipeManager();
+    const ids: string[] = [];
+    for (let i = 0; i < 16; i += 1) {
+      const opened = await terminals.open({}, collector().subscriber);
+      ids.push(opened.sessionId);
+    }
+    await expect(terminals.open({}, collector().subscriber)).rejects.toBeInstanceOf(ServiceError);
+    const [firstId = ""] = ids;
+    terminals.close(firstId);
+    const extra = await terminals.open({}, collector().subscriber);
+    expect(extra.sessionId).not.toBe(firstId);
+    expect(terminals.list().map((session) => session.sessionId)).not.toContain(firstId);
+    expect(terminals.list()).toHaveLength(16);
+  });
+
   it("names how many of the 16 live sessions are detached", async () => {
     const terminals = pipeManager();
     const opened: { sessionId: string; subscriber: TerminalSubscriber }[] = [];

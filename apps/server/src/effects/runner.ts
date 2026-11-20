@@ -61,6 +61,12 @@ interface RunnerDeps {
   now?: () => string;
   runClaimThread?: (effect: Extract<Effect, { kind: "claimThread" }>) => Promise<void>;
   recoverClaims?: () => void;
+  /** After a thread worktree is bound. Must not wait for setup scripts to exit. */
+  onWorktreeCreated?: (input: {
+    threadId: string;
+    projectRoot: string;
+    worktree: Worktree;
+  }) => Promise<unknown>;
 }
 
 type Decision = "allow" | "deny";
@@ -94,6 +100,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     now = () => new Date().toISOString(),
     runClaimThread,
     recoverClaims,
+    onWorktreeCreated,
   } = deps;
   const tails = new Map<string, Promise<void>>();
   const inflight = new Set<Promise<void>>();
@@ -290,6 +297,13 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
       return null;
     }
     append([{ type: "thread.worktreeBound", commandId: null, threadId, worktree }]);
+    if (onWorktreeCreated) {
+      try {
+        await onWorktreeCreated({ threadId, projectRoot, worktree });
+      } catch (error) {
+        console.error(`Worktree setup failed for ${threadId}`, error);
+      }
+    }
     return worktree;
   }
 

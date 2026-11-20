@@ -26,7 +26,8 @@ export type Dialog =
   | { kind: "newThread"; projectId: string | null }
   | { kind: "addProject" }
   | { kind: "confirm"; title: string; body: string; confirmLabel: string; onConfirm: () => void }
-  | { kind: "revert"; threadId: string; turnId: string };
+  | { kind: "revert"; threadId: string; turnId: string }
+  | { kind: "projectSettings"; projectId: string };
 
 export interface ChangesPanel {
   open: boolean;

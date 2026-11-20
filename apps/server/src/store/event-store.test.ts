@@ -11,7 +11,13 @@ const clock = () => "2026-01-01T00:00:00.000Z";
 const projectAdded = (id: string, commandId: string | null = "c1"): PendingEvent => ({
   type: "project.added",
   commandId,
-  project: { id, name: id, root: `/work/${id}`, createdAt: clock(), settings: { scripts: [] } },
+  project: {
+    id,
+    name: id,
+    root: `/work/${id}`,
+    createdAt: clock(),
+    settings: { scripts: [], sharedPaths: [], prompts: [] },
+  },
 });
 
 function effectStatuses(home: string): string[] {

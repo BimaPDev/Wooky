@@ -59,7 +59,7 @@ function seed(threadFields: Partial<Thread> = {}): ReadModel {
         name: "demo",
         root: "/work/demo",
         createdAt: at,
-        settings: { scripts: [] },
+        settings: { scripts: [], sharedPaths: [], prompts: [] },
       },
     },
     { type: "thread.created", commandId: "seed", thread: thread(threadFields) },
@@ -150,7 +150,7 @@ describe("decide project.add", () => {
           name: "app",
           root: "/work/app",
           createdAt: at,
-          settings: { scripts: [] },
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
         },
       },
     ]);
@@ -176,6 +176,34 @@ describe("decide project.add", () => {
       ok: false,
       code: "conflict",
     });
+  });
+});
+
+describe("decide project.configure", () => {
+  it("rejects an unknown project", () => {
+    expect(
+      run(
+        emptyReadModel(),
+        command("project.configure", {
+          projectId: "nope",
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: "not_found" });
+  });
+
+  it("emits the parsed settings", () => {
+    const settings = {
+      scripts: [{ id: "dev", name: "Dev", command: "pnpm dev", runOnWorktreeCreate: false }],
+      sharedPaths: [{ path: ".env", mode: "link" as const }],
+      prompts: [{ id: "review", name: "Review", text: "Look at the diff." }],
+      worktreeSetup: "pnpm install",
+    };
+    const { events, effects } = accepted(
+      run(seed(), command("project.configure", { projectId: "p1", settings })),
+    );
+    expect(effects).toEqual([]);
+    expect(events).toMatchObject([{ type: "project.configured", projectId: "p1", settings }]);
   });
 });
 
