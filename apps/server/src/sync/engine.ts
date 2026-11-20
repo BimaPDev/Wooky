@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
@@ -411,15 +411,17 @@ export function createSyncEngine(deps: SyncDeps) {
     repo: ShadowRepo,
     input: { backup: Taken; mineTree: string; targetTree: string; paths?: readonly string[] },
   ) {
-    let list = await git.changes(repo, input.mineTree, input.targetTree);
+    let changed = await git.changes(repo, input.mineTree, input.targetTree);
     const only = input.paths;
-    if (only) list = list.filter((change) => matchesPaths(change.path, only));
+    if (only) changed = changed.filter((change) => matchesPaths(change.path, only));
     if (deps.turnRunning(project.id)) throw new AbortWrite("turn");
     const current = await git.scan(repo, scanOptions(project));
     if (current.fingerprint !== input.backup.fingerprint) throw new AbortWrite("drift");
+    // The scan takes a moment; a turn that won the race in the meantime must still win.
+    if (deps.turnRunning(project.id)) throw new AbortWrite("turn");
     let report;
     try {
-      report = await git.applyChanges(repo, input.targetTree, list, {
+      report = await git.applyChanges(repo, input.targetTree, changed, {
         exclude: exclusions(project),
         mineTree: input.mineTree,
         maxFileBytes,
@@ -429,10 +431,10 @@ export function createSyncEngine(deps: SyncDeps) {
       if (!(error instanceof ApplyFailed)) throw error;
       fingerprints.delete(project.id);
       await git.dropIndex(repo);
-      const now = await git.stage(repo, await git.scan(repo, scanOptions(project)));
+      const after = await git.stage(repo, await git.scan(repo, scanOptions(project)));
       throw new ServiceError(
         "unavailable",
-        now === input.mineTree
+        after === input.mineTree
           ? `${error.reason} Restored your previous files.`
           : `${error.reason} Some files may be partly changed; the backup snapshot has your originals.`,
       );
@@ -913,30 +915,30 @@ export function createSyncEngine(deps: SyncDeps) {
     const project = localProject(sharedId, syncProjects(), deps.deviceId, settings().projectMap);
     if (!project) return null;
     const repo = repoFor(project);
-    // Registering under the lock waits out a running gc, and a registered bundle makes the
-    // next gc skip itself, so history is never pruned under a peer's download.
-    await lock(project.id, async () => {
+    // Every ref read and the spawn happen under the lock, so retention cannot rewrite the
+    // chain underneath them; a registered bundle makes the next gc skip itself.
+    return lock(project.id, async () => {
       activeBundles.set(project.id, (activeBundles.get(project.id) ?? 0) + 1);
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        activeBundles.set(project.id, (activeBundles.get(project.id) ?? 1) - 1);
+      };
+      try {
+        const tip = await git.rev(repo, myRef);
+        if (!tip) return (release(), null);
+        const base = have && SHA.test(have) ? await git.rev(repo, have) : null;
+        if (base === tip) return (release(), { empty: true as const });
+        const stream = git.bundleStream(repo, myRef, base);
+        // Git reads the repo until it exits; after that the bytes are in the pipe, safe from gc.
+        void stream.done.then(release, release);
+        return { empty: false as const, ...stream };
+      } catch (error) {
+        release();
+        throw error;
+      }
     });
-    let released = false;
-    const release = () => {
-      if (released) return;
-      released = true;
-      activeBundles.set(project.id, (activeBundles.get(project.id) ?? 1) - 1);
-    };
-    try {
-      const tip = await git.rev(repo, myRef);
-      if (!tip) return (release(), null);
-      const base = have && SHA.test(have) ? await git.rev(repo, have) : null;
-      if (base === tip) return (release(), { empty: true as const });
-      const stream = git.bundleStream(repo, myRef, base);
-      // Git reads the repo until it exits; after that the bytes are in the pipe, safe from gc.
-      void stream.done.then(release, release);
-      return { empty: false as const, ...stream };
-    } catch (error) {
-      release();
-      throw error;
-    }
   }
 
   // ── triggers ─────────────────────────────────────────────────────────────────────────
@@ -1046,9 +1048,9 @@ export function createSyncEngine(deps: SyncDeps) {
     for (const conflict of conflicts.list().filter((c) => c.projectId === project.id)) {
       await holdConflict(repo, conflict);
     }
-    for (const old of before) {
-      const moved = remap.get(old.mine);
-      if (moved && moved !== old.mine) await git.holdRef(repo, old.mine, false);
+    for (const previous of before) {
+      const moved = remap.get(previous.mine);
+      if (moved && moved !== previous.mine) await git.holdRef(repo, previous.mine, false);
     }
     if ((activeBundles.get(project.id) ?? 0) > 0) {
       notice(project.id, "Skipped history cleanup: a peer is downloading from this device.");
