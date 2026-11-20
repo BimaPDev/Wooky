@@ -14,7 +14,7 @@ no model or account of its own. See `AGENTS.md` for the rules and `docs/architec
 ```sh
 pnpm install
 pnpm --filter @wooky/web build
-pnpm --filter @wooky/server start -- --port 4317 --web-dist apps/web/dist
+pnpm --filter @wooky/server start --port 4317 --web-dist apps/web/dist
 # open http://127.0.0.1:4317
 ```
 

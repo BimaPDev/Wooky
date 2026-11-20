@@ -6,6 +6,7 @@
  * NUL-delimited), so a later `git commit` cannot record a file the restore removed. That
  * step only ever removes entries for paths restore itself deleted; it never alters entries
  * for other files and never touches HEAD, branches or the stash.
+ * User commit, push and pull requests are implemented in ship.ts.
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, readdir, rmdir, realpath } from "node:fs/promises";
@@ -15,6 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { FileDiff, Worktree } from "@wooky/contracts";
 import { commitWorktreeChanges as commitWorktreeImpl } from "./commit-worktree.ts";
+import { gitChildEnv } from "./env.ts";
 import { createMergeOps } from "./merge-ops.ts";
 import type { GitService } from "./types.ts";
 
@@ -32,23 +34,6 @@ export class GitError extends Error {
     this.stderr = stderr;
   }
 }
-
-/** Environment variables git hooks leak into a child; they must never reach our plumbing calls. */
-const INHERITED_GIT_VARS = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_PREFIX",
-  "GIT_COMMON_DIR",
-  "GIT_NAMESPACE",
-  "GIT_CONFIG",
-  "GIT_CONFIG_PARAMETERS",
-  "GIT_CONFIG_COUNT",
-  "GIT_EXTERNAL_DIFF",
-  "GIT_PAGER",
-] as const;
 
 const WOOKY_IDENTITY = {
   GIT_AUTHOR_NAME: "Wooky",
@@ -90,16 +75,7 @@ export function createGitService(options?: {
   const listCap = options?.listFilesCap ?? LIST_FILES_CAP;
   const chains = new Map<string, Promise<void>>();
 
-  function baseEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const key of INHERITED_GIT_VARS) delete env[key];
-    for (const key of Object.keys(env)) {
-      if (key.startsWith("GIT_CONFIG_KEY_") || key.startsWith("GIT_CONFIG_VALUE_")) delete env[key];
-    }
-    env.LC_ALL = "C";
-    env.GIT_TERMINAL_PROMPT = "0";
-    return { ...env, ...extra };
-  }
+  const baseEnv = gitChildEnv;
 
   /** Spawn git with a wall-clock timeout and a stdout cap; both kill only the child we spawned. */
   function run(args: string[], opts: RunOptions): Promise<RunResult> {

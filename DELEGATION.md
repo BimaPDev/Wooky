@@ -40,6 +40,8 @@ agents on different models and harnesses). The method:
 | 15   | P0 web UI (Station 4)                    | Composer 2.5 (Cursor)                                | Grok 4.7 (Cursor)                    | merged after 3 review rounds                                    | fixture screenshots                |
 | 16   | Anywhere W1: Windows tree-kill + CI      | Composer 2.5 (Cursor)                                | Gemini 4 Hydrogen (Antigravity)      | merged after 2 review rounds, 11 findings applied               | `pnpm check`; Windows CI not run   |
 | 17   | Anywhere S0: contracts, domain, spec     | Grok 4.7 (Cursor)                                    | Composer 2.5 (Cursor)                | merged, 9 review fixes applied                                  | `pnpm check`, 1391 tests           |
+| 18   | Anywhere G1: commit, push, PR            | Composer 2.5 (Cursor)                                | Grok 4.6 (Cursor)                    | merged, 13 review fixes applied                                 | real git + fake gh tests           |
+| 19   | Anywhere M1: `wooky mcp` stdio bridge    | Grok 4.7 (Cursor)                                    | Composer 2.5 (Cursor)                | merged, 9 review fixes applied (no full mode by default)        | demo e2e via MCP transcript        |
 
 Open items: the 19 server tests that fail on Windows (CRLF, path separators, POSIX
 signals) are unverified, because nobody has run them on Windows yet. A thrown effect is
