@@ -1,4 +1,5 @@
 import { runAgentsCli } from "./cli/agents.ts";
+import { runMcpCli } from "./cli/mcp.ts";
 import { resolveConfig, USAGE } from "./config.ts";
 import { hydrateLoginShellPath } from "./process/shell-env.ts";
 import { runThemeCli } from "./settings/theme-cli.ts";
@@ -23,6 +24,15 @@ async function main() {
       console.error(error instanceof Error ? error.message : error);
       process.exit(1);
     }
+  }
+  if (argv[0] === "mcp") {
+    try {
+      await runMcpCli(argv.slice(1), process.env);
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+    return;
   }
 
   const config = resolveConfig(argv, process.env);
