@@ -97,6 +97,10 @@ const argv = JSON.stringify(process.argv.slice(2));
 appendFileSync(log, argv + "\\n");
 const args = process.argv.slice(2);
 if (args[0] === "auth" && args[1] === "status") process.exit(authed ? 0 : 1);
+if (args[0] === "repo" && args[1] === "view") {
+  console.log(JSON.stringify({ defaultBranchRef: { name: "master" } }));
+  process.exit(0);
+}
 if (args[0] === "pr" && args[1] === "create") {
   console.log("https://github.com/example/repo/pull/9");
   process.exit(0);
@@ -182,6 +186,12 @@ describe("ship service", () => {
     await expect(ship.commit({ threadId: "t1", message: "busy" })).rejects.toMatchObject({
       code: "conflict",
     });
+    await expect(ship.push({ threadId: "t1", setUpstream: true })).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await expect(ship.prCreate({ threadId: "t1", title: "x", body: "" })).rejects.toMatchObject({
+      code: "conflict",
+    });
     store.close();
   });
 
@@ -197,6 +207,104 @@ describe("ship service", () => {
       ServiceError,
     );
     expect(Date.now() - started).toBeLessThan(115_000);
+    store.close();
+  });
+
+  it("maps a push timeout to ServiceError", async () => {
+    const root = await makeRepo();
+    await bareOrigin(root);
+    const hang = join(await mkdtemp(join(tmpdir(), "wooky-hang-git-")), "hang.mjs");
+    await writeFile(
+      hang,
+      `import { spawnSync } from "node:child_process";
+const args = process.argv.slice(2);
+if (args[0] === "push") {
+  setInterval(() => {}, 10_000);
+} else {
+  const r = spawnSync("git", args, { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  process.exit(r.status ?? 0);
+}
+`,
+    );
+    const home = await tempDir("ship-timeout");
+    const store = openEventStore(home, () => "2026-01-01");
+    seedThread(store, root, { id: "t-timeout" });
+    await writeFile(join(root, "t.txt"), "x\n");
+    const ship = createShipService({
+      store,
+      git: createGitService(),
+      gitBin: process.execPath,
+      gitPrefixArgs: [hang],
+      pushTimeoutMs: 1500,
+    });
+    await ship.commit({ threadId: "t-timeout", message: "prep" });
+    await expect(ship.push({ threadId: "t-timeout", setUpstream: true })).rejects.toMatchObject({
+      code: "unavailable",
+      message: expect.stringContaining("timed out after 2s"),
+    });
+    store.close();
+    await rm(hang, { force: true });
+  });
+
+  it("redacts credentials from push errors", async () => {
+    const root = await makeRepo();
+    await runGit(
+      root,
+      "remote",
+      "add",
+      "origin",
+      "https://x-access-token:ghs_abc@127.0.0.1:1/r.git",
+    );
+    const home = await tempDir("ship-redact");
+    const store = openEventStore(home, () => "2026-01-01");
+    seedThread(store, root, { id: "t-redact" });
+    const ship = createShipService({ store, git: createGitService() });
+    await expect(ship.push({ threadId: "t-redact", setUpstream: true })).rejects.toSatisfy(
+      (error: unknown) => {
+        if (!(error instanceof ServiceError)) return false;
+        expect(error.message).not.toContain("ghs_abc");
+        expect(error.message).not.toContain("x-access-token");
+        return true;
+      },
+    );
+    store.close();
+  });
+
+  it("pushes a branch literally named --force without force-push", async () => {
+    const root = await makeRepo();
+    const { bare } = await bareOrigin(root);
+    const home = await tempDir("ship-force-name");
+    const store = openEventStore(home, () => "2026-01-01");
+    seedThread(store, root, { id: "t-force" });
+    const ship = createShipService({ store, git: createGitService() });
+    const head = await runGit(root, "rev-parse", "HEAD");
+    await runGit(root, "update-ref", "refs/heads/--force", head);
+    await runGit(root, "symbolic-ref", "HEAD", "refs/heads/--force");
+    await writeFile(join(root, "force.txt"), "x\n");
+    await ship.commit({ threadId: "t-force", message: "on force branch" });
+    await ship.push({ threadId: "t-force", setUpstream: true });
+    const heads = await runGit(bare, "show-ref", "--heads");
+    expect(heads).toContain("refs/heads/--force");
+    store.close();
+  });
+
+  it("commits in an isolated worktree without touching the project root", async () => {
+    const root = await makeRepo();
+    const gitSvc = createGitService();
+    const worktree = await gitSvc.createWorktree(root, "t-iso");
+    const home = await tempDir("ship-iso");
+    const store = openEventStore(home, () => "2026-01-01");
+    seedThread(store, root, { id: "t-iso", isolate: true, worktree });
+    const rootBefore = await runGit(root, "rev-parse", "HEAD");
+    await writeFile(join(worktree.path, "isolated.txt"), "only here\n");
+    const ship = createShipService({ store, git: gitSvc });
+    await ship.commit({ threadId: "t-iso", message: "Worktree only" });
+    const rootAfter = await runGit(root, "rev-parse", "HEAD");
+    expect(rootAfter).toBe(rootBefore);
+    const wtDirty = await runGit(worktree.path, "status", "--porcelain");
+    expect(wtDirty).toBe("");
     store.close();
   });
 
@@ -231,6 +339,9 @@ describe("ship service", () => {
       const log = await readFile(logPath, "utf8");
       expect(log).toContain('"pr","create"');
       expect(log).toContain('"pr","view"');
+      expect(log).toContain("--base=master");
+      expect(log).toContain("--head=main");
+      expect(log).toContain("--title=My PR");
     } finally {
       process.env = prev;
       await rm(fake.script, { force: true });

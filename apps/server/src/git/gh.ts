@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import type { PullRequest, PullRequestState } from "@wooky/contracts";
 import { resolveCommand, type ResolvedCommand } from "../process/resolve-command.ts";
+import { killTree } from "../process/kill-tree.ts";
+import { ghChildEnv } from "./env.ts";
+import { redactCliError } from "./redact.ts";
 
 export const GH_AUTH_CACHE_MS = 60_000;
 const DEFAULT_GH_TIMEOUT_MS = 60_000;
@@ -62,9 +65,11 @@ export function createGhClient(options?: {
       };
       const child = spawn(resolved.command, argv, {
         cwd: opts.cwd,
-        env: process.env,
+        env: ghChildEnv(),
         windowsHide: true,
+        ...(process.platform !== "win32" ? { detached: true } : {}),
       });
+      const pid = child.pid;
       const out: Buffer[] = [];
       const err: Buffer[] = [];
       child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
@@ -78,7 +83,7 @@ export function createGhClient(options?: {
         }),
       );
       const timer = setTimeout(() => {
-        child.kill("SIGKILL");
+        if (pid !== undefined) void killTree(pid, "SIGKILL", { mode: "group" });
         done({ stdout: "", stderr: `gh timed out after ${limit}ms`, code: null });
       }, limit);
       if (child.stdin) {
@@ -88,7 +93,7 @@ export function createGhClient(options?: {
       }
     });
     if (result.code !== 0 && !opts.allowFail) {
-      const detail = (result.stderr || result.stdout).trim();
+      const detail = redactCliError((result.stderr || result.stdout).trim());
       throw new Error(detail || "gh command failed");
     }
     return result;

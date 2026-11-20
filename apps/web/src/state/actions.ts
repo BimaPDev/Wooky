@@ -736,6 +736,10 @@ export function loadGitStatus(threadId: string) {
   return backend().call("git.status", { threadId });
 }
 
+export function loadPrStatus(threadId: string) {
+  return backend().call("git.pr.status", { threadId });
+}
+
 export function commitGit(threadId: string, message: string) {
   return backend().call("git.commit", { threadId, message });
 }

@@ -6,20 +6,14 @@ import type { PendingEvent, PullRequest, RpcParams, RpcResult, Thread } from "@w
 import { ServiceError } from "../errors.ts";
 import { killTree } from "../process/kill-tree.ts";
 import type { EventStore } from "../store/event-store.ts";
+import { gitChildEnv } from "./env.ts";
 import { createGhClient, type GhClient, type GhPrViewJson } from "./gh.ts";
+import { redactCliError } from "./redact.ts";
 import type { GitService } from "./types.ts";
 
 const PUSH_TIMEOUT_MS = 120_000;
-const PR_POLL_MS = 5 * 60_000;
-const GIT_VARS = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_PREFIX",
-  "GIT_COMMON_DIR",
-] as const;
+const DEFAULT_PR_POLL_MS = 5 * 60_000;
+const PR_POLL_CAP = 25;
 
 type GitRunResult = { stdout: string; stderr: string; code: number | null };
 
@@ -36,19 +30,30 @@ export function createShipService(deps: {
   store: EventStore;
   git: GitService;
   gitBin?: string;
+  gitPrefixArgs?: readonly string[];
   gh?: GhClient;
+  pollMs?: number;
+  pushTimeoutMs?: number;
 }): ShipService {
   const { store, git } = deps;
   const gitBin = deps.gitBin ?? "git";
+  const gitPrefixArgs = deps.gitPrefixArgs ?? [];
+  const pushTimeout = deps.pushTimeoutMs ?? PUSH_TIMEOUT_MS;
   const gh = deps.gh ?? createGhClient();
+  const pollMs = deps.pollMs ?? DEFAULT_PR_POLL_MS;
+  let pollStopped = false;
+
+  function failGit(args: string[], stderr: string, stdout: string, fallback?: string): never {
+    const detail = redactCliError((stderr || stdout).trim());
+    throw new ServiceError("unavailable", detail || fallback || `git ${args.join(" ")} failed`);
+  }
 
   async function runGit(
     args: string[],
     opts: { cwd: string; allowFail?: boolean; timeoutMs?: number },
   ): Promise<GitRunResult> {
-    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" };
-    for (const key of GIT_VARS) delete env[key];
     const limit = opts.timeoutMs ?? 60_000;
+    const timeoutSec = Math.round(limit / 1000);
     return new Promise((resolvePromise, reject) => {
       let settled = false;
       const finish = (fn: () => void) => {
@@ -58,9 +63,9 @@ export function createShipService(deps: {
         fn();
       };
 
-      const child = spawn(gitBin, args, {
+      const child = spawn(gitBin, [...gitPrefixArgs, ...args], {
         cwd: opts.cwd,
-        env,
+        env: gitChildEnv(),
         windowsHide: true,
         ...(process.platform !== "win32" ? { detached: true } : {}),
       });
@@ -69,27 +74,50 @@ export function createShipService(deps: {
       const err: Buffer[] = [];
       child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
-      child.on("error", (error) => finish(() => reject(error)));
+      child.on("error", (error) =>
+        finish(() =>
+          reject(
+            new ServiceError(
+              "unavailable",
+              redactCliError(error instanceof Error ? error.message : "Could not run git"),
+            ),
+          ),
+        ),
+      );
       child.on("close", (code) => {
         const stdout = Buffer.concat(out).toString("utf8");
         const stderr = Buffer.concat(err).toString("utf8");
         finish(() => {
           if (code !== 0 && !opts.allowFail) {
-            reject(new Error((stderr || stdout).trim() || `git ${args.join(" ")} failed`));
+            failGit(args, stderr, stdout);
             return;
           }
           resolvePromise({ stdout, stderr, code });
         });
       });
+      if (child.stdin) {
+        child.stdin.on("error", () => {});
+        child.stdin.end();
+      }
       const timer = setTimeout(() => {
         if (pid !== undefined) void killTree(pid, "SIGKILL", { mode: "group" });
-        finish(() => reject(new Error(`git ${args.join(" ")} timed out after ${limit}ms`)));
+        finish(() =>
+          reject(
+            new ServiceError("unavailable", `git ${args.join(" ")} timed out after ${timeoutSec}s`),
+          ),
+        );
       }, limit);
     });
   }
 
   function threadBusy(thread: Thread): boolean {
     return thread.status === "running" || thread.status === "waiting";
+  }
+
+  function assertIdle(thread: Thread, action: "committing" | "pushing" | "opening a pull request") {
+    if (threadBusy(thread)) {
+      throw new ServiceError("conflict", `Stop the running turn before ${action}.`);
+    }
   }
 
   function resolveCwd(threadId: string): { thread: Thread; cwd: string } {
@@ -179,11 +207,12 @@ export function createShipService(deps: {
       parsed.password = "";
       return parsed.toString();
     } catch {
-      return trimmed.replace(/^[^@]+@/, "");
+      return redactCliError(trimmed.replace(/^[^@]+@/, ""));
     }
   }
 
-  function emitPrLinked(threadId: string, pullRequest: PullRequest | null) {
+  function emitPrLinked(threadId: string, pullRequest: PullRequest | null, fromPoll = false) {
+    if (fromPoll && pollStopped) return;
     const event: PendingEvent = {
       type: "thread.prLinked",
       commandId: null,
@@ -202,6 +231,7 @@ export function createShipService(deps: {
     threadId: string,
     number: number,
     cwd: string,
+    fromPoll = false,
   ): Promise<PullRequest | null> {
     const view = await gh.run(
       ["pr", "view", String(number), "--json", "url,number,state,headRefName,mergedAt"],
@@ -212,8 +242,13 @@ export function createShipService(deps: {
     const mapped = gh.mapPrView(json);
     const pr: PullRequest = { ...mapped };
     const current = store.model.threads[threadId]?.pullRequest ?? null;
-    if (!samePullRequest(current, pr)) emitPrLinked(threadId, pr);
+    if (!samePullRequest(current, pr)) emitPrLinked(threadId, pr, fromPoll);
     return pr;
+  }
+
+  function failGh(stderr: string, stdout: string, fallback: string): never {
+    const detail = redactCliError((stderr || stdout).trim());
+    throw new ServiceError("unavailable", detail || fallback);
   }
 
   return {
@@ -250,9 +285,7 @@ export function createShipService(deps: {
 
     async commit({ threadId, message }) {
       const { thread, cwd } = resolveCwd(threadId);
-      if (threadBusy(thread)) {
-        throw new ServiceError("conflict", "Stop the running turn before committing.");
-      }
+      assertIdle(thread, "committing");
       if (!(await git.isRepo(cwd))) {
         throw new ServiceError("bad_request", "This folder is not a git repository.");
       }
@@ -267,15 +300,15 @@ export function createShipService(deps: {
       await runGit(["add", "-A"], { cwd });
       const committed = await runGit(["commit", "-m", message], { cwd, allowFail: true });
       if (committed.code !== 0) {
-        const detail = (committed.stderr || committed.stdout).trim();
-        throw new ServiceError("unavailable", detail || "Could not create the commit.");
+        failGit(["commit"], committed.stderr, committed.stdout, "Could not create the commit.");
       }
       const sha = (await runGit(["rev-parse", "HEAD"], { cwd })).stdout.trim();
       return { sha };
     },
 
     async push({ threadId, setUpstream }) {
-      const { cwd } = resolveCwd(threadId);
+      const { thread, cwd } = resolveCwd(threadId);
+      assertIdle(thread, "pushing");
       if (!(await git.isRepo(cwd))) {
         throw new ServiceError("bad_request", "This folder is not a git repository.");
       }
@@ -288,10 +321,12 @@ export function createShipService(deps: {
       }
       const upstream = await readUpstream(cwd);
       const needsUpstream = setUpstream === true || upstream === null;
-      const args = needsUpstream ? ["push", "-u", "origin", branch] : ["push", "origin", branch];
-      const pushed = await runGit(args, { cwd, timeoutMs: PUSH_TIMEOUT_MS, allowFail: true });
+      const args = needsUpstream
+        ? ["push", "-u", "origin", "--", branch]
+        : ["push", "origin", "--", branch];
+      const pushed = await runGit(args, { cwd, timeoutMs: pushTimeout, allowFail: true });
       if (pushed.code !== 0) {
-        const detail = (pushed.stderr || pushed.stdout).trim();
+        const detail = redactCliError((pushed.stderr || pushed.stdout).trim());
         const hint = "Sign in to git or run `gh auth login`, then try again.";
         throw new ServiceError("unavailable", detail ? `${detail}\n\n${hint}` : hint);
       }
@@ -302,7 +337,8 @@ export function createShipService(deps: {
     },
 
     async prCreate({ threadId, title, body, base, draft }) {
-      const { cwd } = resolveCwd(threadId);
+      const { thread, cwd } = resolveCwd(threadId);
+      assertIdle(thread, "opening a pull request");
       if (!(await git.isRepo(cwd))) {
         throw new ServiceError("bad_request", "This folder is not a git repository.");
       }
@@ -313,7 +349,8 @@ export function createShipService(deps: {
         );
       }
       const host = (await readOriginHost(cwd)) ?? "github.com";
-      if (!(await gh.authStatus(host))) {
+      const authed = await gh.authStatus(host);
+      if (!authed) {
         throw new ServiceError("unavailable", "Sign in with `gh auth login` on this machine.");
       }
       const branch = await readBranch(cwd);
@@ -324,28 +361,24 @@ export function createShipService(deps: {
       if (upstream === null) {
         await this.push({ threadId, setUpstream: true });
       }
-      const baseBranch = base ?? (await defaultBaseBranch(cwd, runGit));
+      const baseBranch = base ?? (await defaultBaseBranch(cwd, runGit, gh, authed));
       const dir = await mkdtemp(join(tmpdir(), "wooky-pr-"));
       const bodyFile = join(dir, "body.md");
       try {
-        await writeFile(bodyFile, body, "utf8");
+        await writeFile(bodyFile, body, { encoding: "utf8", mode: 0o600 });
         const createArgs = [
           "pr",
           "create",
-          "--title",
-          title,
+          `--title=${title}`,
           "--body-file",
           bodyFile,
-          "--base",
-          baseBranch,
-          "--head",
-          branch,
+          `--base=${baseBranch}`,
+          `--head=${branch}`,
         ];
         if (draft) createArgs.push("--draft");
         const created = await gh.run(createArgs, { cwd, allowFail: true });
         if (created.code !== 0) {
-          const detail = (created.stderr || created.stdout).trim();
-          throw new ServiceError("unavailable", detail || "Could not create the pull request.");
+          failGh(created.stderr, created.stdout, "Could not create the pull request.");
         }
         const view = await gh.run(
           ["pr", "view", "--json", "url,number,state,headRefName,mergedAt"],
@@ -372,37 +405,60 @@ export function createShipService(deps: {
     },
 
     startPolling() {
+      let inFlight = false;
+      let roundRobin = 0;
+      pollStopped = false;
+
       const tick = async () => {
-        if (!gh.available()) return;
-        const authedHosts = new Map<string, boolean>();
-        const threads = Object.values(store.model.threads).filter(
-          (thread) => thread.pullRequest?.state === "open",
-        );
-        for (const thread of threads) {
-          const pr = thread.pullRequest;
-          if (!pr) continue;
-          let cwd: string;
-          try {
-            cwd = resolveCwd(thread.id).cwd;
-          } catch {
-            continue;
+        if (pollStopped || inFlight || !gh.available()) return;
+        inFlight = true;
+        try {
+          const open = Object.values(store.model.threads).filter(
+            (thread) => thread.pullRequest?.state === "open",
+          );
+          if (open.length === 0) return;
+          const batch: Thread[] = [];
+          for (let i = 0; i < Math.min(PR_POLL_CAP, open.length); i++) {
+            const entry = open[(roundRobin + i) % open.length];
+            if (entry) batch.push(entry);
           }
-          const host = (await readOriginHost(cwd)) ?? "github.com";
-          let authed = authedHosts.get(host);
-          if (authed === undefined) {
-            authed = await gh.authStatus(host);
-            authedHosts.set(host, authed);
+          roundRobin = (roundRobin + batch.length) % open.length;
+
+          const authedHosts = new Map<string, boolean>();
+          for (const thread of batch) {
+            if (pollStopped) return;
+            const pr = thread.pullRequest;
+            if (!pr) continue;
+            let threadCwd: string;
+            try {
+              threadCwd = resolveCwd(thread.id).cwd;
+            } catch {
+              continue;
+            }
+            const host = (await readOriginHost(threadCwd)) ?? "github.com";
+            let hostAuthed = authedHosts.get(host);
+            if (hostAuthed === undefined) {
+              hostAuthed = await gh.authStatus(host);
+              authedHosts.set(host, hostAuthed);
+            }
+            if (!hostAuthed) continue;
+            try {
+              await fetchPr(thread.id, pr.number, threadCwd, true);
+            } catch {
+              // Skip a thread when gh is temporarily unavailable.
+            }
           }
-          if (!authed) continue;
-          try {
-            await fetchPr(thread.id, pr.number, cwd);
-          } catch {
-            // Skip a thread when gh is temporarily unavailable.
-          }
+        } finally {
+          inFlight = false;
         }
       };
-      const timer = setInterval(() => void tick(), PR_POLL_MS);
-      return () => clearInterval(timer);
+
+      const timer = setInterval(() => void tick(), pollMs);
+      timer.unref();
+      return () => {
+        pollStopped = true;
+        clearInterval(timer);
+      };
     },
   };
 }
@@ -410,7 +466,22 @@ export function createShipService(deps: {
 async function defaultBaseBranch(
   cwd: string,
   runGit: (args: string[], opts: { cwd: string; allowFail?: boolean }) => Promise<GitRunResult>,
+  gh: GhClient,
+  authed: boolean,
 ): Promise<string> {
+  if (authed && gh.available()) {
+    const view = await gh.run(["repo", "view", "--json", "defaultBranchRef"], {
+      cwd,
+      allowFail: true,
+    });
+    if (view.code === 0) {
+      const json = JSON.parse(view.stdout.trim()) as {
+        defaultBranchRef?: { name?: string };
+      };
+      const name = json.defaultBranchRef?.name;
+      if (name && name.length > 0) return name;
+    }
+  }
   const remoteHead = await runGit(["symbolic-ref", "refs/remotes/origin/HEAD"], {
     cwd,
     allowFail: true,

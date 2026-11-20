@@ -1,6 +1,12 @@
 import type { PullRequest, RpcResult } from "@wooky/contracts";
-import { useEffect, useMemo, useState } from "react";
-import { commitGit, createPullRequest, loadGitStatus, pushGit } from "../state/actions.ts";
+import { useEffect, useId, useMemo, useState } from "react";
+import {
+  commitGit,
+  createPullRequest,
+  loadGitStatus,
+  loadPrStatus,
+  pushGit,
+} from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { Modal } from "./Modal.tsx";
 import { isBusy } from "./review/notes.ts";
@@ -33,17 +39,20 @@ export function ShipMenu({ threadId }: { threadId: string }) {
   const [message, setMessage] = useState("");
   const [prTitle, setPrTitle] = useState("");
   const [prBody, setPrBody] = useState("");
-  const [prBase, setPrBase] = useState("main");
+  const [prBase, setPrBase] = useState("");
   const [prDraft, setPrDraft] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const commitHintId = useId();
+  const pushHintId = useId();
+  const prHintId = useId();
   const key = `${threadId}:${diffVersion}`;
   const pullRequest = thread?.pullRequest ?? null;
 
-  // sync: server git.status for commit, push and PR affordances
+  // sync: server git.status and git.pr.status for commit, push and PR affordances
   useEffect(() => {
     let cancelled = false;
-    loadGitStatus(threadId).then(
-      (value) => !cancelled && setStatus({ key, value }),
+    Promise.all([loadGitStatus(threadId), loadPrStatus(threadId)]).then(
+      ([gitStatus]) => !cancelled && setStatus({ key, value: gitStatus }),
       () => !cancelled && setStatus({ key, value: "error" }),
     );
     return () => {
@@ -58,11 +67,8 @@ export function ShipMenu({ threadId }: { threadId: string }) {
     if (busy)
       return { commit: "Agent is working", push: "Agent is working", pr: "Agent is working" };
     if (current === "loading" || current === "error") {
-      return {
-        commit: current === "error" ? "Could not read git status" : "Loading git status",
-        push: current === "error" ? "Could not read git status" : "Loading git status",
-        pr: current === "error" ? "Could not read git status" : "Loading git status",
-      };
+      const loadHint = current === "error" ? "Could not read git status" : "Loading git status";
+      return { commit: loadHint, push: loadHint, pr: loadHint };
     }
     const commit = !current.dirty
       ? "No changes to commit"
@@ -97,7 +103,7 @@ export function ShipMenu({ threadId }: { threadId: string }) {
   const openPr = () => {
     setPrTitle(thread?.title?.trim() ?? "");
     setPrBody(assistantBody(threadId));
-    setPrBase("main");
+    setPrBase("");
     setPrDraft(false);
     setComposer("pr");
     setNotice(null);
@@ -146,6 +152,8 @@ export function ShipMenu({ threadId }: { threadId: string }) {
         draft: prDraft,
       });
       setComposer(null);
+      await loadPrStatus(threadId);
+      useStore.setState((state) => ({ diffVersion: state.diffVersion + 1 }));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not create a pull request.");
     } finally {
@@ -163,7 +171,7 @@ export function ShipMenu({ threadId }: { threadId: string }) {
           type="button"
           className="button"
           disabled={gates.commit !== null || busyAction}
-          title={gates.commit ?? undefined}
+          aria-describedby={gates.commit ? commitHintId : undefined}
           onClick={openCommit}
         >
           Commit
@@ -172,7 +180,7 @@ export function ShipMenu({ threadId }: { threadId: string }) {
           type="button"
           className="button"
           disabled={gates.push !== null || busyAction}
-          title={gates.push ?? undefined}
+          aria-describedby={gates.push ? pushHintId : undefined}
           onClick={() => void onPush()}
         >
           {ahead ? `Push (${ahead})` : "Push"}
@@ -184,13 +192,28 @@ export function ShipMenu({ threadId }: { threadId: string }) {
             type="button"
             className="button"
             disabled={gates.pr !== null || busyAction}
-            title={gates.pr ?? undefined}
+            aria-describedby={gates.pr ? prHintId : undefined}
             onClick={openPr}
           >
             Create PR
           </button>
         )}
       </div>
+      {gates.commit ? (
+        <p className="ship-hint" id={commitHintId}>
+          {gates.commit}
+        </p>
+      ) : null}
+      {gates.push ? (
+        <p className="ship-hint" id={pushHintId}>
+          {gates.push}
+        </p>
+      ) : null}
+      {gates.pr ? (
+        <p className="ship-hint" id={prHintId}>
+          {gates.pr}
+        </p>
+      ) : null}
       {notice ? <p className="ship-hint error">{notice}</p> : null}
       {composer === "commit" ? (
         <Modal label="Commit" onClose={() => setComposer(null)} className="modal ship-modal">
@@ -245,6 +268,7 @@ export function ShipMenu({ threadId }: { threadId: string }) {
             <input
               className="field-input"
               value={prBase}
+              placeholder="Repo default"
               onChange={(event) => setPrBase(event.target.value)}
             />
           </label>

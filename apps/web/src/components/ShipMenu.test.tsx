@@ -9,12 +9,14 @@ import { useStore } from "../state/store.ts";
 import { ShipMenu } from "./ShipMenu.tsx";
 
 const loadGitStatus = vi.fn<(threadId: string) => Promise<RpcResult<"git.status">>>();
+const loadPrStatus = vi.fn<(threadId: string) => Promise<null>>(() => Promise.resolve(null));
 
 vi.mock("../state/actions.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../state/actions.ts")>();
   return {
     ...actual,
     loadGitStatus: (...args: Parameters<typeof loadGitStatus>) => loadGitStatus(...args),
+    loadPrStatus: (...args: Parameters<typeof loadPrStatus>) => loadPrStatus(...args),
     commitGit: vi.fn<() => Promise<{ sha: string }>>(),
     pushGit: vi.fn<() => Promise<{ ok: true; remoteUrl: string }>>(),
     createPullRequest: vi.fn<() => Promise<{ url: string; number: number }>>(),
@@ -108,7 +110,8 @@ describe("ShipMenu", () => {
     await vi.waitFor(() => {
       const create = button("Create PR");
       expect(create?.disabled).toBe(true);
-      expect(create?.title).toBe("gh not installed");
+      expect(create?.getAttribute("aria-describedby")).toBeTruthy();
+      expect(host?.querySelector(".ship-hint")?.textContent).toBe("gh not installed");
     });
   });
 
