@@ -355,6 +355,10 @@ export const Turn = z.object({
   /** Provider id of the turn's last native message; where a rewound session resumes. */
   nativeRef: z.string().nullable().optional(),
   interactionMode: InteractionMode.optional(),
+  /** Total time spent waiting on an approval or a question, for "Worked for". Absent on old logs. */
+  waitedMs: z.number().int().nonnegative().optional(),
+  /** Set while a request is open: when the wait started. */
+  waitingSince: IsoTime.nullable().optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 

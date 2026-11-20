@@ -37,6 +37,22 @@ describe("summarizeTurn", () => {
     expect(summary.changedFiles).toEqual(["a.ts", "b.ts", "c.ts"]);
   });
 
+  it("does not count the time spent waiting on an approval as work", () => {
+    const base = {
+      startedAt: "2026-01-01T00:00:00.000Z",
+      endedAt: "2026-01-01T00:10:00.000Z",
+      items: [],
+      changedFiles: [],
+    };
+    expect(summarizeTurn({ ...base, waitedMs: 8 * 60_000 }).text).toBe("Worked for 2m 0s");
+    // A request still open when the turn ended counts from when it opened.
+    expect(
+      summarizeTurn({ ...base, waitedMs: 60_000, waitingSince: "2026-01-01T00:05:00.000Z" }).text,
+    ).toBe("Worked for 4m 0s");
+    // Old turns carry neither field.
+    expect(summarizeTurn(base).text).toBe("Worked for 10m 0s");
+  });
+
   it("uses singular forms and omits empty parts", () => {
     const base = { startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T00:00:05.000Z" };
     expect(summarizeTurn({ ...base, items: [tool("a")], changedFiles: ["x"] }).text).toBe(

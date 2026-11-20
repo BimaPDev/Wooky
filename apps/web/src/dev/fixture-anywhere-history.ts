@@ -222,7 +222,18 @@ function syncStatus(): SyncStatus {
         state: "idle",
         lastSyncAt: ago(3),
         error: null,
-        projects: [],
+        projects: [
+          {
+            id: "p1",
+            sharedId: "p1",
+            name: "orders-api",
+            folder: "orders-api",
+            remote: "github.com/demo/orders-api",
+            branch: "main",
+            mappedTo: "p1",
+            suggestion: null,
+          },
+        ],
       },
       {
         deviceId: PC,
@@ -553,8 +564,10 @@ export function anywhereHistoryRespond(method: string, params: unknown): { value
       };
       if (label) console.info("Wooky fixture snapshot label", label);
       fixtureSnapshots.unshift(row);
-      return { value: row };
+      return { value: { ...row, unchanged: false } };
     }
+    case "sync.projects.map":
+      return { value: { ok: true as const } };
     case "sync.conflicts.resolve": {
       const { conflictId } = params as { conflictId: string };
       conflicts = conflicts.filter((entry) => entry.id !== conflictId);

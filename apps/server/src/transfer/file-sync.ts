@@ -11,20 +11,17 @@ export interface ClaimSyncEngine {
 
 /**
  * Problems the engine recorded for one peer, narrowed to this project. The engine joins one
- * message per shared project ("<project>: <message>"), and a project that is not mapped on this
- * device is none of this claim's business.
+ * message per shared project ("<project>: <message>"). A project this device has not mapped is
+ * not a problem the engine records, so it never reaches here.
  */
 export function problemsFor(error: string, projectId: string): string[] {
-  return error
-    .split("; ")
-    .filter((part) => !part.endsWith("project not mapped on this device"))
-    .filter((part) => {
-      const colon = part.indexOf(": ");
-      if (colon < 0) return true;
-      const prefix = part.slice(0, colon);
-      // Project ids look like `project_<uuid>`; anything else is a message, not a prefix.
-      return prefix === projectId || !/^[\w-]+$/.test(prefix);
-    });
+  return error.split("; ").filter((part) => {
+    const colon = part.indexOf(": ");
+    if (colon < 0) return true;
+    const prefix = part.slice(0, colon);
+    // Project ids look like `project_<uuid>`; anything else is a message, not a prefix.
+    return prefix === projectId || !/^[\w-]+$/.test(prefix);
+  });
 }
 
 /**

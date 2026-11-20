@@ -95,8 +95,25 @@ const BUILTIN: Theme[] = [
   },
 ];
 
+let builtinsCache: Theme[] | null = null;
+
+/**
+ * Palettes and wallpaper scenes are separate themes that happen to share a few names (Abyss,
+ * Ember). The gallery must not list the same name twice, so a name that exists in both gets a
+ * suffix saying which kind it is. Ids are unchanged.
+ */
 function allBuiltins(): Theme[] {
-  return [...BUILTIN, ...getBuiltinWallpaperThemes()];
+  if (builtinsCache) return builtinsCache;
+  const wallpapers = getBuiltinWallpaperThemes();
+  const wallpaperNames = new Set(wallpapers.map((theme) => theme.name));
+  const paletteNames = new Set(BUILTIN.map((theme) => theme.name));
+  const rename = (theme: Theme, others: Set<string>, kind: string): Theme =>
+    others.has(theme.name) ? { ...theme, name: `${theme.name} (${kind})` } : theme;
+  builtinsCache = [
+    ...BUILTIN.map((theme) => rename(theme, wallpaperNames, "palette")),
+    ...wallpapers.map((theme) => rename(theme, paletteNames, "wallpaper")),
+  ];
+  return builtinsCache;
 }
 
 function toSummary(theme: Theme, builtin: boolean) {

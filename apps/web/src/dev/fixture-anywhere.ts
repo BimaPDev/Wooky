@@ -88,6 +88,8 @@ export function respondAnywhere(method: string, params: unknown): unknown {
       return device;
     case "remote.tailscaleStatus":
       return tailscale;
+    case "remote.listenInfo":
+      return { port: 4317, portExplicit: false };
     case "remote.pairingCode.create":
       return {
         code: pairingCode(),

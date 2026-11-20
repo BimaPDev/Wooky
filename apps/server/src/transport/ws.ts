@@ -251,6 +251,7 @@ function createHandlers(
     "device.info": () => remote.device.info(),
     "device.rename": ({ name }) => remote.device.rename(name),
     "remote.tailscaleStatus": () => remote.tailscaleStatus(),
+    "remote.listenInfo": () => remote.listenInfo(),
     "remote.pairingCode.create": (_params, conn) => {
       requireLocal(conn, "Pairing codes can only be created on this machine.");
       return remote.pairing.create();

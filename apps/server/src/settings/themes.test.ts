@@ -125,3 +125,19 @@ describe("createThemeStore disk themes", () => {
     warn.mockRestore();
   });
 });
+
+describe("builtin theme names", () => {
+  it("never lists the same name twice: a palette and a wallpaper that share one say which is which", async () => {
+    const { themes } = createThemeStore(await tempDir("themes-names")).list();
+    const names = themes.map((theme) => theme.name);
+    expect(new Set(names).size).toBe(names.length);
+    const byId = new Map(themes.map((theme) => [theme.id, theme.name]));
+    expect(byId.get("abyss")).toBe("Abyss (palette)");
+    expect(byId.get("wall-abyss")).toBe("Abyss (wallpaper)");
+    expect(byId.get("ember")).toBe("Ember (palette)");
+    expect(byId.get("wall-ember")).toBe("Ember (wallpaper)");
+    // A name used once is left alone.
+    expect(byId.get("grove")).toBe("Grove");
+    expect(byId.get("wall-koi")).toBe("Koi pond");
+  });
+});

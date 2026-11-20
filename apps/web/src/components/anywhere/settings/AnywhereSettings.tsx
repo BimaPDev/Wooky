@@ -7,9 +7,11 @@ import {
   refreshDevice,
   refreshPaired,
   refreshSyncStatus,
+  refreshListen,
   refreshTailscale,
   renameDevice,
   useDeviceInfo,
+  useListenInfo,
   useTailscale,
 } from "../../../state/environments.ts";
 import { useStore } from "../../../state/store.ts";
@@ -58,6 +60,7 @@ export function AnywhereSettings() {
         await Promise.all([
           refreshDevice(),
           refreshTailscale(),
+          refreshListen(),
           refreshPaired(),
           refreshSyncStatus(),
         ]);
@@ -129,6 +132,7 @@ function ThisDevice() {
 
 function Hosting({ settings }: { settings: DeviceSettings }) {
   const tailscale = useTailscale();
+  const listen = useListenInfo();
   const hosting = settings.hosting;
   const tailscaleRunning = Boolean(tailscale?.running);
   return (
@@ -183,7 +187,11 @@ function Hosting({ settings }: { settings: DeviceSettings }) {
           Anyone on your network can reach the sign-in page. Paired devices still need a token.
         </p>
       ) : null}
-      <PortRow port={hosting.port} onCommit={(port) => void putSettings({ hosting: { port } })} />
+      <PortRow
+        port={hosting.port}
+        override={listen?.portExplicit ? listen.port : null}
+        onCommit={(port) => void putSettings({ hosting: { port } })}
+      />
       {tailscaleRunning ? (
         <Row
           title="Serve over HTTPS with Tailscale"
@@ -200,7 +208,16 @@ function Hosting({ settings }: { settings: DeviceSettings }) {
   );
 }
 
-function PortRow({ port, onCommit }: { port: number; onCommit: (port: number) => void }) {
+export function PortRow({
+  port,
+  override,
+  onCommit,
+}: {
+  port: number;
+  /** The port a `--port` / WOOKY_PORT override fixes, or null when the setting rules. */
+  override: number | null;
+  onCommit: (port: number) => void;
+}) {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const shown = text ?? String(port);
@@ -209,6 +226,12 @@ function PortRow({ port, onCommit }: { port: number; onCommit: (port: number) =>
       <div className="setting-copy">
         <p className="setting-title">Port</p>
         <p className="setting-desc">The port remote clients connect to. 1 to 65535.</p>
+        {override !== null ? (
+          <p className="anywhere-warn" role="status">
+            This server was started with an explicit port, so it is listening on {override} whatever
+            is set here. This setting applies after a restart without that port option.
+          </p>
+        ) : null}
         {error ? <p className="field-error">{error}</p> : null}
       </div>
       <input

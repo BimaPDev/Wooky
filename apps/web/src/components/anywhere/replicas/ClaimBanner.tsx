@@ -36,11 +36,13 @@ export function ClaimBanner({
   });
   const syncStatus = useAnywhereHistory((state) => state.syncStatus);
   const listed = peerProjectOf(syncStatus, deviceId, thread.projectId);
-  // The peer's listing says which local project it is mapped to; without one, the settings map
-  // (and a project with the same id) still apply.
-  const localProject =
-    (listed?.mappedTo ? model.projects[listed.mappedTo] : undefined) ??
-    resolveLocalProject(thread.projectId, model.projects, projectMap ?? {}, localDeviceId);
+  // The peer's listing is authoritative about whether the project is mapped here. Without one
+  // (an older peer), the settings map and a project with the same id still apply.
+  const localProject = listed
+    ? listed.mappedTo
+      ? model.projects[listed.mappedTo]
+      : undefined
+    : resolveLocalProject(thread.projectId, model.projects, projectMap ?? {}, localDeviceId);
   // A peer that sends no project list can still be mapped by hand, under the id its thread carries.
   const unmapped: SyncPeerProject = listed ?? {
     id: thread.projectId,

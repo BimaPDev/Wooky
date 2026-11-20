@@ -313,3 +313,44 @@ describe("list and diff", () => {
     expect(must(working[0]).patch).toContain("+two");
   });
 });
+
+describe("manual snapshot with nothing changed", () => {
+  it("says nothing changed and records no commit, so an unlabeled save adds nothing", async () => {
+    const device = await makeDevice({ deviceId: "a" });
+    await put(device.root, "one.txt", "1\n");
+    const first = await device.engine.createSnapshot(device.projectId);
+    expect(first.unchanged).toBe(false);
+    const again = await device.engine.createSnapshot(device.projectId);
+    expect(again).toMatchObject({ id: first.id, unchanged: true });
+    expect(await device.engine.list({ projectId: device.projectId })).toHaveLength(1);
+  });
+
+  it("keeps a label the user typed as a marker on the same files", async () => {
+    const device = await makeDevice({ deviceId: "a" });
+    await put(device.root, "one.txt", "1\n");
+    const first = await device.engine.createSnapshot(device.projectId);
+    const marked = await device.engine.createSnapshot(device.projectId, "before refactor");
+    expect(marked).toMatchObject({
+      unchanged: true,
+      reason: "manual",
+      label: "before refactor",
+      parentId: first.id,
+      summary: { filesChanged: 0, insertions: 0, deletions: 0 },
+    });
+    expect(marked.id).not.toBe(first.id);
+    const listed = await device.engine.list({ projectId: device.projectId });
+    expect(listed.map((row) => row.label)).toEqual(["before refactor", null]);
+    // The marker did not copy anything: the same files are in both.
+    expect(await files(device, marked.id)).toEqual(await files(device, first.id));
+  });
+
+  it("a changed folder is a normal snapshot with its label", async () => {
+    const device = await makeDevice({ deviceId: "a" });
+    await put(device.root, "one.txt", "1\n");
+    await device.engine.createSnapshot(device.projectId);
+    await put(device.root, "two.txt", "2\n");
+    const next = await device.engine.createSnapshot(device.projectId, "added two");
+    expect(next).toMatchObject({ unchanged: false, label: "added two" });
+    expect(next.summary?.filesChanged).toBe(1);
+  });
+});

@@ -1,6 +1,6 @@
 import type { TimelineItem } from "@wooky/contracts";
 import { memo, useEffect, useState } from "react";
-import { respondApproval } from "../state/actions.ts";
+import { interruptTurn, respondApproval } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
 import { DiffLines } from "./DiffView.tsx";
 import { IconChevron, IconFailed, ToolIcon } from "./Icons.tsx";
@@ -185,6 +185,20 @@ function ApprovalCard({ item, threadId }: { item: Item<"approval">; threadId: st
         <div className="approval-actions">
           <button type="button" className="button" disabled={sent} onClick={() => decide("deny")}>
             Deny <kbd>Esc</kbd>
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={sent}
+            title="Stop the agent instead of answering"
+            onClick={() => {
+              setSent(true);
+              void interruptTurn(threadId).then((ack) => {
+                if (!ack) setSent(false);
+              });
+            }}
+          >
+            Stop
           </button>
           <button
             type="button"

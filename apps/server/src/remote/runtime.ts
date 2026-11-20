@@ -33,6 +33,8 @@ export interface RemoteRuntime {
   servers(): import("node:http").Server[];
   addresses(): string[];
   port(): number;
+  /** The port in use, and whether a command-line port overrides the hosting setting. */
+  listenInfo(): { port: number; portExplicit: boolean };
   url(): string;
   closeTunnels(): void;
   closeServers(): Promise<void>;
@@ -157,6 +159,7 @@ export function createRemoteRuntime(options: {
     servers: () => bind.servers(),
     addresses: () => bind.addresses(),
     port: () => bind.port(),
+    listenInfo: () => ({ port: bind.port(), portExplicit: options.portExplicit === true }),
     url: () => bind.url(),
     closeTunnels: () => peers.close(),
     closeServers: () => bind.closeServers(),

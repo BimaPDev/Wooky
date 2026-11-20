@@ -430,6 +430,41 @@ describe("peer routes", () => {
     expect((await fetch(`${a.url}/sync/tips`, { method: "POST", headers })).status).toBe(405);
   });
 
+  it("serves the project list to a listed peer even with file sync off, and nothing without a token", async () => {
+    const a = await makeDevice({
+      deviceId: "devA",
+      projectId: "proj",
+      name: "Billing API",
+      remote: "github.com/acme/billing",
+      branch: "main",
+    });
+    const b = await makeDevice({ deviceId: "devB", projectId: "proj-b" });
+    pair(a, b);
+    const headers = { authorization: "Bearer secret" };
+    expect((await fetch(`${a.url}/sync/projects`)).status).toBe(401);
+    expect(await (await fetch(`${a.url}/sync/projects`, { headers })).json()).toEqual({
+      projects: [
+        {
+          id: "proj",
+          sharedId: "proj",
+          name: "Billing API",
+          // A bare folder name: the full path never leaves this device.
+          folder: basename(a.root),
+          remote: "github.com/acme/billing",
+          branch: "main",
+        },
+      ],
+    });
+    a.settings.sync = {
+      ...a.settings.sync,
+      categories: { ...a.settings.sync.categories, files: false },
+    };
+    expect((await fetch(`${a.url}/sync/projects`, { headers })).status).toBe(200);
+    expect((await fetch(`${a.url}/sync/tips`, { headers })).status).toBe(403);
+    a.auth.caller = "stranger";
+    expect((await fetch(`${a.url}/sync/projects`, { headers })).status).toBe(403);
+  });
+
   it("serves nothing while sync is off", async () => {
     const a = await makeDevice({ deviceId: "devA", projectId: "proj" });
     const b = await makeDevice({ deviceId: "devB", projectId: "proj-b" });

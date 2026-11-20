@@ -350,6 +350,11 @@ export const RpcMethods = {
     result: DeviceInfo,
   },
   "remote.tailscaleStatus": { params: z.object({}), result: TailscaleStatus },
+  /** The port this server listens on, and whether `--port` (or WOOKY_PORT) fixed it. */
+  "remote.listenInfo": {
+    params: z.object({}),
+    result: z.object({ port: z.number().int().nonnegative(), portExplicit: z.boolean() }),
+  },
   "remote.pairingCode.create": { params: z.object({}), result: PairingCode },
   "remote.devices.list": { params: z.object({}), result: z.array(PairedDeviceView) },
   "remote.devices.revoke": {

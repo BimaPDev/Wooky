@@ -290,7 +290,7 @@ describe("createClaimFileSync", () => {
     );
   });
 
-  it("reports an offline owner and a failing project, but not an unrelated unmapped one", async () => {
+  it("reports an offline owner and a failing project, but not an unrelated failing one", async () => {
     await expect(
       createClaimFileSync({
         settings: () => settings(),
@@ -309,7 +309,7 @@ describe("createClaimFileSync", () => {
       settings: () => settings(),
       engine: engineWith({
         state: "error",
-        error: "other: project not mapped on this device; p2: broke",
+        error: "p2: broke",
       }).engine,
     })("p1", "owner");
     await expect(
@@ -322,10 +322,7 @@ describe("createClaimFileSync", () => {
 
   it("keeps only the problems that belong to the project", () => {
     expect(
-      problemsFor(
-        "a: project not mapped on this device; p1: broke; p2: broke; The peer rejected this device's token.",
-        "p1",
-      ),
+      problemsFor("p1: broke; p2: broke; The peer rejected this device's token.", "p1"),
     ).toEqual(["p1: broke", "The peer rejected this device's token."]);
   });
 });

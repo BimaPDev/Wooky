@@ -136,5 +136,3 @@ export function createProjectCatalog(deps: {
 
   return { refreshLocal, served, accept, forget, view, localFor };
 }
-
-export type ProjectCatalog = ReturnType<typeof createProjectCatalog>;
