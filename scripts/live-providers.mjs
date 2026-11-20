@@ -1,7 +1,7 @@
 // Live proof against REAL agent CLIs (spends a few tokens each). One real Wooky server with a clean
 // home and a throwaway git project, driven over its WebSocket RPC exactly like the web client.
 //
-//   node scripts/live-providers.mjs <claude|opencode|cursor> [model] [--keep]
+//   node scripts/live-providers.mjs <claude|opencode|cursor|acp> [model] [--keep] [--settings <file>]
 //
 // Per provider: providers.list, a turn that streams and creates a file under approve mode (approval card
 // answered), a resumed second turn, a queued prompt, interrupt mid-turn, checkpoint + revert, usage
@@ -24,7 +24,10 @@ const REPO = process.cwd();
 const provider = process.argv[2];
 const modelArg = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : null;
 const KEEP = process.argv.includes("--keep");
-if (!provider) throw new Error("usage: live-providers.mjs <claude|opencode|cursor> [model]");
+const settingsAt = process.argv.indexOf("--settings");
+const settingsFile = settingsAt >= 0 ? process.argv[settingsAt + 1] : null;
+if (settingsAt >= 0 && !settingsFile) throw new Error("--settings needs a file path");
+if (!provider) throw new Error("usage: live-providers.mjs <claude|opencode|cursor|acp> [model]");
 const { WebSocket } = await import(join(REPO, "apps/server/node_modules/ws/wrapper.mjs"));
 const TSX = join(REPO, "apps/server/node_modules/.bin/tsx");
 
@@ -51,6 +54,11 @@ const git = (cwd, ...args) =>
   }).trim();
 
 mkdirSync(home, { recursive: true });
+if (settingsFile) {
+  JSON.parse(readFileSync(settingsFile, "utf8"));
+  writeFileSync(join(home, "settings.json"), readFileSync(settingsFile));
+  out(`  seeded ${home}/settings.json from ${settingsFile}`);
+}
 mkdirSync(root, { recursive: true });
 git(root, "init", "-q", "-b", "main");
 git(root, "config", "user.email", "t@example.com");
