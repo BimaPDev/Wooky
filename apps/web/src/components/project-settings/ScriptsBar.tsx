@@ -128,7 +128,7 @@ export function ScriptsBar() {
     const template = previewTemplate(script.previewUrl, project.settings.defaultPreviewUrl);
     if (!template) return;
     const url = resolvePreviewUrl(template, sessionId ? (ports[sessionId] ?? null) : null);
-    if (url) openExternalUrl(url);
+    if (url) openExternalUrl(url, { localOnly: true });
   };
 
   const renderChip = (script: ProjectScript) => {

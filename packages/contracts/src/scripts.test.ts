@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { Project, AgeEvent } from "./index.ts";
-import { ProjectPrompt, ProjectSettings, SharedPath, SharedRelPath } from "./scripts.ts";
+import {
+  ProjectPrompt,
+  ProjectScript,
+  ProjectSettings,
+  SharedPath,
+  SharedRelPath,
+  StoredProjectSettings,
+} from "./scripts.ts";
 
 const at = "2026-01-01T00:00:00.000Z";
 
@@ -74,5 +81,79 @@ describe("ProjectSettings defaults", () => {
     expect(event.type).toBe("project.added");
     if (event.type !== "project.added") return;
     expect(event.project.settings).toEqual({ scripts: [], sharedPaths: [], prompts: [] });
+  });
+});
+
+describe("preview urls", () => {
+  it("accepts local http(s) addresses with ${PORT} in the port position", () => {
+    expect(ProjectSettings.parse({ defaultPreviewUrl: "http://localhost:${PORT}" })).toMatchObject({
+      defaultPreviewUrl: "http://localhost:${PORT}",
+    });
+    expect(
+      ProjectScript.parse({
+        id: "s1",
+        name: "Serve",
+        command: "node serve.mjs",
+        previewUrl: "https://127.0.0.1:8080/app",
+      }).previewUrl,
+    ).toBe("https://127.0.0.1:8080/app");
+    expect(
+      ProjectScript.parse({
+        id: "s1",
+        name: "Serve",
+        command: "node serve.mjs",
+        previewUrl: "http://[::1]:3000",
+      }).previewUrl,
+    ).toBe("http://[::1]:3000");
+  });
+
+  it("rejects remote hosts and other schemes when written", () => {
+    expect(ProjectSettings.safeParse({ defaultPreviewUrl: "http://evil.example" }).success).toBe(
+      false,
+    );
+    expect(
+      ProjectScript.safeParse({
+        id: "s1",
+        name: "Serve",
+        command: "x",
+        previewUrl: "javascript:alert(1)",
+      }).success,
+    ).toBe(false);
+    expect(
+      ProjectScript.safeParse({
+        id: "s1",
+        name: "Serve",
+        command: "x",
+        previewUrl: "file:///etc/passwd",
+      }).success,
+    ).toBe(false);
+    expect(
+      ProjectScript.safeParse({
+        id: "s1",
+        name: "Serve",
+        command: "x",
+        previewUrl: "http://${PORT}",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("reads a stored address that fails the check as absent", () => {
+    const settings = StoredProjectSettings.parse({
+      scripts: [{ id: "s1", name: "Serve", command: "x", previewUrl: "http://evil.example" }],
+      defaultPreviewUrl: "javascript:alert(1)",
+    });
+    expect(settings.scripts[0]?.previewUrl).toBeUndefined();
+    expect(settings.defaultPreviewUrl).toBeUndefined();
+    const event = AgeEvent.parse({
+      seq: 1,
+      at,
+      commandId: "c1",
+      type: "project.configured",
+      projectId: "p1",
+      settings: { defaultPreviewUrl: "http://evil.example" },
+    });
+    expect(event.type).toBe("project.configured");
+    if (event.type !== "project.configured") return;
+    expect(event.settings.defaultPreviewUrl).toBeUndefined();
   });
 });
