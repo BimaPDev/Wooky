@@ -82,6 +82,8 @@ export const Snapshot = z.object({
   threadId: Id.nullable(),
   deviceId: DeviceId,
   reason: SnapshotReason,
+  /** The name the user gave a manual snapshot, if any. */
+  label: z.string().max(200).nullable().default(null),
   createdAt: IsoTime,
   summary: SnapshotSummary.nullable(),
   parentId: z.string().min(1).nullable(),
@@ -91,12 +93,53 @@ export type Snapshot = z.infer<typeof Snapshot>;
 export const SyncPeerState = z.enum(["idle", "syncing", "offline", "error"]);
 export type SyncPeerState = z.infer<typeof SyncPeerState>;
 
+/**
+ * What a peer says about one of its projects, enough to match it to a local one without hand
+ * editing. Peer data is untrusted: every field is size-capped, `folder` is a bare folder name
+ * (never a path) and `remote` is a normalized git remote with no credentials. None of it is ever
+ * used as a path on this device.
+ */
+export const SharedProjectId = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9._:-]+$/, "not a project id")
+  .refine((value) => value !== "__proto__", "not a project id");
+
+export const PeerProjectInfo = z.object({
+  /** The peer's own project id. A thread of that peer names its project by this. */
+  id: SharedProjectId,
+  /** The id the peer shares the project's files under (the key of `projectMap`). */
+  sharedId: SharedProjectId,
+  name: z.string().max(200),
+  folder: z
+    .string()
+    .max(255)
+    .refine((value) => !value.includes("/") && !value.includes("\\"), "folder is a name"),
+  remote: z.string().max(500).nullable().default(null),
+  branch: z.string().max(200).nullable().default(null),
+});
+export type PeerProjectInfo = z.infer<typeof PeerProjectInfo>;
+
+/** A peer project as this device sees it: whether it is mapped here, and what it probably is. */
+export const SyncPeerProject = PeerProjectInfo.extend({
+  /** The local project it is mapped to, or null while it is not mapped on this device. */
+  mappedTo: Id.nullable(),
+  suggestion: z
+    .object({ projectId: Id, by: z.enum(["remote", "folder"]) })
+    .nullable()
+    .default(null),
+});
+export type SyncPeerProject = z.infer<typeof SyncPeerProject>;
+
 export const SyncPeerStatus = z.object({
   deviceId: DeviceId,
   name: z.string().min(1),
   state: SyncPeerState,
   lastSyncAt: IsoTime.nullable(),
   error: z.string().nullable(),
+  /** The peer's projects. Older peers send none. */
+  projects: z.array(SyncPeerProject).max(200).default([]),
 });
 export type SyncPeerStatus = z.infer<typeof SyncPeerStatus>;
 

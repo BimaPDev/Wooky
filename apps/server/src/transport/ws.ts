@@ -15,6 +15,8 @@ import {
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
 import { guardTransferCommand } from "../transfer/guard.ts";
+import { withLocalMapping } from "@wooky/domain";
+import { samePath } from "../sync/project-map.ts";
 import { presentedToken, selectWebSocketProtocol } from "../remote/auth.ts";
 import type { RemoteRuntime } from "../remote/runtime.ts";
 import type { AttachmentStore } from "../attachments.ts";
@@ -249,6 +251,7 @@ function createHandlers(
     "device.info": () => remote.device.info(),
     "device.rename": ({ name }) => remote.device.rename(name),
     "remote.tailscaleStatus": () => remote.tailscaleStatus(),
+    "remote.listenInfo": () => remote.listenInfo(),
     "remote.pairingCode.create": (_params, conn) => {
       requireLocal(conn, "Pairing codes can only be created on this machine.");
       return remote.pairing.create();
@@ -281,6 +284,25 @@ function createHandlers(
       else if (!settings.enabled) throw new ServiceError("conflict", "Sync is turned off.");
       await transfer.replicas.pullNow();
       await transfer.pullSettingsAndThemes();
+      return { ok: true as const };
+    },
+    "sync.projects.map": ({ sharedId, localProjectId }, conn) => {
+      // Which folder a peer's files land in is decided at this machine, by the person at it.
+      requireLocal(conn, "Project mapping can only be changed on this machine.");
+      const project = localProjectId ? store.model.projects[localProjectId] : undefined;
+      if (localProjectId && (!project || project.scratch === true))
+        throw new ServiceError("not_found", `Project ${localProjectId} was not found.`);
+      // The stored path is always the root of a project registered here, never peer-supplied text.
+      const projectMap = withLocalMapping(
+        themes.getSettings().sync.projectMap,
+        sharedId,
+        remote.device.id(),
+        project?.root ?? null,
+        samePath,
+      );
+      themes.putSettings({ sync: { projectMap } });
+      sync.engine.refresh();
+      sync.engine.emitStatus();
       return { ok: true as const };
     },
     "sync.replicas": () => transfer.replicas.model,

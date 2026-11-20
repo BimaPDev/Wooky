@@ -142,8 +142,9 @@ function snapshot(
       ? { filesChanged: summary[0], insertions: summary[1], deletions: summary[2] }
       : null,
     parentId: `s-${String(n + 1).padStart(2, "0")}`,
+    label: null,
     ...extra,
-  };
+  } as Snapshot;
 }
 
 /** Newest first. 32 rows, so a page of 25 leaves a second page behind "Load older". */
@@ -215,8 +216,33 @@ function syncStatus(): SyncStatus {
   return {
     enabled: true,
     peers: [
-      { deviceId: WORK, name: "Work Mac", state: "idle", lastSyncAt: ago(3), error: null },
-      { deviceId: PC, name: "Windows PC", state: "offline", lastSyncAt: ago(1500), error: null },
+      {
+        deviceId: WORK,
+        name: "Work Mac",
+        state: "idle",
+        lastSyncAt: ago(3),
+        error: null,
+        projects: [
+          {
+            id: "p1",
+            sharedId: "p1",
+            name: "orders-api",
+            folder: "orders-api",
+            remote: "github.com/demo/orders-api",
+            branch: "main",
+            mappedTo: "p1",
+            suggestion: null,
+          },
+        ],
+      },
+      {
+        deviceId: PC,
+        name: "Windows PC",
+        state: "offline",
+        lastSyncAt: ago(1500),
+        error: null,
+        projects: [],
+      },
     ],
     conflicts,
   };
@@ -538,8 +564,10 @@ export function anywhereHistoryRespond(method: string, params: unknown): { value
       };
       if (label) console.info("Wooky fixture snapshot label", label);
       fixtureSnapshots.unshift(row);
-      return { value: row };
+      return { value: { ...row, unchanged: false } };
     }
+    case "sync.projects.map":
+      return { value: { ok: true as const } };
     case "sync.conflicts.resolve": {
       const { conflictId } = params as { conflictId: string };
       conflicts = conflicts.filter((entry) => entry.id !== conflictId);

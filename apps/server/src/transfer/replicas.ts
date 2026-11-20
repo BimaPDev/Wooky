@@ -131,6 +131,7 @@ export function createReplicaService(deps: {
           state: "idle" as const,
           lastSyncAt: null,
           error: null,
+          projects: [],
         })),
         conflicts: [],
       };

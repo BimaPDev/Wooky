@@ -170,6 +170,65 @@ describe("applyEvent", () => {
     expect(done.turns.t1?.[0]?.items[0]).toMatchObject({ decision: "deny" });
   });
 
+  it("records the time a turn spent waiting on approvals, not counting the agent's own work", () => {
+    const events = seed();
+    const at2 =
+      (iso: string) =>
+      (event: AgeEvent): AgeEvent =>
+        ({ ...event, at: iso }) as AgeEvent;
+    const approval = (id: string, request: string) =>
+      ev({
+        type: "turn.itemUpserted",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u1",
+        item: {
+          kind: "approval",
+          id,
+          requestId: request,
+          tool: "command",
+          title: "ls",
+          detail: "",
+          decision: null,
+        },
+      });
+    const resolve = (request: string) =>
+      ev({
+        type: "approval.resolved",
+        commandId: null,
+        threadId: "t1",
+        turnId: "u1",
+        requestId: request,
+        decision: "allow",
+      });
+    events.push(
+      at2("2026-01-01T00:00:10.000Z")(approval("a1", "r1")),
+      // Two requests open at once: the wait is one stretch, from the first to the last answer.
+      at2("2026-01-01T00:00:20.000Z")(approval("a2", "r2")),
+      at2("2026-01-01T00:01:10.000Z")(resolve("r1")),
+      at2("2026-01-01T00:01:40.000Z")(resolve("r2")),
+      // A second wait, ended by the turn finishing.
+      at2("2026-01-01T00:02:00.000Z")(approval("a3", "r3")),
+      at2("2026-01-01T00:02:30.000Z")(
+        ev({
+          type: "turn.finished",
+          commandId: null,
+          threadId: "t1",
+          turnId: "u1",
+          status: "interrupted",
+          checkpointAfter: null,
+          changedFiles: [],
+          usage: null,
+          error: null,
+        }),
+      ),
+    );
+    const turn = applyEvents(emptyReadModel(), events).turns.t1?.[0];
+    // 00:10 → 01:40 is 90s, and 02:00 → 02:30 is 30s.
+    expect(turn?.waitedMs).toBe(120_000);
+    expect(turn?.waitingSince).toBeNull();
+  });
+
   it("derives the thread status from the remaining last turn after a revert", () => {
     const events = seed();
     const finish = (turnId: string, status: "failed" | "completed") =>

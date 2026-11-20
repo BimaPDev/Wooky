@@ -19,12 +19,19 @@ export interface TurnSummary {
 
 /** The one-line summary a finished turn collapses into. */
 export function summarizeTurn(
-  turn: Pick<Turn, "startedAt" | "endedAt" | "items" | "changedFiles">,
+  turn: Pick<
+    Turn,
+    "startedAt" | "endedAt" | "items" | "changedFiles" | "waitedMs" | "waitingSince"
+  >,
   now = Date.now(),
 ): TurnSummary {
   const start = Date.parse(turn.startedAt);
   const end = turn.endedAt ? Date.parse(turn.endedAt) : now;
-  const durationMs = Number.isFinite(start) && Number.isFinite(end) ? end - start : 0;
+  // Time spent waiting on an approval or a question is the user's, not the agent's.
+  const since = turn.waitingSince ? Date.parse(turn.waitingSince) : NaN;
+  const waiting = (turn.waitedMs ?? 0) + (Number.isFinite(since) ? Math.max(0, end - since) : 0);
+  const durationMs =
+    Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start - waiting) : 0;
   const steps = turn.items.filter((item) => item.kind === "tool").length;
   const changedFiles = [...new Set(turn.changedFiles)];
   const parts = [`Worked for ${formatDuration(durationMs)}`];

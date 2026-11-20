@@ -62,6 +62,7 @@ function HistoryDialog({ projectId }: { projectId: string }) {
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
 
   const rows = mergePages(head?.rows ?? [], tail.rows);
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null;
@@ -141,12 +142,22 @@ function HistoryDialog({ projectId }: { projectId: string }) {
     if (saving) return;
     setSaving(true);
     setSaveError(null);
+    setSaveNote(null);
     try {
-      const created = await createSnapshot(projectId, label.trim());
+      const typed = label.trim();
+      const created = await createSnapshot(projectId, typed);
       setLabel("");
       setSelectedId(created.id);
+      // Nothing changed: say so, and say what happened to the label.
+      if (created.unchanged) {
+        setSaveNote(
+          typed && created.label === typed
+            ? "Nothing changed since the last snapshot. Your label was saved as a marker."
+            : "Nothing changed since the last snapshot.",
+        );
+      }
       setHead((state) =>
-        state && state.rows ? { ...state, rows: [created, ...state.rows] } : state,
+        state && state.rows ? { ...state, rows: mergePages([created], state.rows) } : state,
       );
       useAnywhereHistory.setState((state) => ({ snapshotTick: state.snapshotTick + 1 }));
     } catch (failure) {
@@ -198,6 +209,11 @@ function HistoryDialog({ projectId }: { projectId: string }) {
           {saveError ? (
             <p className="history-error" role="alert">
               {saveError}
+            </p>
+          ) : null}
+          {saveNote ? (
+            <p className="history-note muted" role="status">
+              {saveNote}
             </p>
           ) : null}
           {!head ? <p className="empty-state small">Loading history.</p> : null}
@@ -347,7 +363,10 @@ function HistoryRow({
         onClick={onSelect}
       >
         <span className="history-row-top">
-          <span className="history-reason">{reasonText(snapshot, devices)}</span>
+          <span className="history-reason">
+            {reasonText(snapshot, devices)}
+            {snapshot.label ? `: ${snapshot.label}` : ""}
+          </span>
           <time className="history-time" dateTime={snapshot.createdAt}>
             {whenText(snapshot.createdAt)}
           </time>

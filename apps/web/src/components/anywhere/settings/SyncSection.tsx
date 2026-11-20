@@ -1,5 +1,5 @@
 import type { DeviceSettings, SyncCategories } from "@wooky/contracts";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { backend } from "../../../state/backend.ts";
 import {
   putSettings,
@@ -9,6 +9,8 @@ import {
 } from "../../../state/environments.ts";
 import { useStore } from "../../../state/store.ts";
 import { disambiguateNames, formatWhen } from "../format.ts";
+import { MapProject } from "../mapping/MapProject.tsx";
+import { mapPeerProject, unmappedProjects } from "../mapping/mapping.ts";
 import { Row, SettingsBlock, Toggle } from "./controls.tsx";
 
 const CATEGORIES: { key: keyof SyncCategories; title: string; description: string }[] = [
@@ -49,10 +51,6 @@ export function SyncSection({ settings }: { settings: DeviceSettings }) {
   const peers = peerChoices(settings, device?.deviceId ?? null, paired);
   // Select the stable map and derive in render: a fresh array from the selector loops forever.
   const projects = useStore((state) => state.model.projects);
-  const liveProjects = useMemo(
-    () => Object.values(projects).filter((project) => project.scratch !== true),
-    [projects],
-  );
 
   const syncNow = async () => {
     setSyncing(true);
@@ -166,52 +164,62 @@ export function SyncSection({ settings }: { settings: DeviceSettings }) {
         )}
       </div>
       <div className="anywhere-block">
-        <p className="setting-title">Project folders</p>
+        <p className="setting-title">Sync project mapping</p>
         <p className="setting-desc">
-          The path of each project on each peer. Leave a cell empty to skip it.
+          Which of your projects each peer's project is. Matching remotes and folder names are
+          suggested; one click maps them. Only folders on this machine are used.
         </p>
-        {sync.peers.length === 0 || liveProjects.length === 0 ? (
-          <p className="setting-desc">Choose a peer, and add a project, to map folders.</p>
+        {sync.peers.length === 0 ? (
+          <p className="setting-desc">Choose a peer to see the projects it shares.</p>
         ) : (
-          <div className="anywhere-table-wrap">
-            <table className="anywhere-table">
-              <thead>
-                <tr>
-                  <th>Project</th>
-                  {sync.peers.map((id) => (
-                    <th key={id}>{peers.find((peer) => peer.id === id)?.name ?? id}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {liveProjects.map((project) => (
-                  <tr key={project.id}>
-                    <th scope="row">
-                      {project.name}
-                      <span className="mono muted">{project.root}</span>
-                    </th>
-                    {sync.peers.map((deviceId) => (
-                      <td key={deviceId}>
-                        <PathCell
-                          value={sync.projectMap[project.id]?.[deviceId] ?? ""}
-                          label={`${project.name} on ${peers.find((peer) => peer.id === deviceId)?.name ?? deviceId}`}
-                          onCommit={(path) => {
-                            const projectMap = withPath(
-                              sync.projectMap,
-                              project.id,
-                              deviceId,
-                              path,
-                            );
-                            void putSettings({ sync: { projectMap } });
-                          }}
-                        />
-                      </td>
+          sync.peers.map((deviceId) => {
+            const peerStatus = status?.peers.find((peer) => peer.deviceId === deviceId);
+            const name = statusNames.get(deviceId) ?? peerStatus?.name ?? deviceId;
+            return (
+              <div key={deviceId} className="mapping-peer">
+                <p className="mapping-peer-name">{name}</p>
+                {!peerStatus || peerStatus.projects.length === 0 ? (
+                  <p className="setting-desc">
+                    No projects listed yet. They appear after the next sync with {name}.
+                  </p>
+                ) : (
+                  <ul className="anywhere-list">
+                    {peerStatus.projects.map((project) => (
+                      <li key={project.id} className="mapping-row">
+                        <span className="mapping-copy">
+                          <strong>{project.name || project.folder}</strong>
+                          <span className="muted mono mapping-detail">
+                            {[project.folder, project.remote, project.branch]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </span>
+                        {project.mappedTo ? (
+                          <span className="mapping-state">
+                            <span className="muted">
+                              Mapped to {projects[project.mappedTo]?.name ?? "a project here"}
+                            </span>
+                            <button
+                              type="button"
+                              className="button"
+                              onClick={() => void mapPeerProject(project.sharedId, null)}
+                            >
+                              Unmap
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="mapping-state">
+                            <span className="muted">Not mapped here</span>
+                            <MapProject project={project} />
+                          </span>
+                        )}
+                      </li>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                  </ul>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
       <div className="anywhere-block">
@@ -230,6 +238,13 @@ export function SyncSection({ settings }: { settings: DeviceSettings }) {
                     · {peer.state}
                     {peer.lastSyncAt ? ` · ${formatWhen(peer.lastSyncAt)}` : ""}
                   </span>
+                  {unmappedProjects(peer).length > 0 ? (
+                    <span className="muted">
+                      {" "}
+                      · {unmappedProjects(peer).length}{" "}
+                      {unmappedProjects(peer).length === 1 ? "project" : "projects"} not mapped here
+                    </span>
+                  ) : null}
                   {peer.error ? <span className="field-error"> {peer.error}</span> : null}
                 </span>
               </li>
@@ -247,33 +262,18 @@ function peerChoices(
   paired: { deviceId: string; name: string; revoked: boolean }[],
 ) {
   const map = new Map<string, string>();
-  for (const device of paired) {
-    if (!device.revoked) map.set(device.deviceId, device.name);
-  }
+  // The label the user gave a machine wins over the name the device calls itself.
   for (const environment of settings.environments) {
     if (environment.deviceId && !map.has(environment.deviceId)) {
       map.set(environment.deviceId, environment.label);
     }
   }
+  for (const device of paired) {
+    if (!device.revoked && !map.has(device.deviceId)) map.set(device.deviceId, device.name);
+  }
   if (selfId) map.delete(selfId);
   const shown = disambiguateNames([...map].map(([id, name]) => ({ id, name })));
   return [...map].map(([id, name]) => ({ id, name: shown.get(id) ?? name }));
-}
-
-function withPath(
-  map: DeviceSettings["sync"]["projectMap"],
-  projectId: string,
-  deviceId: string,
-  path: string,
-) {
-  const next: DeviceSettings["sync"]["projectMap"] = {};
-  for (const [id, paths] of Object.entries(map)) next[id] = { ...paths };
-  const row = { ...next[projectId] };
-  if (path) row[deviceId] = path;
-  else delete row[deviceId];
-  if (Object.keys(row).length > 0) next[projectId] = row;
-  else delete next[projectId];
-  return next;
 }
 
 function dotFor(state: string) {
@@ -325,32 +325,5 @@ function NumberCommit({
         }}
       />
     </div>
-  );
-}
-
-function PathCell({
-  value,
-  label,
-  onCommit,
-}: {
-  value: string;
-  label: string;
-  onCommit: (path: string) => void;
-}) {
-  const [text, setText] = useState<string | null>(null);
-  const shown = text ?? value;
-  return (
-    <input
-      className="mono"
-      aria-label={label}
-      value={shown}
-      spellCheck={false}
-      onChange={(event) => setText(event.target.value)}
-      onBlur={() => {
-        const next = shown.trim();
-        setText(null);
-        if (next !== value) onCommit(next);
-      }}
-    />
   );
 }

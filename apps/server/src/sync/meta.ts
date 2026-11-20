@@ -46,6 +46,7 @@ export function toSnapshot(
     threadId: meta.threadId,
     deviceId: meta.deviceId,
     reason: meta.reason,
+    label: meta.label?.slice(0, 200) ?? null,
     createdAt: meta.at,
     summary: entry.summary,
     parentId: entry.parentId,

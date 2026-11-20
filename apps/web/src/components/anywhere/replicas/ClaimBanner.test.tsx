@@ -73,7 +73,48 @@ describe("claim banner", () => {
     useStore.setState({ model: { ...fixtureModel, pendingClaims: {}, projects: {} } });
     renderBanner();
     expect(button("Continue on this device")?.disabled).toBe(true);
-    expect(document.body.textContent).toContain("Map this project");
+    expect(document.body.textContent).toContain("not mapped on this device");
+    expect(button("Add this project…")).toBeDefined();
+  });
+
+  it("offers the suggested local project in one click and maps it under the peer's project id", async () => {
+    const backend = installFixtureBackend();
+    useStore.setState({
+      deviceSettings: {
+        ...(useStore.getState().deviceSettings as object),
+        sync: { enabled: true, projectMap: {} },
+      } as never,
+    });
+    const peers = useAnywhereHistory.getState().syncStatus?.peers ?? [];
+    useAnywhereHistory.setState({
+      syncStatus: {
+        enabled: true,
+        conflicts: [],
+        peers: peers.map((peer) => ({
+          ...peer,
+          projects: [
+            {
+              id: "p1",
+              sharedId: "shared-orders",
+              name: "orders-api (work)",
+              folder: "orders-api",
+              remote: "github.com/demo/orders-api",
+              branch: "main",
+              mappedTo: null,
+              suggestion: { projectId: "p2", by: "remote" },
+            },
+          ],
+        })),
+      },
+    });
+    renderBanner();
+    expect(document.body.textContent).toContain("orders-api (work) is not mapped on this device");
+    expect(button("Continue on this device")?.disabled).toBe(true);
+    const local = fixtureModel.projects.p2?.name;
+    await act(async () => button(`Use ${local}`)?.click());
+    expect(callsTo(backend.call, "sync.projects.map")).toEqual([
+      { sharedId: "shared-orders", localProjectId: "p2" },
+    ]);
   });
 
   it("shows the pending state while the claim is in the read model", () => {

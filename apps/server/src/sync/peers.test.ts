@@ -1,8 +1,17 @@
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupSyncTests, makeDevice, pair, put, read, type Device, must } from "./testing.ts";
+import {
+  cleanupSyncTests,
+  makeDevice,
+  pair,
+  put,
+  read,
+  tempDir,
+  type Device,
+  must,
+} from "./testing.ts";
 
 afterEach(cleanupSyncTests);
 
@@ -181,8 +190,8 @@ describe("two devices", () => {
     expect(await read(b.root, "g.txt")).toBe("g from a\n");
   });
 
-  it("reports a project the peer shares but this device has not mapped", async () => {
-    const a = await makeDevice({ deviceId: "devA", projectId: "proj" });
+  it("lists a project the peer shares but this device has not mapped, without calling the peer errored", async () => {
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj", name: "Billing API" });
     const b = await makeDevice({ deviceId: "devB", projectId: "proj-b" });
     pair(a, b);
     b.settings.sync = { ...b.settings.sync, projectMap: {} };
@@ -190,9 +199,101 @@ describe("two devices", () => {
     await a.engine.snapshot(a.projectId, "manual");
     await b.engine.now();
     const [peer] = b.engine.status().peers;
-    expect(peer).toMatchObject({ deviceId: "devA", state: "error" });
-    expect(must(peer).error).toContain("project not mapped on this device");
+    // Neutral: nothing is wrong, the project just is not mapped here yet.
+    expect(peer).toMatchObject({ deviceId: "devA", state: "idle", error: null });
+    expect(must(peer).projects).toEqual([
+      expect.objectContaining({
+        id: "proj",
+        sharedId: "proj",
+        name: "Billing API",
+        mappedTo: null,
+      }),
+    ]);
     expect(existsSync(join(b.root, "f.txt"))).toBe(false);
+  });
+
+  it("suggests the local project with the same remote, however the remote is spelled", async () => {
+    const a = await makeDevice({
+      deviceId: "devA",
+      projectId: "proj",
+      name: "Billing API",
+      remote: "github.com/acme/billing",
+      branch: "main",
+    });
+    const b = await makeDevice({
+      deviceId: "devB",
+      projectId: "proj-b",
+      name: "work",
+      remote: "github.com/acme/billing",
+    });
+    pair(a, b);
+    b.settings.sync = { ...b.settings.sync, projectMap: {} };
+    await a.engine.snapshot(a.projectId, "manual");
+    await b.engine.now();
+    const [project] = must(b.engine.status().peers[0]).projects;
+    expect(project).toMatchObject({
+      remote: "github.com/acme/billing",
+      branch: "main",
+      mappedTo: null,
+      suggestion: { projectId: "proj-b", by: "remote" },
+    });
+  });
+
+  it("falls back to the same folder name, and suggests nothing when two projects tie", async () => {
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj", name: "App" });
+    const folder = basename(a.root);
+    const b = await makeDevice({
+      deviceId: "devB",
+      projectId: "proj-b",
+      root: join(await tempDir("wooky-parent-"), folder),
+    });
+    pair(a, b);
+    b.settings.sync = { ...b.settings.sync, projectMap: {} };
+    await put(b.root, "keep.txt", "k\n");
+    await a.engine.snapshot(a.projectId, "manual");
+    await b.engine.now();
+    expect(must(b.engine.status().peers[0]).projects[0]?.suggestion).toEqual({
+      projectId: "proj-b",
+      by: "folder",
+    });
+    // A second local folder with the same name makes the answer ambiguous: no one-click guess.
+    const second = join(await tempDir("wooky-parent2-"), folder);
+    await put(second, "x.txt", "x\n");
+    b.projects.push({ id: "proj-c", name: "other", root: second });
+    await b.engine.now();
+    expect(must(b.engine.status().peers[0]).projects[0]?.suggestion).toBeNull();
+  });
+
+  it("syncs into the local project once the user maps it, keyed by the peer's project id", async () => {
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj", name: "App" });
+    const b = await makeDevice({ deviceId: "devB", projectId: "proj-b" });
+    pair(a, b);
+    b.settings.sync = { ...b.settings.sync, projectMap: {} };
+    await put(a.root, "f.txt", "from a\n");
+    await a.engine.snapshot(a.projectId, "manual");
+    await b.engine.now();
+    expect(existsSync(join(b.root, "f.txt"))).toBe(false);
+    b.settings.sync = {
+      ...b.settings.sync,
+      projectMap: { proj: { devB: b.root } },
+    };
+    await b.engine.now();
+    expect(await read(b.root, "f.txt")).toBe("from a\n");
+    expect(must(b.engine.status().peers[0]).projects[0]).toMatchObject({ mappedTo: "proj-b" });
+  });
+
+  it("an entry that names a path outside the registered projects maps nothing", async () => {
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj" });
+    const b = await makeDevice({ deviceId: "devB", projectId: "proj-b" });
+    const outside = await tempDir("wooky-outside-");
+    pair(a, b);
+    b.settings.sync = { ...b.settings.sync, projectMap: { proj: { devB: outside } } };
+    await put(a.root, "f.txt", "x\n");
+    await a.engine.snapshot(a.projectId, "manual");
+    await b.engine.now();
+    expect(existsSync(join(outside, "f.txt"))).toBe(false);
+    expect(existsSync(join(b.root, "f.txt"))).toBe(false);
+    expect(must(b.engine.status().peers[0]).projects[0]).toMatchObject({ mappedTo: null });
   });
 
   it("marks an unreachable peer offline", async () => {
@@ -327,6 +428,41 @@ describe("peer routes", () => {
     expect((await fetch(`${a.url}/sync/bundle?project=missing`, { headers })).status).toBe(404);
     expect((await fetch(`${a.url}/sync/bundle`, { headers })).status).toBe(400);
     expect((await fetch(`${a.url}/sync/tips`, { method: "POST", headers })).status).toBe(405);
+  });
+
+  it("serves the project list to a listed peer even with file sync off, and nothing without a token", async () => {
+    const a = await makeDevice({
+      deviceId: "devA",
+      projectId: "proj",
+      name: "Billing API",
+      remote: "github.com/acme/billing",
+      branch: "main",
+    });
+    const b = await makeDevice({ deviceId: "devB", projectId: "proj-b" });
+    pair(a, b);
+    const headers = { authorization: "Bearer secret" };
+    expect((await fetch(`${a.url}/sync/projects`)).status).toBe(401);
+    expect(await (await fetch(`${a.url}/sync/projects`, { headers })).json()).toEqual({
+      projects: [
+        {
+          id: "proj",
+          sharedId: "proj",
+          name: "Billing API",
+          // A bare folder name: the full path never leaves this device.
+          folder: basename(a.root),
+          remote: "github.com/acme/billing",
+          branch: "main",
+        },
+      ],
+    });
+    a.settings.sync = {
+      ...a.settings.sync,
+      categories: { ...a.settings.sync.categories, files: false },
+    };
+    expect((await fetch(`${a.url}/sync/projects`, { headers })).status).toBe(200);
+    expect((await fetch(`${a.url}/sync/tips`, { headers })).status).toBe(403);
+    a.auth.caller = "stranger";
+    expect((await fetch(`${a.url}/sync/projects`, { headers })).status).toBe(403);
   });
 
   it("serves nothing while sync is off", async () => {

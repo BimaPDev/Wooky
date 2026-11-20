@@ -36,6 +36,8 @@ interface EnvironmentSnapshot {
   session: EnvironmentSession;
   device: DeviceInfo | null;
   tailscale: TailscaleStatus | null;
+  /** The port this server listens on and whether `--port` fixed it. */
+  listen: RpcResult<"remote.listenInfo"> | null;
   /** The machines this client knows, kept from the local server while another one is open. */
   environments: Environment[];
   /** Cached copy of the local server's machine list, used while a remote is open. */
@@ -60,6 +62,7 @@ let snapshot: EnvironmentSnapshot = {
   },
   device: null,
   tailscale: null,
+  listen: null,
   environments: [],
   localEnvironments: [],
   devices: [],
@@ -101,6 +104,10 @@ export function useDeviceInfo(): DeviceInfo | null {
 
 export function useTailscale(): TailscaleStatus | null {
   return useSyncExternalStore(subscribe, () => snapshot.tailscale);
+}
+
+export function useListenInfo(): RpcResult<"remote.listenInfo"> | null {
+  return useSyncExternalStore(subscribe, () => snapshot.listen);
 }
 
 export function usePairedDevices(): PairedDeviceView[] {
@@ -195,6 +202,10 @@ export async function renameDevice(name: string) {
     device: info,
     session: session.remote ? session : { ...session, label: info.name },
   });
+}
+
+export async function refreshListen() {
+  emit({ listen: await backend().call("remote.listenInfo", {}) });
 }
 
 export async function refreshTailscale() {

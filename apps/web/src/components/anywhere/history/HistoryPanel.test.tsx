@@ -147,4 +147,26 @@ describe("project history", () => {
       { projectId: "p1", label: "before refactor" },
     ]);
   });
+
+  it("says so when nothing changed, and that a label was kept as a marker", async () => {
+    const [existing] = (await backend.call("sync.snapshots.list", { projectId: "p1" })) as object[];
+    backend.call.mockImplementationOnce(async () => ({
+      ...(existing as object),
+      id: "marker-1",
+      reason: "manual",
+      label: "before refactor",
+      unchanged: true,
+    }));
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Snapshot label"]');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "before refactor");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button("Save snapshot now")?.click());
+    await settle();
+    const note = document.querySelector("[role=status].history-note")?.textContent ?? "";
+    expect(note).toContain("Nothing changed since the last snapshot");
+    expect(note).toContain("label was saved as a marker");
+  });
 });

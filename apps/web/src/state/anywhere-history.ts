@@ -1,5 +1,6 @@
 import type { DeviceInfo, ReplicaModel, SyncPush, SyncStatus } from "@wooky/contracts";
 import { create } from "zustand";
+import { disambiguateNames } from "../components/anywhere/format.ts";
 import { fetchReplicas } from "../rpc/anywhere-history-extra.ts";
 import { backend } from "./backend.ts";
 import { subscribeToEvents, useStore } from "./store.ts";
@@ -169,9 +170,15 @@ export function receiveSyncPush(push: SyncPush) {
   }
 }
 
-/** Device id → display name, from the peers sync.status lists. */
+/**
+ * Device id → display name, from the peers sync.status lists. The name is the label the user
+ * gave the machine; two machines with the same label are told apart by their device id.
+ */
 export function deviceNames(status: SyncStatus | null): Record<string, string> {
-  return Object.fromEntries((status?.peers ?? []).map((peer) => [peer.deviceId, peer.name]));
+  const names = disambiguateNames(
+    (status?.peers ?? []).map((peer) => ({ id: peer.deviceId, name: peer.name })),
+  );
+  return Object.fromEntries(names);
 }
 
 export function deviceLabel(names: Record<string, string>, deviceId: string): string {

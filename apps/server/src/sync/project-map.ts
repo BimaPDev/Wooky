@@ -7,6 +7,9 @@ const normalize = (path: string) => {
   return process.platform === "win32" ? full.toLowerCase() : full;
 };
 
+/** Whether two folder paths on this device name the same folder. */
+export const samePath = (a: string, b: string) => normalize(a) === normalize(b);
+
 /**
  * Projects have different ids on different devices. A project's shared id is the
  * projectMap key whose entry for this device points at its folder, or its own id when no

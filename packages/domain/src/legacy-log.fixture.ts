@@ -546,6 +546,9 @@ export const legacyReadModel: unknown = {
         changedFiles: ["src/server.ts"],
         usage: { inputTokens: 1200, outputTokens: 340, cachedInputTokens: 800, costUsd: 0.02 },
         error: null,
+        // The reducer records how long the turn waited on its approval, so replaying the log sets this.
+        waitedMs: 120000,
+        waitingSince: null,
       },
       {
         id: "u2",

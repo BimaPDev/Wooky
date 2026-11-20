@@ -36,7 +36,14 @@ import {
   RemoteConnection,
   TailscaleStatus,
 } from "./remote.ts";
-import { ConflictResolution, Snapshot, SnapshotKind, SyncPush, SyncStatus } from "./sync.ts";
+import {
+  ConflictResolution,
+  SharedProjectId,
+  Snapshot,
+  SnapshotKind,
+  SyncPush,
+  SyncStatus,
+} from "./sync.ts";
 import { TerminalInfo, TerminalPush, TerminalSessionId, TerminalSize } from "./terminal.ts";
 import { ProviderLimits, UsageHistoryParams, UsageHistoryResult } from "./usage.ts";
 
@@ -343,6 +350,11 @@ export const RpcMethods = {
     result: DeviceInfo,
   },
   "remote.tailscaleStatus": { params: z.object({}), result: TailscaleStatus },
+  /** The port this server listens on, and whether `--port` (or WOOKY_PORT) fixed it. */
+  "remote.listenInfo": {
+    params: z.object({}),
+    result: z.object({ port: z.number().int().nonnegative(), portExplicit: z.boolean() }),
+  },
   "remote.pairingCode.create": { params: z.object({}), result: PairingCode },
   "remote.devices.list": { params: z.object({}), result: z.array(PairedDeviceView) },
   "remote.devices.revoke": {
@@ -407,10 +419,20 @@ export const RpcMethods = {
       projectId: Id,
       label: z.string().min(1).optional(),
     }),
-    result: Snapshot,
+    /** `unchanged`: no files changed since the last snapshot (a label is kept as a marker). */
+    result: Snapshot.extend({ unchanged: z.boolean().default(false) }),
   },
   "sync.conflicts.resolve": {
     params: z.object({ conflictId: z.string().min(1), resolution: ConflictResolution }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  /**
+   * Maps a peer's project to a local project (`localProjectId`), or clears the mapping (null).
+   * `sharedId` is the id the peer shares the project under. This device only; the local project
+   * must already be registered here.
+   */
+  "sync.projects.map": {
+    params: z.object({ sharedId: SharedProjectId, localProjectId: Id.nullable() }),
     result: z.object({ ok: z.literal(true) }),
   },
   "sync.replicas": { params: z.object({}), result: ReplicaModel },

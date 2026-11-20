@@ -122,8 +122,12 @@ categories: {
 intervalSec: number     default 30     // file scan interval; also on turn.finished
 retention: { keepDays: 30, keepMin: 50 }  // snapshot pruning
 peers: deviceId[]                      // which paired devices to sync with
-projectMap: { [projectId]: { [deviceId]: localPath } }  // same project, different paths
+projectMap: { [sharedProjectId]: { [deviceId]: localPath } }  // same project, different paths
 ```
+
+`sharedProjectId` is the id the project's owner shares it under: its own project id unless the owner mapped it
+under another key. The receiving device stores its own folder under that key and its own device id, so a map made
+on the receiver is found by the claim. `localPath` is only ever the root of a project registered on that device.
 
 Device-local keys never sync: binary paths, env, window state, sync settings themselves.
 
@@ -171,6 +175,20 @@ As built (A2, `apps/server/src/sync/`, git calls in `apps/server/src/git/shadow.
   `update-index`. Interval scans skip git when the fingerprint is unchanged.
 - Peers share a project through `projectMap`: a project's shared id is the map key whose entry for
   this device is its folder, else its own id. `GET /sync/tips` and `/sync/bundle?project=` use shared ids.
+- **Matching projects without hand editing.** `GET /sync/projects` (a listed peer, sync on, even with file sync
+  off) returns `{projects: PeerProjectInfo[]}`: for each project its `id`, `sharedId`, display `name`, `folder`
+  (the folder's basename, never a path), `remote` (the origin remote normalized: no scheme, credentials, port or
+  `.git`, lower case, `host/owner/repo`) and `branch`. The receiver validates and caps every entry (200 entries,
+  200-character names, `folder` must not contain a separator, ids limited to a safe character set, and the
+  remote is normalized again on receipt so credentials never survive), and drops what fails. Nothing from a peer
+  is ever used as a path. `SyncPeerStatus.projects` lists each as `mappedTo` (a local project id or null) plus a
+  `suggestion` (`{projectId, by: remote|folder}`): the same normalized remote, else the same folder name; a tie
+  suggests nothing. A project a peer shares that is not mapped here is NOT an error: the peer stays idle and the
+  project shows as "not mapped here" with the map action. `sync.projects.map {sharedId, localProjectId|null}`
+  (loopback only; the local project must be registered here) stores the mapping and moves the folder off any other
+  key. The web offers "Use <project>" (the suggestion), a list of local projects, and "Add this project…" (the
+  existing local-only folder chooser, then map) in the claim banner and in Settings → Anywhere → Sync project
+  mapping.
 - A clean `merge-tree` is applied. A conflict applies nothing. Resolving applies the clean part of the
   merge too, and `mine` / `theirs` / `both` decide only the conflicting paths (`both` also writes
   `<name>.theirs<ext>`). Merging needs Git 2.40 (`--merge-base`); older Git raises a conflict on every
@@ -204,8 +222,9 @@ As built (A2, `apps/server/src/sync/`, git calls in `apps/server/src/git/shadow.
     fails with a reason that says so, and nothing is released or imported. After the owner released
     (a forced release stops its turn first) the pull is repeated for the final files; if that one fails
     the claim fails with that reason and can be run again. Which local project a claim lands in is
-    `projectMap[<owner's project id>][<this device>]` (a folder path, as the sync engine reads it; a
-    local project id is also accepted), else the project with the same id.
+    `projectMap[<owner's shared project id>][<this device>]` (a folder path, as the sync engine reads it; a
+    local project id is also accepted), else the project with the same id. The web resolves it from the peer's
+    project list and sends the local project id.
   - A running turn refuses the release. A claim with `force` first asks the owner to
     interrupt the turn and sends the release again only once the turn ended, so the owner
     never releases a thread with a turn still running.
@@ -299,10 +318,14 @@ Schemas live in `packages/contracts`. Old logs omit the new fields and decode to
 - `SnapshotKind` `files | thread | settings | themes`
 - `SnapshotReason` `interval | turn | before-apply | manual | revert | incoming`
 - `SnapshotSummary` `{filesChanged, insertions, deletions}`
-- `Snapshot` `{id, kind, projectId, threadId, deviceId, reason, createdAt, summary, parentId}` —
-  `id` is the shadow commit sha or a uuid. `sync.snapshots.create`'s `label` is not a field;
-  the sync engine puts it in the commit message.
-- `SyncPeerStatus` `{deviceId, name, state: idle|syncing|offline|error, lastSyncAt, error}`
+- `Snapshot` `{id, kind, projectId, threadId, deviceId, reason, label, createdAt, summary, parentId}` —
+  `id` is the shadow commit sha or a uuid. `label` is the name the user gave a manual snapshot.
+  `sync.snapshots.create` returns the snapshot plus `unchanged`: with no file changes since the last snapshot nothing
+  is copied and the result is the existing tip, or, when a label was given, a marker commit on the same tree that
+  carries it. The UI says "Nothing changed since the last snapshot".
+- `PeerProjectInfo` `{id, sharedId, name, folder, remote, branch}`, `SyncPeerProject` adds `mappedTo` and `suggestion`
+- `SyncPeerStatus` `{deviceId, name, state: idle|syncing|offline|error, lastSyncAt, error, projects}` — `name` is the
+  label the user gave the machine when adding it; the UI tells duplicates apart by device id
 - `SyncConflict` `{id, projectId, peerDeviceId, mine, theirs, base, paths, createdAt}`
 - `ConflictResolution` `mine | theirs | both` — `both` keeps theirs as files with a `.theirs` suffix
 - `SyncStatus` `{enabled, peers, conflicts}`
@@ -381,7 +404,10 @@ Params → result.
 - `sync.snapshots.list` `{kind?, projectId?, threadId?, limit?, before?}` → `Snapshot[]`
 - `sync.snapshots.diff` `{snapshotId, against?: snapshotId | "working"}` → same result as `git.diff`
 - `sync.snapshots.restore` `{snapshotId, paths?}` → `{backupSnapshotId}`
-- `sync.snapshots.create` `{projectId, label?}` → `Snapshot`
+- `sync.snapshots.create` `{projectId, label?}` → `Snapshot` and `unchanged`
+- `sync.projects.map` `{sharedId, localProjectId|null}` → `{ok: true}` — loopback only
+- `remote.listenInfo` `{}` → `{port, portExplicit}` — `portExplicit` is true when `--port` or `WOOKY_PORT` fixed the port,
+  which then wins over Hosting → Port; Settings says so
 - `sync.conflicts.resolve` `{conflictId, resolution}` → `{ok: true}`
 - `terminal.list` `{}` → `TerminalInfo[]`
 - `terminal.attach` `{sessionId}` → `TerminalInfo` (the server then pushes `replay`)

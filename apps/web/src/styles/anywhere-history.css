@@ -90,6 +90,11 @@
   font-size: var(--text-sm);
 }
 
+.history-note {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
 .history-list {
   display: flex;
   flex-direction: column;

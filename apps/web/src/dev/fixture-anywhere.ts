@@ -56,7 +56,14 @@ let paired: PairedDeviceView[] = [
 const syncStatus: SyncStatus = {
   enabled: false,
   peers: [
-    { deviceId: "dev-home", name: "Home server", state: "idle", lastSyncAt: ago(4), error: null },
+    {
+      deviceId: "dev-home",
+      name: "Home server",
+      state: "idle",
+      lastSyncAt: ago(4),
+      error: null,
+      projects: [],
+    },
   ],
   conflicts: [],
 };
@@ -81,6 +88,8 @@ export function respondAnywhere(method: string, params: unknown): unknown {
       return device;
     case "remote.tailscaleStatus":
       return tailscale;
+    case "remote.listenInfo":
+      return { port: 4317, portExplicit: false };
     case "remote.pairingCode.create":
       return {
         code: pairingCode(),

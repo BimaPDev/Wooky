@@ -163,10 +163,9 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
           turn.items.some((item) => item.id === event.item.id),
         );
       const base = isNewPlan ? supersedePlans(model, event.threadId) : model;
-      return patchTurn(base, event.threadId, event.turnId, (turn) => ({
-        ...turn,
-        items: upsertItem(turn.items, event.item),
-      }));
+      return patchTurn(base, event.threadId, event.turnId, (turn) =>
+        trackWait(turn, { ...turn, items: upsertItem(turn.items, event.item) }, event.at),
+      );
     }
 
     case "turn.itemDelta":
@@ -184,14 +183,20 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
 
     case "approval.resolved": {
       if (!openRequestOnRunningTurn(model, event)) return model;
-      const resolved = patchTurn(model, event.threadId, event.turnId, (turn) => ({
-        ...turn,
-        items: turn.items.map((item) =>
-          item.kind === "approval" && item.requestId === event.requestId
-            ? { ...item, decision: event.decision }
-            : item,
+      const resolved = patchTurn(model, event.threadId, event.turnId, (turn) =>
+        trackWait(
+          turn,
+          {
+            ...turn,
+            items: turn.items.map((item) =>
+              item.kind === "approval" && item.requestId === event.requestId
+                ? { ...item, decision: event.decision }
+                : item,
+            ),
+          },
+          event.at,
         ),
-      }));
+      );
       return patchThread(resolved, event.threadId, event.at, {
         status: hasOpenRequest(resolved, event.threadId) ? "waiting" : "running",
       });
@@ -201,60 +206,76 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
       const asked = patchTurn(model, event.threadId, event.turnId, (turn) =>
         turn.items.some((item) => item.id === event.itemId)
           ? turn
-          : {
-              ...turn,
-              items: [
-                ...turn.items,
-                {
-                  kind: "question",
-                  id: event.itemId,
-                  requestId: event.requestId,
-                  questions: event.questions,
-                  answers: null,
-                },
-              ],
-            },
+          : trackWait(
+              turn,
+              {
+                ...turn,
+                items: [
+                  ...turn.items,
+                  {
+                    kind: "question",
+                    id: event.itemId,
+                    requestId: event.requestId,
+                    questions: event.questions,
+                    answers: null,
+                  },
+                ],
+              },
+              event.at,
+            ),
       );
       return patchThread(asked, event.threadId, event.at, { status: "waiting" });
     }
 
     case "question.resolved": {
       if (!openRequestOnRunningTurn(model, event)) return model;
-      const resolved = patchTurn(model, event.threadId, event.turnId, (turn) => ({
-        ...turn,
-        items: turn.items.map((item) =>
-          item.kind === "question" && item.requestId === event.requestId
-            ? event.answers === null
-              ? { ...item, answers: null, dismissed: true }
-              : { ...item, answers: event.answers }
-            : item,
+      const resolved = patchTurn(model, event.threadId, event.turnId, (turn) =>
+        trackWait(
+          turn,
+          {
+            ...turn,
+            items: turn.items.map((item) =>
+              item.kind === "question" && item.requestId === event.requestId
+                ? event.answers === null
+                  ? { ...item, answers: null, dismissed: true }
+                  : { ...item, answers: event.answers }
+                : item,
+            ),
+          },
+          event.at,
         ),
-      }));
+      );
       return patchThread(resolved, event.threadId, event.at, {
         status: hasOpenRequest(resolved, event.threadId) ? "waiting" : "running",
       });
     }
 
     case "turn.finished": {
-      const finished = patchTurn(model, event.threadId, event.turnId, (turn) => ({
-        ...turn,
-        status: event.status,
-        endedAt: event.at,
-        checkpointAfter: event.checkpointAfter,
-        changedFiles: event.changedFiles,
-        usage: event.usage,
-        error: event.error,
-        ...(event.failure === undefined ? {} : { failure: event.failure }),
-        ...(event.nativeRef === undefined ? {} : { nativeRef: event.nativeRef }),
-        // Approvals and questions left open when a turn ends can never be answered.
-        items: turn.items.map((item) =>
-          isOpenRequest(item)
-            ? item.kind === "approval"
-              ? { ...item, decision: "deny" as const }
-              : { ...item, dismissed: true }
-            : item,
+      const finished = patchTurn(model, event.threadId, event.turnId, (turn) =>
+        trackWait(
+          turn,
+          {
+            ...turn,
+            status: event.status,
+            endedAt: event.at,
+            checkpointAfter: event.checkpointAfter,
+            changedFiles: event.changedFiles,
+            usage: event.usage,
+            error: event.error,
+            ...(event.failure === undefined ? {} : { failure: event.failure }),
+            ...(event.nativeRef === undefined ? {} : { nativeRef: event.nativeRef }),
+            // Approvals and questions left open when a turn ends can never be answered.
+            items: turn.items.map((item) =>
+              isOpenRequest(item)
+                ? item.kind === "approval"
+                  ? { ...item, decision: "deny" as const }
+                  : { ...item, dismissed: true }
+                : item,
+            ),
+          },
+          event.at,
         ),
-      }));
+      );
       const failover = finished.threads[event.threadId]?.failover;
       // The switch limit is per prompt: a completed turn starts a fresh budget.
       const resetSwitches =
@@ -578,6 +599,20 @@ function openRequestOnRunningTurn(
       item.requestId === event.requestId &&
       isOpenRequest(item),
   );
+}
+
+/**
+ * Keeps `waitedMs` (time spent on an approval or a question) in step with a change to a turn:
+ * the first open request starts a wait, the last one answered (or the turn ending) closes it.
+ */
+function trackWait(before: Turn, after: Turn, at: string): Turn {
+  const was = before.items.some(isOpenRequest);
+  const now = after.items.some(isOpenRequest);
+  if (was === now) return after;
+  if (now) return { ...after, waitingSince: at };
+  const since = Date.parse(before.waitingSince ?? "");
+  const waited = Number.isFinite(since) ? Math.max(0, Date.parse(at) - since) : 0;
+  return { ...after, waitedMs: (before.waitedMs ?? 0) + waited, waitingSince: null };
 }
 
 function hasOpenRequest(model: ReadModel, threadId: string): boolean {

@@ -270,6 +270,56 @@ export async function pickProjectFolder(): Promise<void> {
   }
 }
 
+const sameFolder = (a: string, b: string) =>
+  a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
+
+/**
+ * Asks for a folder on this machine with the same chooser as "Add project", registers it as a
+ * project and returns that project's id. Null when nothing was chosen or no chooser is available.
+ * Only this machine's own chooser is used, so a peer can never supply the path.
+ */
+export async function pickFolderAsProject(): Promise<string | null> {
+  const state = useStore.getState();
+  if (state.pickingFolder) return null;
+  useStore.setState({ pickingFolder: true });
+  try {
+    let path: string | null = null;
+    const bridge = desktopFolderPicker();
+    if (bridge) path = await bridge();
+    else {
+      const picked = await backend().call("fs.pickFolder", {
+        title: "Choose the folder for this project",
+      });
+      if (!picked.supported) {
+        useStore.setState({
+          notice:
+            "The folder chooser is not available here. Add the project from the sidebar first.",
+        });
+        return null;
+      }
+      path = picked.path ?? null;
+    }
+    if (!path) return null;
+    const existing = Object.values(useStore.getState().model.projects).find(
+      (project) => project.scratch !== true && sameFolder(project.root, path),
+    );
+    if (existing) return existing.id;
+    const ack = await dispatch({ type: "project.add", root: path });
+    if (!ack) return null;
+    const added = Object.values(useStore.getState().model.projects).find(
+      (project) => project.scratch !== true && sameFolder(project.root, path),
+    );
+    return added?.id ?? null;
+  } catch (error) {
+    useStore.setState({
+      notice: error instanceof Error ? error.message : "Could not open the folder chooser.",
+    });
+    return null;
+  } finally {
+    useStore.setState({ pickingFolder: false });
+  }
+}
+
 export function removeProject(projectId: string) {
   const project = useStore.getState().model.projects[projectId];
   confirm({

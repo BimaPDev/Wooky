@@ -5,6 +5,8 @@ import type { PeerDirectory } from "../remote/peers.ts";
 export interface SyncProject {
   id: string;
   root: string;
+  /** Shown to peers so they can match the project by name. */
+  name?: string | undefined;
   scratch?: boolean | undefined;
 }
 
@@ -23,6 +25,8 @@ export interface SyncDeps {
   turnRunning(projectId: string): boolean;
   peers: PeerDirectory;
   gitBin?: string;
+  /** Git facts of a project folder (remote, branch). Tests replace it. */
+  projectFacts?: (root: string) => Promise<import("../git/project-info.ts").ProjectGitFacts>;
   now?: () => Date;
   timers?: SyncTimers;
   fetch?: typeof fetch;
