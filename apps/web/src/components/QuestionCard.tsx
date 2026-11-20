@@ -117,7 +117,9 @@ function QuestionGroup({
   return (
     <fieldset className="question-group">
       <legend className="question-header">{group}</legend>
-      <p className="question-text">{question.question}</p>
+      {question.header && question.header !== question.question ? (
+        <p className="question-text">{question.question}</p>
+      ) : null}
       <div
         className="question-options"
         role={question.multiSelect ? "group" : "radiogroup"}

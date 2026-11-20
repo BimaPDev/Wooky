@@ -171,7 +171,11 @@ function FinishedTurn({
   const answer = turn.items.findLast(
     (item) => item.kind === "message" && item.role === "assistant",
   );
-  const steps = turn.items.filter((item) => visible(item) && item !== answer);
+  // A proposed plan is the point of a plan-mode turn: it stays in view, not behind the summary.
+  const plans = turn.items.filter((item) => item.kind === "plan");
+  const steps = turn.items.filter(
+    (item) => visible(item) && item !== answer && item.kind !== "plan",
+  );
   const running = useStore((state) => state.model.threads[turn.threadId]?.status === "running");
 
   return (
@@ -226,6 +230,9 @@ function FinishedTurn({
           ))}
         </div>
       ) : null}
+      {plans.map((item) => (
+        <TimelineEntry key={item.id} item={item} threadId={turn.threadId} readOnly={readOnly} />
+      ))}
       {answer && answer.kind === "message" ? <Markdown text={answer.text} /> : null}
       {turn.status === "failed" ? (
         <p className="turn-error" role="alert" title={turn.failure?.message || undefined}>
