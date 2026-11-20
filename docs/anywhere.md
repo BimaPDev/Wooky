@@ -161,16 +161,37 @@ Device-local keys never sync: binary paths, env, window state, sync settings the
   separate `replica_events` table keyed by (ownerDeviceId, seq) and folds them with the
   same reducer into `ReadModel.replicas`.
 - **Continue on this device**: `thread.claim` on the receiver. It asks the owner to
-  `thread.release` (rejected while a turn is running unless `force` after an interrupt),
-  then imports the thread as its own (a new local thread with the transcript as handoff
-  context, the same as a provider handoff) and links `movedFrom`. The owner's copy shows
-  "moved to <device>". Files arrive through file sync, which is required for claim.
+  `thread.release`, then imports the thread as its own (a new local thread with the
+  transcript as handoff context, the same as a provider handoff) and links `movedFrom`. The
+  owner's copy shows "moved to <device>" and refuses new turns. Files arrive through file
+  sync, which is required for claim.
+  - A running turn refuses the release. A claim with `force` first asks the owner to
+    interrupt the turn and sends the release again only once the turn ended, so the owner
+    never releases a thread with a turn still running.
+  - A release is bound to the authenticated device: a paired device can only release a thread
+    to itself, and only while it is a sync peer. `thread.claim` and `thread.import` are never
+    accepted from a paired device.
+  - The import is built from the replica before the release, is idempotent per claim id,
+    survives a crash after the owner released (a durable `claim_checkpoints` row), and always
+    lands at `approve` whatever the peer's runtime mode was. Imported history is validated
+    (schema, size caps, at most 500 turns); checkpoint refs, native session ids and unsafe
+    changed-file paths are cleared.
+  - Housekeeping (hourly): replica events of owners that are no longer peers, of threads that
+    now live here, were removed on the owner or sat idle for 90 days are dropped (the pull
+    cursor stays); claims that never reached the owner expire after an hour; a leftover release
+    marker expires after a day.
 - Host mode needs none of this: the client just views the host's environment.
 
 ### Settings and themes
 
-Last writer wins per top-level key, with `{value, updatedAt, deviceId}` stamps.
-Each accepted change is a snapshot (`settings` kind) so it can be reverted.
+Last writer wins per top-level key, with `{value, updatedAt, deviceId}` stamps. An equal time
+goes to the larger device id, so peers converge. Only an allowlist of appearance and behaviour
+keys travels; `hosting`, `sync`, `environments`, `deviceName`, `acpAgents` and a provider's
+`binaryPath`, `env` and `extraArgs` stay on the device that set them, and the receiver strips
+them again. A key edited locally is stamped the next time settings are exported, and a value
+applied from a peer keeps the peer's stamp, so it is never sent back as newer. Themes from a
+peer go through the normal theme validation and never overwrite a theme this device already has.
+Each accepted change is recorded so it can be reverted.
 
 ## One-command install
 
