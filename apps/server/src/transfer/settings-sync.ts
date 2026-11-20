@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import {
+  DeviceSettings,
+  ProviderKind,
   ProviderSettings,
   type AppearanceTheme,
-  type DeviceSettings,
   type DeviceSettingsPatch,
-  type ProviderKind,
 } from "@wooky/contracts";
 import type { ThemeStore } from "../settings/themes.ts";
 
@@ -15,17 +16,30 @@ const SYNC_DIR = "sync";
 const STAMPS_FILE = "settings-stamps.json";
 const HISTORY_FILE = "settings-history.jsonl";
 
-const LOCAL_TOP_LEVEL = new Set([
-  "hosting",
-  "sync",
-  "environments",
-  "deviceName",
+/** Only these top-level keys leave or enter this device. Everything else is device-local. */
+const SYNCED_KEYS: ReadonlySet<string> = new Set([
+  "activeThemeId",
+  "colorMode",
+  "appearanceContrast",
+  "glassOpacity",
+  "chatWidth",
+  "threadNotifications",
+  "inAppNotifications",
+  "projectGrouping",
+  "confirmDelete",
+  "confirmArchive",
+  "disabledProviders",
   "providers",
-] as const);
+  "followUp",
+  "importLocalHistory",
+  "wallpaperMotion",
+  "failover",
+  "favoriteModels",
+]);
 
 const PROVIDER_LOCAL = new Set(["binaryPath", "env", "extraArgs"] as const);
 
-export type SettingsStamp = { updatedAt: string; deviceId: string };
+export type SettingsStamp = { updatedAt: string; deviceId: string; hash?: string };
 
 export type SettingsStamps = Record<string, SettingsStamp>;
 
@@ -72,7 +86,7 @@ function appendHistory(home: string, entry: SettingsHistoryEntry): void {
 }
 
 function isLocalKey(key: string): boolean {
-  return LOCAL_TOP_LEVEL.has(key as typeof LOCAL_TOP_LEVEL extends Set<infer T> ? T : never);
+  return !SYNCED_KEYS.has(key);
 }
 
 function exportSyncableValues(settings: DeviceSettings): Record<string, unknown> {
@@ -95,30 +109,85 @@ function exportSyncableValues(settings: DeviceSettings): Record<string, unknown>
   return out;
 }
 
+const SharedProviderFields = ProviderSettings.pick({
+  customModels: true,
+  defaultModel: true,
+}).partial();
+
+/** Takes the shareable provider fields from the peer and keeps every device-local one. */
 function mergeProviderPatch(
   current: DeviceSettings["providers"],
-  incoming: DeviceSettings["providers"],
-): DeviceSettings["providers"] {
+  incoming: unknown,
+): DeviceSettings["providers"] | null {
+  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) return null;
   const next = { ...current };
-  for (const [kind, patch] of Object.entries(incoming) as [ProviderKind, ProviderSettings][]) {
-    if (!patch) continue;
-    const prev = next[kind] ?? ProviderSettings.parse({});
-    const merged: ProviderSettings = { ...prev, ...patch };
+  for (const [kind, raw] of Object.entries(incoming)) {
+    if (!ProviderKind.safeParse(kind).success) continue;
+    const shared = SharedProviderFields.safeParse(raw);
+    if (!shared.success) continue;
+    const patch = shared.data;
+    const prev = next[kind as ProviderKind] ?? ProviderSettings.parse({});
+    const merged: ProviderSettings = {
+      customModels: patch.customModels ?? prev.customModels,
+      extraArgs: prev.extraArgs,
+      env: prev.env,
+    };
     if (prev.binaryPath !== undefined) merged.binaryPath = prev.binaryPath;
-    if (prev.env !== undefined) merged.env = prev.env;
-    if (prev.extraArgs !== undefined) merged.extraArgs = prev.extraArgs;
-    next[kind] = merged;
+    if (patch.defaultModel !== undefined) merged.defaultModel = patch.defaultModel;
+    next[kind as ProviderKind] = merged;
   }
   return next;
 }
 
+function valueHash(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(value ?? null))
+    .digest("hex");
+}
+
+/**
+ * Stamps keys edited on this device since the last look, so a local edit wins over an older
+ * remote value. A key with no stamp and a default value was never edited.
+ */
+function refreshStamps(home: string, deviceId: string, settings: DeviceSettings, now: string) {
+  const stamps = readStamps(home);
+  const shared = exportSyncableValues(settings);
+  const defaults = exportSyncableValues(DeviceSettings.parse({}));
+  let changed = false;
+  for (const [key, value] of Object.entries(shared)) {
+    const hash = valueHash(value);
+    const stamp = stamps[key];
+    if (stamp?.hash === hash) continue;
+    if (!stamp && hash === valueHash(defaults[key])) continue;
+    if (stamp && stamp.hash === undefined) {
+      stamps[key] = { ...stamp, hash };
+      changed = true;
+      continue;
+    }
+    stamps[key] = { updatedAt: now, deviceId, hash };
+    changed = true;
+  }
+  if (changed) writeStamps(home, stamps);
+}
+
+/** Remote wins on a later time. An equal time goes to the larger device id so peers converge. */
+function isNewer(remote: SettingsStamp, local: SettingsStamp | undefined): boolean {
+  if (!local) return true;
+  if (remote.updatedAt !== local.updatedAt) return remote.updatedAt > local.updatedAt;
+  return remote.deviceId > local.deviceId;
+}
+
 export function exportSettingsForSync(
   home: string,
-  _deviceId: string,
+  deviceId: string,
   settings: DeviceSettings,
-  _now: string,
+  now: string,
 ): { values: Record<string, unknown>; stamps: SettingsStamps } {
-  const stamps = readStamps(home);
+  refreshStamps(home, deviceId, settings, now);
+  const stamps: SettingsStamps = {};
+  for (const [key, stamp] of Object.entries(readStamps(home))) {
+    if (!isLocalKey(key)) stamps[key] = { updatedAt: stamp.updatedAt, deviceId: stamp.deviceId };
+  }
   return { values: exportSyncableValues(settings), stamps };
 }
 
@@ -129,6 +198,16 @@ export function touchLocalSetting(home: string, deviceId: string, key: string, n
   writeStamps(home, stamps);
 }
 
+const SyncStampShape = z.object({
+  updatedAt: z.string().min(1).max(40),
+  deviceId: z.string().min(1),
+});
+
+/**
+ * Applies what a peer sent. Device-local keys, unknown keys, keys without a stamp and
+ * values that fail validation are dropped. The peer's stamp is kept as is, so the same
+ * value never looks newer when it is exported back.
+ */
 export function applyRemoteSettings(
   home: string,
   localDeviceId: string,
@@ -138,39 +217,58 @@ export function applyRemoteSettings(
   newId: (prefix: string) => string,
   now: string,
 ): boolean {
+  refreshStamps(home, localDeviceId, themes.getSettings(), now);
   const stamps = readStamps(home);
   const current = themes.getSettings();
   const patchParts: Record<string, unknown> = {};
-  let changed = false;
+  const applied: Array<{ key: string; stamp: SettingsStamp }> = [];
 
   for (const [key, value] of Object.entries(remoteValues)) {
     if (isLocalKey(key)) continue;
-    const remoteStamp = remoteStamps[key];
-    if (!remoteStamp) continue;
-    const localStamp = stamps[key];
-    if (localStamp && localStamp.updatedAt >= remoteStamp.updatedAt) continue;
-    const previous = (current as Record<string, unknown>)[key];
+    const remoteStamp = SyncStampShape.safeParse(remoteStamps[key]);
+    if (!remoteStamp.success) continue;
+    if (!isNewer(remoteStamp.data, stamps[key])) continue;
+    let accepted: unknown;
+    if (key === "providers") {
+      const merged = mergeProviderPatch(current.providers, value);
+      if (!merged) continue;
+      accepted = merged;
+    } else {
+      const shape = (DeviceSettings.shape as Record<string, z.ZodType>)[key];
+      const parsed = shape?.safeParse(value);
+      if (!parsed?.success) continue;
+      accepted = parsed.data;
+    }
+    if (valueHash(accepted) === valueHash((current as Record<string, unknown>)[key])) {
+      stamps[key] = { ...remoteStamp.data, hash: valueHash(exportSyncableValues(current)[key]) };
+      continue;
+    }
     appendHistory(home, {
       id: newId("settings"),
       key,
-      previous,
+      previous: (current as Record<string, unknown>)[key],
       at: now,
-      deviceId: remoteStamp.deviceId,
+      deviceId: remoteStamp.data.deviceId,
     });
-    if (key === "providers" && value && typeof value === "object") {
-      patchParts.providers = mergeProviderPatch(
-        current.providers,
-        value as DeviceSettings["providers"],
-      );
-    } else {
-      patchParts[key] = value;
-    }
-    stamps[key] = remoteStamp;
-    changed = true;
+    patchParts[key] = accepted;
+    applied.push({ key, stamp: remoteStamp.data });
   }
-  if (!changed) return false;
+  if (applied.length === 0) {
+    writeStamps(home, stamps);
+    return false;
+  }
+  let saved: DeviceSettings;
+  try {
+    saved = themes.putSettings(patchParts as DeviceSettingsPatch);
+  } catch {
+    writeStamps(home, stamps);
+    return false;
+  }
+  const projection = exportSyncableValues(saved);
+  for (const { key, stamp } of applied) {
+    stamps[key] = { ...stamp, hash: valueHash(projection[key]) };
+  }
   writeStamps(home, stamps);
-  themes.putSettings(patchParts as DeviceSettingsPatch);
   return true;
 }
 

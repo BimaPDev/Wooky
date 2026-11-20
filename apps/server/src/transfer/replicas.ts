@@ -1,7 +1,14 @@
-import type { AgeEvent, DeviceSettings, ReplicaModel, SyncStatus } from "@wooky/contracts";
+import { z } from "zod";
+import {
+  AgeEvent,
+  type DeviceSettings,
+  type ReplicaModel,
+  type SyncStatus,
+} from "@wooky/contracts";
 import { applyReplicaEvents, emptyReplicaModel } from "@wooky/domain";
 import type { EventStore } from "../store/event-store.ts";
 import type { PeerDirectory } from "../remote/peers.ts";
+import { fetchPeerJson } from "./peer-fetch.ts";
 
 const BATCH = 2_000;
 
@@ -9,9 +16,34 @@ function replicaEventTypes(type: string): boolean {
   return type.startsWith("thread.") || type.startsWith("turn.");
 }
 
+const ThreadBatch = z.object({
+  events: z.array(z.unknown()).max(BATCH),
+  nextSince: z.number().int().nonnegative(),
+});
+
+/**
+ * A peer only owns thread and turn events, in increasing seq order after `since`.
+ * Anything else, or anything that does not decode, is dropped.
+ */
+export function acceptReplicaEvents(raw: readonly unknown[], since: number): AgeEvent[] {
+  const accepted: AgeEvent[] = [];
+  let last = since;
+  for (const item of raw) {
+    const parsed = AgeEvent.safeParse(item);
+    if (!parsed.success) continue;
+    const event = parsed.data;
+    if (!replicaEventTypes(event.type) || event.seq <= last) continue;
+    last = event.seq;
+    accepted.push(event);
+  }
+  return accepted;
+}
+
 export interface ReplicaService {
   readonly model: ReplicaModel;
   foldOwner(ownerDeviceId: string): void;
+  /** Drops an owner's in-memory slice. Call after pruning its stored events, then foldOwner. */
+  forget(ownerDeviceId: string): void;
   pullNow(projectId?: string): Promise<void>;
   pullAll(): Promise<void>;
   ownerBatch(
@@ -51,15 +83,16 @@ export function createReplicaService(deps: {
     if (!settings.sync.enabled || !settings.sync.categories.threads) return;
     let since = deps.store.replicaHighWater(ownerDeviceId);
     for (;;) {
-      const url = new URL("/sync/threads", peer.baseUrl);
-      url.searchParams.set("since", String(since));
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${peer.token}` },
-      });
-      if (!response.ok) return;
-      const body = (await response.json()) as { events: AgeEvent[]; nextSince: number };
-      if (body.events.length === 0) break;
-      deps.store.appendReplicaEvents(ownerDeviceId, body.events);
+      const body = await fetchPeerJson(
+        peer,
+        "/sync/threads",
+        { since: String(since) },
+        ThreadBatch,
+      );
+      if (!body || body.events.length === 0) break;
+      deps.store.appendReplicaEvents(ownerDeviceId, acceptReplicaEvents(body.events, since));
+      // A batch that does not move the cursor would loop forever.
+      if (body.nextSince <= since) break;
       since = body.nextSince;
       foldOwner(ownerDeviceId);
       if (body.events.length < BATCH) break;
@@ -69,7 +102,9 @@ export function createReplicaService(deps: {
   const pullAllPeers = async () => {
     const settings = deps.settings();
     if (!settings.sync.enabled || !settings.sync.categories.threads) return;
-    await Promise.all(settings.sync.peers.map((id) => pullPeer(id)));
+    const results = await Promise.allSettled(settings.sync.peers.map((id) => pullPeer(id)));
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) throw failed.reason;
   };
 
   return {
@@ -77,6 +112,10 @@ export function createReplicaService(deps: {
       return model;
     },
     foldOwner,
+    forget(ownerDeviceId) {
+      const { [ownerDeviceId]: _gone, ...rest } = model.replicas;
+      model = { ...model, replicas: rest };
+    },
     syncStatus() {
       const settings = deps.settings();
       return {
@@ -115,7 +154,7 @@ export function createReplicaService(deps: {
       for (const ownerId of settings.sync.peers) foldOwner(ownerId);
       if (timer) return;
       timer = setInterval(() => {
-        void pullAllPeers();
+        pullAllPeers().catch((error) => console.error("Thread sync failed", error));
       }, settings.sync.intervalSec * 1000);
       timer.unref?.();
     },

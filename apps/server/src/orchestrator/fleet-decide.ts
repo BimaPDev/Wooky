@@ -368,6 +368,12 @@ function beginTurn(
   ctx: DecideContext,
   fromQueueId?: string,
 ): { ok: true; events: Draft[]; effects: Effect[] } | PartialDecision {
+  if (thread.movedTo)
+    return {
+      ok: false,
+      code: "conflict",
+      message: `This thread moved to ${thread.movedTo.deviceId}.`,
+    };
   const turnId = ctx.newId("turn");
   const events: Draft[] = [];
   const firstTurn = (model.turns[thread.id] ?? []).length === 0;

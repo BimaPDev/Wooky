@@ -52,11 +52,32 @@ async function pairServers(
   return { deviceA: joinedA.host.deviceId, deviceB: joinedB.host.deviceId };
 }
 
-async function waitThreadIdle(serverUrl: string, threadId: string): Promise<void> {
+async function waitThreadIdle(
+  serverUrl: string,
+  threadId: string,
+  options: { approve?: boolean } = {},
+): Promise<void> {
   const deadline = Date.now() + 15_000;
+  const answered = new Set<string>();
   while (Date.now() < deadline) {
     const snap = await rpcCall(serverUrl, "snapshot", {});
     if (snap.threads[threadId]?.status === "idle") return;
+    if (options.approve) {
+      for (const turn of snap.turns[threadId] ?? []) {
+        for (const item of turn.items) {
+          if (item.kind !== "approval" || item.decision !== null) continue;
+          if (answered.has(item.requestId)) continue;
+          answered.add(item.requestId);
+          await rpcCall(serverUrl, "dispatch", {
+            commandId: `approve-${item.requestId}`,
+            type: "approval.respond",
+            threadId,
+            requestId: item.requestId,
+            decision: "allow",
+          });
+        }
+      }
+    }
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
   throw new Error("timed out waiting for the thread to become idle");
@@ -194,7 +215,8 @@ describe("transfer journey", () => {
       threadId: importedId,
       prompt: "Continue here",
     });
-    await waitThreadIdle(serverB.url, importedId);
+    await waitThreadIdle(serverB.url, importedId, { approve: true });
+    expect(imported?.runtimeMode).toBe("approve");
     expect(demoB.inputs.some((input) => input.handoffContext?.includes("First"))).toBe(true);
 
     await expect(

@@ -131,6 +131,18 @@ describe("held setup notices", () => {
       replicaHighWater() {
         return 0;
       },
+      replicaOwners() {
+        return [];
+      },
+      dropReplicaOwner() {
+        return 0;
+      },
+      dropReplicaThreads() {
+        return 0;
+      },
+      claimCheckpoints() {
+        return [];
+      },
       markClaimReleased() {},
       isClaimReleased() {
         return false;

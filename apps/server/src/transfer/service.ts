@@ -1,4 +1,5 @@
-import type { PendingEvent, SyncPush } from "@wooky/contracts";
+import { z } from "zod";
+import { AppearanceTheme, type PendingEvent, type SyncPush } from "@wooky/contracts";
 import type { Effect } from "../orchestrator/effects.ts";
 import type { EventStore } from "../store/event-store.ts";
 import type { ThemeStore } from "../settings/themes.ts";
@@ -9,12 +10,35 @@ import type { AuthenticateRequest } from "../remote/auth.ts";
 import type { PeerDirectory } from "../remote/peers.ts";
 import type { SyncNow } from "./types.ts";
 import { applyRemoteSettings } from "./settings-sync.ts";
+import { fetchPeerJson } from "./peer-fetch.ts";
+
+const HOUR_MS = 3_600_000;
+/** A claim that never reached the owner is given up after this long. */
+export const CLAIM_TTL_MS = HOUR_MS;
+/** A leftover release marker with no pending claim is dropped after this long. */
+export const CHECKPOINT_TTL_MS = 24 * HOUR_MS;
+/** An idle replicated thread nobody touched for this long is forgotten. */
+export const REPLICA_KEEP_MS = 90 * 24 * HOUR_MS;
+
+const SettingsBody = z.object({
+  values: z.record(z.string(), z.unknown()),
+  stamps: z.record(z.string(), z.object({ updatedAt: z.string().max(40), deviceId: z.string() })),
+});
+const ThemesBody = z.object({
+  themes: z.array(z.object({ theme: z.unknown() })).max(200),
+});
+const SETTINGS_BODY_BYTES = 1024 * 1024;
+const THEMES_BODY_BYTES = 64 * 1024 * 1024;
 
 export interface TransferService {
   replicas: ReplicaService;
   runClaimThread(effect: Extract<Effect, { kind: "claimThread" }>): Promise<void>;
   recoverClaims(): void;
   pullSettingsAndThemes(): Promise<void>;
+  /** Prunes replica events and stale claims. Safe to call at any time. */
+  housekeeping(): void;
+  start(): void;
+  stop(): void;
 }
 
 export function createTransferService(deps: {
@@ -32,6 +56,9 @@ export function createTransferService(deps: {
   now: () => string;
   hasProvider: (kind: ProviderKind) => boolean;
   broadcastSync(push: SyncPush): void;
+  /** Test seams for the force-release wait. */
+  releaseAttempts?: number;
+  sleep?: (ms: number) => Promise<void>;
 }): TransferService {
   const failClaim = (claimId: string, reason: string) => {
     deps.store.clearClaimReleased(claimId);
@@ -67,39 +94,39 @@ export function createTransferService(deps: {
       if (!peer) continue;
       if (settings.sync.categories.settings) {
         try {
-          const response = await fetch(new URL("/sync/settings", peer.baseUrl), {
-            headers: { Authorization: `Bearer ${peer.token}` },
-          });
-          if (!response.ok) continue;
-          const body = (await response.json()) as {
-            values: Record<string, unknown>;
-            stamps: Record<string, { updatedAt: string; deviceId: string }>;
-          };
-          applyRemoteSettings(
-            deps.home,
-            deps.deviceId,
-            deps.themes,
-            body.values,
-            body.stamps,
-            deps.newId,
-            deps.now(),
+          const body = await fetchPeerJson(
+            peer,
+            "/sync/settings",
+            {},
+            SettingsBody,
+            SETTINGS_BODY_BYTES,
           );
+          if (body)
+            applyRemoteSettings(
+              deps.home,
+              deps.deviceId,
+              deps.themes,
+              body.values,
+              body.stamps,
+              deps.newId,
+              deps.now(),
+            );
         } catch (error) {
           console.error("Settings sync failed", error);
         }
       }
       if (settings.sync.categories.themes) {
         try {
-          const response = await fetch(new URL("/sync/themes", peer.baseUrl), {
-            headers: { Authorization: `Bearer ${peer.token}` },
-          });
-          if (!response.ok) continue;
-          const body = (await response.json()) as { themes: Array<{ theme: unknown }> };
-          for (const row of body.themes) {
+          const body = await fetchPeerJson(peer, "/sync/themes", {}, ThemesBody, THEMES_BODY_BYTES);
+          for (const row of body?.themes ?? []) {
+            const theme = AppearanceTheme.safeParse(row.theme);
+            if (!theme.success) continue;
+            // A theme this device already has is kept as is: a peer never overwrites local edits.
+            if (hasTheme(theme.data.id)) continue;
             try {
-              deps.themes.put(row.theme as Parameters<typeof deps.themes.put>[0]);
+              deps.themes.put(theme.data);
             } catch {
-              // skip invalid themes
+              // put runs the CSS and SVG safety checks; a theme that fails them is skipped
             }
           }
         } catch (error) {
@@ -109,7 +136,27 @@ export function createTransferService(deps: {
     }
   }
 
-  async function runClaimThread(effect: Extract<Effect, { kind: "claimThread" }>): Promise<void> {
+  function hasTheme(id: string): boolean {
+    try {
+      deps.themes.get(id);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const inflight = new Map<string, Promise<void>>();
+
+  /** The effect runner and startup recovery can both ask for the same claim; it runs once. */
+  function runClaimThread(effect: Extract<Effect, { kind: "claimThread" }>): Promise<void> {
+    const running = inflight.get(effect.claimId);
+    if (running) return running;
+    const run = runClaimOnce(effect).finally(() => inflight.delete(effect.claimId));
+    inflight.set(effect.claimId, run);
+    return run;
+  }
+
+  async function runClaimOnce(effect: Extract<Effect, { kind: "claimThread" }>): Promise<void> {
     if (!deps.store.model.pendingClaims?.[effect.claimId]) return;
     replicas.foldOwner(effect.ownerDeviceId);
     try {
@@ -145,6 +192,8 @@ export function createTransferService(deps: {
       importThread: (event) => {
         deps.store.appendInternal([event]);
       },
+      ...(deps.releaseAttempts !== undefined ? { releaseAttempts: deps.releaseAttempts } : {}),
+      ...(deps.sleep ? { sleep: deps.sleep } : {}),
       hasProvider: (kind) => deps.hasProvider(kind as ProviderKind),
       defaultProvider: { provider: "demo", model: "demo" },
     });
@@ -169,5 +218,82 @@ export function createTransferService(deps: {
     }
   }
 
-  return { replicas, runClaimThread, recoverClaims, pullSettingsAndThemes };
+  function housekeeping(): void {
+    const now = Date.parse(deps.now());
+    const pending = deps.store.model.pendingClaims ?? {};
+    for (const claim of Object.values(pending)) {
+      if (inflight.has(claim.claimId) || deps.store.isClaimReleased(claim.claimId)) continue;
+      if (now - Date.parse(claim.at) > CLAIM_TTL_MS)
+        failClaim(claim.claimId, "The claim timed out.");
+    }
+    for (const checkpoint of deps.store.claimCheckpoints()) {
+      if (deps.store.model.pendingClaims?.[checkpoint.claimId]) continue;
+      if (now - Date.parse(checkpoint.releasedAt) > CHECKPOINT_TTL_MS)
+        deps.store.clearClaimReleased(checkpoint.claimId);
+    }
+
+    const peers = new Set(deps.themes.getSettings().sync.peers);
+    for (const owner of deps.store.replicaOwners()) {
+      if (peers.has(owner)) continue;
+      deps.store.dropReplicaOwner(owner);
+      replicas.forget(owner);
+    }
+
+    const local = Object.values(deps.store.model.threads);
+    const claiming = new Set(
+      Object.values(deps.store.model.pendingClaims ?? {}).map(
+        (claim) => `${claim.ownerDeviceId}/${claim.ownerThreadId}`,
+      ),
+    );
+    for (const [owner, slice] of Object.entries(replicas.model.replicas)) {
+      const drop = new Set<string>();
+      for (const thread of Object.values(slice.threads)) {
+        if (claiming.has(`${owner}/${thread.id}`)) continue;
+        const imported = local.some(
+          (item) => item.movedFrom?.deviceId === owner && item.movedFrom.threadId === thread.id,
+        );
+        const stale =
+          thread.status === "idle" && now - Date.parse(thread.updatedAt) > REPLICA_KEEP_MS;
+        if (imported || stale) drop.add(thread.id);
+      }
+      for (const event of deps.store.replicaEventsAfter(owner, 0)) {
+        if (event.type === "thread.removed") drop.add(event.threadId);
+      }
+      if (drop.size === 0) continue;
+      deps.store.dropReplicaThreads(owner, [...drop]);
+      replicas.forget(owner);
+      replicas.foldOwner(owner);
+    }
+  }
+
+  const timers: Array<ReturnType<typeof setInterval>> = [];
+  function start(): void {
+    replicas.start();
+    housekeeping();
+    const settingsTimer = setInterval(
+      () => {
+        pullSettingsAndThemes().catch((error) => console.error("Settings sync failed", error));
+      },
+      Math.max(5, deps.themes.getSettings().sync.intervalSec) * 1000,
+    );
+    const housekeepingTimer = setInterval(housekeeping, HOUR_MS);
+    for (const timer of [settingsTimer, housekeepingTimer]) {
+      timer.unref?.();
+      timers.push(timer);
+    }
+  }
+  function stop(): void {
+    replicas.stop();
+    for (const timer of timers.splice(0)) clearInterval(timer);
+  }
+
+  return {
+    replicas,
+    runClaimThread,
+    recoverClaims,
+    pullSettingsAndThemes,
+    housekeeping,
+    start,
+    stop,
+  };
 }

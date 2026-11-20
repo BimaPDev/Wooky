@@ -137,7 +137,7 @@ describe("anywhere decide", () => {
     expect(decision.ok).toBe(false);
   });
 
-  it("releases with force and interrupts", () => {
+  it("force on a running thread only interrupts; the release lands after the turn ended", () => {
     const model = modelWithThread("running");
     const turn = activeTurn(model, "t1");
     const decision = decide(
@@ -153,7 +153,27 @@ describe("anywhere decide", () => {
     );
     expect(decision.ok).toBe(true);
     if (!decision.ok) return;
-    expect(decision.events[0]?.type).toBe("thread.released");
+    expect(decision.events).toEqual([]);
     expect(decision.effects[0]).toMatchObject({ kind: "turn.interrupt", turnId: turn?.id });
+  });
+
+  it("releases an idle thread, with or without force", () => {
+    for (const force of [false, true]) {
+      const decision = decide(
+        modelWithThread("idle"),
+        {
+          commandId: `rel-${force}`,
+          type: "thread.release",
+          threadId: "t1",
+          toDeviceId: "peer-b",
+          ...(force ? { force } : {}),
+        },
+        testContext(),
+      );
+      expect(decision.ok).toBe(true);
+      if (!decision.ok) return;
+      expect(decision.events.map((event) => event.type)).toEqual(["thread.released"]);
+      expect(decision.effects).toEqual([]);
+    }
   });
 });

@@ -22,6 +22,7 @@ import {
   shouldSwitchBack,
   threadsSharingWorkspace,
 } from "@wooky/domain";
+import { importTitle, validateHistoryTurns } from "../transfer/history-validation.ts";
 import { cooledDownIfNeeded, expiredCooldownClears } from "../failover/cooldown.ts";
 import {
   decideFanoutPick,
@@ -498,6 +499,7 @@ function beginTurn(
   fromQueueId?: string,
   origin?: TurnOrigin,
 ): { ok: true; events: Draft[]; effects: Effect[] } | Rejection {
+  if (thread.movedTo) return reject("conflict", `This thread moved to ${thread.movedTo.deviceId}.`);
   if ((thread.interactionMode ?? "default") === "plan" && !supportsPlan(ctx, thread.provider))
     return reject("bad_request", "This provider does not support plan mode.");
   const turnId = ctx.newId("turn");
@@ -689,11 +691,8 @@ function releaseThread(model: ReadModel, command: CommandOf<"thread.release">): 
       return reject("conflict", "Stop the running turn before releasing this thread.");
     const turn = activeTurn(model, thread.id);
     if (!turn) return reject("conflict", "No turn is running.");
-    return accept(
-      command,
-      [{ type: "thread.released", threadId: thread.id, toDeviceId: command.toDeviceId }],
-      [{ kind: "turn.interrupt", threadId: thread.id, turnId: turn.id }],
-    );
+    // Force only stops the turn. The release is a second command, accepted once the turn ended.
+    return accept(command, [], [{ kind: "turn.interrupt", threadId: thread.id, turnId: turn.id }]);
   }
   return accept(command, [
     { type: "thread.released", threadId: thread.id, toDeviceId: command.toDeviceId },
@@ -727,7 +726,7 @@ function importThread(
       thread: {
         id: threadId,
         projectId: project.id,
-        title: command.title,
+        title: importTitle(command.title),
         provider,
         model: modelName,
         runtimeMode: "approve",
@@ -745,7 +744,7 @@ function importThread(
       sourceDeviceId: command.sourceDeviceId,
       sourceThreadId: command.sourceThreadId,
       transcript: command.transcript,
-      historyTurns: command.historyTurns ?? [],
+      historyTurns: validateHistoryTurns(command.historyTurns ?? []),
       ...(claimId ? { claimId } : {}),
     },
   ]);

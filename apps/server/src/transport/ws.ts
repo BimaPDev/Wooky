@@ -14,6 +14,7 @@ import {
 } from "@wooky/contracts";
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
+import { guardTransferCommand } from "../transfer/guard.ts";
 import { presentedToken, selectWebSocketProtocol } from "../remote/auth.ts";
 import type { RemoteRuntime } from "../remote/runtime.ts";
 import type { AttachmentStore } from "../attachments.ts";
@@ -59,6 +60,8 @@ interface Services {
 const MAX_AGENT_WAITS_PER_CONNECTION = 8;
 
 interface Connection {
+  /** The authenticated device: a paired device id, or "local" for an unpaired local client. */
+  readonly deviceId: string;
   readonly remoteAddress: string | undefined;
   /**
    * True only for an unpaired client on this machine: loopback, no proxy headers, not the
@@ -121,7 +124,10 @@ function createHandlers(
   folderPicker: FolderPicker,
 ): Handlers {
   return {
-    dispatch: (command) => dispatcher.dispatch(command),
+    dispatch: (command, conn) => {
+      guardTransferCommand(command, conn, themes.getSettings());
+      return dispatcher.dispatch(command);
+    },
     snapshot: () => store.model,
     subscribe: ({ fromSeq }, conn) => ({ replayed: conn.follow(fromSeq) }),
     "providers.list": () => providers.list(),
@@ -364,17 +370,23 @@ export function attachWebSocket(
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       services.remote.track(auth.deviceId, ws);
-      serve(ws, remoteAddress, !tokenProvesIntent);
+      serve(ws, auth.deviceId, remoteAddress, !tokenProvesIntent);
     });
   }
 
-  function serve(ws: WebSocket, remoteAddress: string | undefined, local: boolean) {
+  function serve(
+    ws: WebSocket,
+    deviceId: string,
+    remoteAddress: string | undefined,
+    local: boolean,
+  ) {
     let unsubscribe: (() => void) | null = null;
     let lastSeq = 0;
     const abort = new AbortController();
     let agentWaits = 0;
 
     const conn: Connection = {
+      deviceId,
       remoteAddress,
       local,
       abort,

@@ -81,11 +81,11 @@ export interface ServerOptions {
   now?: () => number;
   /** Test seam. Production uses the socket's remote address. */
   remoteAddress?: (req: IncomingMessage) => string | undefined;
-  /** Test seams for Anywhere transfer (A2 syncNow seam until A2 lands on main). */
+  /** File sync before a claim. Until the A2 sync engine lands on main this is a no-op. */
   transfer?: {
-    peers?: import("./remote/peers.ts").PeerDirectory;
-    authenticate?: import("./remote/auth.ts").AuthenticateRequest;
     syncNow?: import("./transfer/types.ts").SyncNow;
+    releaseAttempts?: number;
+    sleep?: (ms: number) => Promise<void>;
   };
 }
 
@@ -157,8 +157,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     ...(options.tailscale ? { tailscale: options.tailscale } : {}),
   });
   const deviceId = remote.device.id();
-  const authenticate = options.transfer?.authenticate ?? remote.authenticateRequest;
-  const peers = options.transfer?.peers ?? remote.peers;
+  const authenticate = remote.authenticateRequest;
+  const peers = remote.peers;
   const terminals = createTerminalManager();
   let dispatchCommand: (command: Command) => ReturnType<Dispatcher["dispatch"]> = () => {
     throw new Error("dispatcher not ready");
@@ -172,6 +172,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     peers,
     authenticate,
     syncNow: options.transfer?.syncNow ?? noopSyncNow,
+    ...(options.transfer?.releaseAttempts !== undefined
+      ? { releaseAttempts: options.transfer.releaseAttempts }
+      : {}),
+    ...(options.transfer?.sleep ? { sleep: options.transfer.sleep } : {}),
     dispatch: (command) => dispatchCommand(command),
     newId: ctx.newId,
     now: ctx.now,
@@ -205,7 +209,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   dispatchCommand = (command) => dispatcher.dispatch(command);
   runner.recover();
-  transfer.replicas.start();
+  transfer.start();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
   const agentTokens = createAgentTokenService();
   const fleet = createFleetService({ store, dispatcher, git, tokens: agentTokens });
@@ -265,7 +269,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
     stopShipPolling();
-    transfer.replicas.stop();
+    transfer.stop();
     sockets.close();
     remote.closeTunnels();
     await remote.closeServers();
@@ -302,7 +306,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         for (const http of httpServers) http.closeAllConnections();
         await stopped;
         await history.close();
-        transfer.replicas.stop();
+        transfer.stop();
         closeStore();
       })();
       return closing;
