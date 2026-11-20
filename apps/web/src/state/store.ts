@@ -37,7 +37,7 @@ export interface ChangesPanel {
 }
 
 export type SettingsPage =
-  "general" | "appearance" | "usage" | "providers" | "failover" | "projects" | "about";
+  "general" | "appearance" | "usage" | "providers" | "failover" | "anywhere" | "projects" | "about";
 
 export interface AppState {
   model: ReadModel;

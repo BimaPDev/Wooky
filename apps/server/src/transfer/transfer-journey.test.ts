@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,18 +8,11 @@ import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import type { ProviderAdapter } from "../providers/types.ts";
 import { startServer, type RunningServer } from "../server.ts";
 import { createFakeGit } from "../testing.ts";
-import type { PeerDirectory } from "./types.ts";
-import { tokenAsDeviceAuth } from "./types.ts";
 
 const servers: RunningServer[] = [];
 afterEach(async () => {
   for (const server of servers.splice(0)) await server.close();
 });
-
-function deviceId(home: string): string {
-  return (JSON.parse(readFileSync(join(home, "device.json"), "utf8")) as { deviceId: string })
-    .deviceId;
-}
 
 function captureDemo(stepMs = 0): { adapter: ProviderAdapter; inputs: TurnInput[] } {
   const inputs: TurnInput[] = [];
@@ -37,6 +29,25 @@ function captureDemo(stepMs = 0): { adapter: ProviderAdapter; inputs: TurnInput[
 
 async function tempRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "wooky-transfer-"));
+}
+
+async function pairServers(
+  a: RunningServer,
+  b: RunningServer,
+): Promise<{ deviceA: string; deviceB: string }> {
+  const codeA = await rpcCall(a.url, "remote.pairingCode.create", {});
+  const joinedA = await rpcCall(b.url, "remote.join", {
+    connection: { kind: "direct", url: a.url },
+    code: codeA.code,
+    label: "Device A",
+  });
+  const codeB = await rpcCall(b.url, "remote.pairingCode.create", {});
+  const joinedB = await rpcCall(a.url, "remote.join", {
+    connection: { kind: "direct", url: b.url },
+    code: codeB.code,
+    label: "Device B",
+  });
+  return { deviceA: joinedA.host.deviceId, deviceB: joinedB.host.deviceId };
 }
 
 async function waitThreadIdle(serverUrl: string, threadId: string): Promise<void> {
@@ -56,65 +67,28 @@ describe("transfer journey", () => {
     const homeA = await tempRoot();
     const homeB = await tempRoot();
 
-    const tokens = new Map<string, string>();
-    const auth = tokenAsDeviceAuth(tokens);
-    const links = { aUrl: "", bUrl: "", deviceA: "", deviceB: "" };
-
-    const peersForA: PeerDirectory = {
-      list: () =>
-        links.bUrl
-          ? [
-              {
-                deviceId: links.deviceB,
-                name: "B",
-                baseUrl: links.bUrl,
-                token: "token-a",
-              },
-            ]
-          : [],
-      get: (id) => peersForA.list().find((peer) => peer.deviceId === id),
-    };
-    const peersForB: PeerDirectory = {
-      list: () =>
-        links.aUrl
-          ? [
-              {
-                deviceId: links.deviceA,
-                name: "A",
-                baseUrl: links.aUrl,
-                token: "token-b",
-              },
-            ]
-          : [],
-      get: (id) => peersForB.list().find((peer) => peer.deviceId === id),
-    };
-
     const serverA = await startServer({
       home: homeA,
       host: "127.0.0.1",
       port: 0,
+      portExplicit: true,
       adapters: [createDemoAdapter({ stepMs: 0 })],
       git: createFakeGit().git,
-      transfer: { authenticate: auth, peers: peersForA },
     });
     servers.push(serverA);
-    links.aUrl = serverA.url;
-    links.deviceA = deviceId(homeA);
-    tokens.set("token-a", links.deviceA);
 
     const demoB = captureDemo(0);
     const serverB = await startServer({
       home: homeB,
       host: "127.0.0.1",
       port: 0,
+      portExplicit: true,
       adapters: [demoB.adapter],
       git: createFakeGit().git,
-      transfer: { authenticate: auth, peers: peersForB },
     });
     servers.push(serverB);
-    links.bUrl = serverB.url;
-    links.deviceB = deviceId(homeB);
-    tokens.set("token-b", links.deviceB);
+
+    const { deviceA, deviceB } = await pairServers(serverA, serverB);
 
     const syncBody = {
       enabled: true,
@@ -128,10 +102,10 @@ describe("transfer journey", () => {
     };
 
     await rpcCall(serverA.url, "settings.put", {
-      settings: { sync: { ...syncBody, peers: [links.deviceB] } },
+      settings: { sync: { ...syncBody, peers: [deviceB] } },
     });
     await rpcCall(serverB.url, "settings.put", {
-      settings: { sync: { ...syncBody, peers: [links.deviceA] } },
+      settings: { sync: { ...syncBody, peers: [deviceA] } },
     });
 
     await rpcCall(serverA.url, "dispatch", {
@@ -149,7 +123,7 @@ describe("transfer journey", () => {
     const projectIdB = Object.keys((await rpcCall(serverB.url, "snapshot", {})).projects)[0] ?? "";
 
     await rpcCall(serverB.url, "settings.put", {
-      settings: { sync: { projectMap: { [projectIdA]: { [links.deviceB]: projectIdB } } } },
+      settings: { sync: { projectMap: { [projectIdA]: { [deviceB]: projectIdB } } } },
     });
 
     await rpcCall(serverA.url, "dispatch", {
@@ -181,12 +155,12 @@ describe("transfer journey", () => {
 
     await rpcCall(serverB.url, "sync.now", {});
     const replicas = await rpcCall(serverB.url, "sync.replicas", {});
-    expect(replicas.replicas[links.deviceA]?.turns[threadA]?.length).toBe(2);
+    expect(replicas.replicas[deviceA]?.turns[threadA]?.length).toBe(2);
 
     await rpcCall(serverB.url, "dispatch", {
       commandId: "claim-1",
       type: "thread.claim",
-      ownerDeviceId: links.deviceA,
+      ownerDeviceId: deviceA,
       ownerThreadId: threadA,
       projectId: projectIdA,
     });
@@ -198,21 +172,17 @@ describe("transfer journey", () => {
         (thread) => thread.movedFrom?.threadId === threadA,
       );
       if (imported) break;
-      if (Object.keys(snapB.pendingClaims ?? {}).length === 0 && !imported) {
-        const failed = await rpcCall(serverB.url, "snapshot", {});
-        void failed;
-      }
       await new Promise<void>((resolve) => setImmediate(resolve));
       snapB = await rpcCall(serverB.url, "snapshot", {});
     }
     const imported = Object.values(snapB.threads).find(
       (thread) => thread.movedFrom?.threadId === threadA,
     );
-    expect(imported?.movedFrom).toEqual({ deviceId: links.deviceA, threadId: threadA });
+    expect(imported?.movedFrom).toEqual({ deviceId: deviceA, threadId: threadA });
     expect(snapB.turns[imported?.id ?? ""]?.length).toBe(2);
 
     const snapA = await rpcCall(serverA.url, "snapshot", {});
-    expect(snapA.threads[threadA]?.movedTo?.deviceId).toBe(links.deviceB);
+    expect(snapA.threads[threadA]?.movedTo?.deviceId).toBe(deviceB);
 
     const importedId = imported?.id ?? "";
     demoB.inputs.length = 0;

@@ -6,9 +6,9 @@ import { createThemeStore } from "../settings/themes.ts";
 import { openEventStore } from "../store/event-store.ts";
 import { tempDir, testContext, waitForEvent } from "../testing.ts";
 import { createEffectRunner } from "../effects/runner.ts";
+import { createRequestAuth } from "../remote/auth.ts";
+import type { PeerDirectory } from "../remote/peers.ts";
 import { createTransferService } from "./service.ts";
-import { tokenAsDeviceAuth } from "./types.ts";
-import type { PeerDirectory } from "./types.ts";
 
 describe("claim crash recovery", () => {
   it("retries a pending claim after restart", async () => {
@@ -41,7 +41,10 @@ describe("claim crash recovery", () => {
       themes,
       deviceId: "local",
       peers,
-      authenticate: tokenAsDeviceAuth(new Map([["tok", "owner"]])),
+      authenticate: createRequestAuth({
+        addressOf: (req) => req.socket.remoteAddress,
+        lookup: (token) => (token === "tok" ? "owner" : null),
+      }).authenticateRequest,
       syncNow: async () => {},
       dispatch: (command) => {
         void command;
@@ -87,7 +90,10 @@ describe("claim crash recovery", () => {
       themes: themes2,
       deviceId: "local",
       peers,
-      authenticate: tokenAsDeviceAuth(new Map()),
+      authenticate: createRequestAuth({
+        addressOf: (req) => req.socket.remoteAddress,
+        lookup: () => null,
+      }).authenticateRequest,
       syncNow: async () => {},
       dispatch: () => ({ accepted: false, duplicate: false, seq: store2.model.seq }),
       newId: ctx.newId,

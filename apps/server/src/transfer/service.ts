@@ -5,7 +5,9 @@ import type { ThemeStore } from "../settings/themes.ts";
 import type { ProviderKind } from "@wooky/contracts";
 import { claimAlreadyReleased, executeClaimStep } from "./claim.ts";
 import { createReplicaService, type ReplicaService } from "./replicas.ts";
-import type { AuthenticateRequest, PeerDirectory, SyncNow } from "./types.ts";
+import type { AuthenticateRequest } from "../remote/auth.ts";
+import type { PeerDirectory } from "../remote/peers.ts";
+import type { SyncNow } from "./types.ts";
 import { applyRemoteSettings } from "./settings-sync.ts";
 
 export interface TransferService {

@@ -3,7 +3,7 @@ import type { DeviceSettings } from "@wooky/contracts";
 import type { ThemeStore } from "../settings/themes.ts";
 import type { ReplicaService } from "./replicas.ts";
 import { exportSettingsForSync, themeExportPayload } from "./settings-sync.ts";
-import type { AuthenticateRequest } from "./types.ts";
+import type { AuthenticateRequest } from "../remote/auth.ts";
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -26,11 +26,19 @@ export function createTransferHttpHandler(deps: {
   return (req, res) => {
     if (req.method !== "GET" || !req.url) return false;
     const url = new URL(req.url, "http://localhost");
-    const deviceId = deps.authenticate(req);
-    if (!deviceId) {
+    if (
+      url.pathname !== "/sync/threads" &&
+      url.pathname !== "/sync/settings" &&
+      url.pathname !== "/sync/themes"
+    ) {
+      return false;
+    }
+    const auth = deps.authenticate(req);
+    if (!auth) {
       sendText(res, 401, "Unauthorized");
       return true;
     }
+    const deviceId = auth.deviceId;
 
     const settings = deps.settings();
 

@@ -1,13 +1,7 @@
 import type { ReadModel, Thread } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
+import { isLoopbackAddress } from "../remote/auth.ts";
 import type { AgentTokenService } from "./agent-token.ts";
-
-const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-
-export function isLoopbackAddress(remoteAddress: string | undefined): boolean {
-  if (!remoteAddress) return false;
-  return LOOPBACK.has(remoteAddress.toLowerCase());
-}
 
 function isWorker(thread: Thread): boolean {
   return thread.role === "worker" || thread.parentThreadId !== undefined;

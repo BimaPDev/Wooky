@@ -9,16 +9,9 @@ import { rpcCall } from "../src/cli/rpc-client.ts";
 import { createDemoAdapter } from "../src/providers/demo/adapter.ts";
 import { startServer, type RunningServer } from "../src/server.ts";
 import { createFakeGit } from "../src/testing.ts";
-import { tokenAsDeviceAuth, type PeerDirectory } from "../src/transfer/types.ts";
-import { readFileSync } from "node:fs";
 
 const PORT_A = 47191;
 const PORT_B = 47192;
-
-function deviceId(home: string): string {
-  return (JSON.parse(readFileSync(join(home, "device.json"), "utf8")) as { deviceId: string })
-    .deviceId;
-}
 
 async function waitIdle(url: string, threadId: string): Promise<void> {
   const deadline = Date.now() + 30_000;
@@ -31,55 +24,46 @@ async function waitIdle(url: string, threadId: string): Promise<void> {
 }
 
 async function main() {
-  const tokens = new Map<string, string>();
-  const auth = tokenAsDeviceAuth(tokens);
-  const links = { aUrl: "", bUrl: "", deviceA: "", deviceB: "" };
-  const peersForA: PeerDirectory = {
-    list: () =>
-      links.bUrl
-        ? [{ deviceId: links.deviceB, name: "B", baseUrl: links.bUrl, token: "token-a" }]
-        : [],
-    get: (id) => peersForA.list().find((p) => p.deviceId === id),
-  };
-  const peersForB: PeerDirectory = {
-    list: () =>
-      links.aUrl
-        ? [{ deviceId: links.deviceA, name: "A", baseUrl: links.aUrl, token: "token-b" }]
-        : [],
-    get: (id) => peersForB.list().find((p) => p.deviceId === id),
-  };
-
   const rootA = await mkdtemp(join(tmpdir(), "wooky-manual-a-"));
   const rootB = await mkdtemp(join(tmpdir(), "wooky-manual-b-"));
   const homeA = await mkdtemp(join(tmpdir(), "wooky-manual-home-a-"));
   const homeB = await mkdtemp(join(tmpdir(), "wooky-manual-home-b-"));
 
-  let serverA: RunningServer;
-  let serverB: RunningServer;
+  let serverA: RunningServer | undefined;
+  let serverB: RunningServer | undefined;
   try {
     serverA = await startServer({
       home: homeA,
       host: "127.0.0.1",
       port: PORT_A,
+      portExplicit: true,
       adapters: [createDemoAdapter({ stepMs: 0 })],
       git: createFakeGit().git,
-      transfer: { authenticate: auth, peers: peersForA },
     });
-    links.aUrl = serverA.url;
-    links.deviceA = deviceId(homeA);
-    tokens.set("token-a", links.deviceA);
 
     serverB = await startServer({
       home: homeB,
       host: "127.0.0.1",
       port: PORT_B,
+      portExplicit: true,
       adapters: [createDemoAdapter({ stepMs: 0 })],
       git: createFakeGit().git,
-      transfer: { authenticate: auth, peers: peersForB },
     });
-    links.bUrl = serverB.url;
-    links.deviceB = deviceId(homeB);
-    tokens.set("token-b", links.deviceB);
+
+    const codeA = await rpcCall(serverA.url, "remote.pairingCode.create", {});
+    const joinedA = await rpcCall(serverB.url, "remote.join", {
+      connection: { kind: "direct", url: serverA.url },
+      code: codeA.code,
+      label: "A",
+    });
+    const codeB = await rpcCall(serverB.url, "remote.pairingCode.create", {});
+    const joinedB = await rpcCall(serverA.url, "remote.join", {
+      connection: { kind: "direct", url: serverB.url },
+      code: codeB.code,
+      label: "B",
+    });
+    const deviceA = joinedA.host.deviceId;
+    const deviceB = joinedB.host.deviceId;
 
     const lines: string[] = [];
     const log = (step: string) => {
@@ -87,8 +71,8 @@ async function main() {
       console.info(step);
     };
 
-    log(`A ${serverA.url} device ${links.deviceA}`);
-    log(`B ${serverB.url} device ${links.deviceB}`);
+    log(`A ${serverA.url} device ${deviceA}`);
+    log(`B ${serverB.url} device ${deviceB}`);
 
     const sync = {
       enabled: true,
@@ -101,10 +85,10 @@ async function main() {
       },
     };
     await rpcCall(serverA.url, "settings.put", {
-      settings: { sync: { ...sync, peers: [links.deviceB] } },
+      settings: { sync: { ...sync, peers: [deviceB] } },
     });
     await rpcCall(serverB.url, "settings.put", {
-      settings: { sync: { ...sync, peers: [links.deviceA] } },
+      settings: { sync: { ...sync, peers: [deviceA] } },
     });
 
     await rpcCall(serverA.url, "dispatch", {
@@ -120,7 +104,7 @@ async function main() {
     });
     const projectIdB = Object.keys((await rpcCall(serverB.url, "snapshot", {})).projects)[0] ?? "";
     await rpcCall(serverB.url, "settings.put", {
-      settings: { sync: { projectMap: { [projectIdA]: { [links.deviceB]: projectIdB } } } },
+      settings: { sync: { projectMap: { [projectIdA]: { [deviceB]: projectIdB } } } },
     });
 
     await rpcCall(serverA.url, "dispatch", {
@@ -153,12 +137,12 @@ async function main() {
 
     await rpcCall(serverB.url, "sync.now", {});
     const replicas = await rpcCall(serverB.url, "sync.replicas", {});
-    log(`B replicas turns: ${replicas.replicas[links.deviceA]?.turns[threadA]?.length ?? 0}`);
+    log(`B replicas turns: ${replicas.replicas[deviceA]?.turns[threadA]?.length ?? 0}`);
 
     await rpcCall(serverB.url, "dispatch", {
       commandId: "claim-1",
       type: "thread.claim",
-      ownerDeviceId: links.deviceA,
+      ownerDeviceId: deviceA,
       ownerThreadId: threadA,
       projectId: projectIdA,
     });

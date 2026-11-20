@@ -1,7 +1,7 @@
 import type { AgeEvent, DeviceSettings, ReplicaModel, SyncStatus } from "@wooky/contracts";
 import { applyReplicaEvents, emptyReplicaModel } from "@wooky/domain";
 import type { EventStore } from "../store/event-store.ts";
-import type { PeerDirectory } from "./types.ts";
+import type { PeerDirectory } from "../remote/peers.ts";
 
 const BATCH = 2_000;
 

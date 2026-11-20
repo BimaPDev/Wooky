@@ -120,7 +120,7 @@ function ConfirmDialog({ dialog }: { dialog: Extract<Dialog, { kind: "confirm" }
           <button type="button" className="button" onClick={closeDialog}>
             Cancel
           </button>
-          {/* The destructive action is explicit, so focus starts on Cancel. */}
+          {/* Focus stays on the dialog; the destructive action is explicit. */}
           <button type="submit" className="button danger">
             {dialog.confirmLabel}
           </button>

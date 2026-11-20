@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import {
   FailoverSettings,
@@ -28,15 +27,34 @@ import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
+import { createRemoteRuntime, type RemoteRuntime } from "./remote/runtime.ts";
+import type { Tailscale } from "./remote/tailscale.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
 import { createLimitsService } from "./usage/limits.ts";
 import { setAgentTokenIssuer } from "./providers/agent-env.ts";
-import { ensureDeviceId } from "./transfer/device.ts";
 import { createTransferHttpHandler } from "./transfer/http.ts";
 import { createTransferService } from "./transfer/service.ts";
-import { emptyPeerDirectory, loopbackAuth, noopSyncNow } from "./transfer/types.ts";
+import { noopSyncNow } from "./transfer/types.ts";
+
+const SERVE_OFF_TIMEOUT_MS = 3_000;
+
+async function stopServe(remote: RemoteRuntime): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      remote.disableServe(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SERVE_OFF_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.error("tailscale serve off failed", error);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export interface ServerOptions {
   home: string;
@@ -50,14 +68,22 @@ export interface ServerOptions {
   gh?: GhClient;
   /** Directory whose children `fs.pickable` suggests. Defaults to the OS home. */
   userHome?: string;
-  /** When set, a non-loopback client may open the folder chooser. */
-  allowRemotePicker?: boolean;
   /** Test seam. Production builds one from the operating system. */
   folderPicker?: FolderPicker;
-  /** Test seams for Anywhere transfer (A1/A2 stubs in production). */
+  /** `--host` was passed. Hosting settings do not add listeners. */
+  hostExplicit?: boolean;
+  /** `--port` or WOOKY_PORT was set. Hosting settings do not move the listen port. */
+  portExplicit?: boolean;
+  /** Test seam. Production shells out to the `tailscale` CLI. */
+  tailscale?: Tailscale;
+  /** Test seam for pairing expiry and the rate-limit window. Milliseconds. */
+  now?: () => number;
+  /** Test seam. Production uses the socket's remote address. */
+  remoteAddress?: (req: IncomingMessage) => string | undefined;
+  /** Test seams for Anywhere transfer (A2 syncNow seam until A2 lands on main). */
   transfer?: {
-    peers?: import("./transfer/types.ts").PeerDirectory;
-    authenticate?: import("./transfer/types.ts").AuthenticateRequest;
+    peers?: import("./remote/peers.ts").PeerDirectory;
+    authenticate?: import("./remote/auth.ts").AuthenticateRequest;
     syncNow?: import("./transfer/types.ts").SyncNow;
   };
 }
@@ -65,6 +91,9 @@ export interface ServerOptions {
 export interface RunningServer {
   url: string;
   port: number;
+  addresses(): string[];
+  /** Loopback port of the token-only listener behind Tailscale Serve, when open. */
+  servePort(): number | null;
   close(): Promise<void>;
 }
 
@@ -111,7 +140,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const store = openEventStore(options.home, ctx.now);
   const git = options.git ?? createGitService();
-  const deviceId = ensureDeviceId(options.home, ctx.now);
+  const remote = createRemoteRuntime({
+    home: options.home,
+    themes,
+    host: options.host,
+    port: options.port,
+    hostExplicit: options.hostExplicit === true,
+    portExplicit: options.portExplicit === true,
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.remoteAddress ? { remoteAddress: options.remoteAddress } : {}),
+    ...(options.tailscale ? { tailscale: options.tailscale } : {}),
+  });
+  const deviceId = remote.device.id();
+  const authenticate = options.transfer?.authenticate ?? remote.authenticateRequest;
+  const peers = options.transfer?.peers ?? remote.peers;
   let dispatchCommand: (command: Command) => ReturnType<Dispatcher["dispatch"]> = () => {
     throw new Error("dispatcher not ready");
   };
@@ -121,8 +163,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     store,
     themes,
     deviceId,
-    peers: options.transfer?.peers ?? emptyPeerDirectory(),
-    authenticate: options.transfer?.authenticate ?? loopbackAuth,
+    peers,
+    authenticate,
     syncNow: options.transfer?.syncNow ?? noopSyncNow,
     dispatch: (command) => dispatchCommand(command),
     newId: ctx.newId,
@@ -166,19 +208,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
   const staticHandler = createHttpHandler(options.webDist ?? null);
   const transferHttp = createTransferHttpHandler({
-    authenticate: options.transfer?.authenticate ?? loopbackAuth,
+    authenticate,
     replicas: transfer.replicas,
     themes,
     deviceId,
     settings: () => themes.getSettings(),
     now: ctx.now,
   });
-  const http = createServer((req, res) => {
-    if (transferHttp(req, res)) return;
-    staticHandler(req, res);
-  });
-  const closeSockets = attachWebSocket(
-    http,
+  const sockets = attachWebSocket(
     {
       store,
       dispatcher,
@@ -193,58 +230,64 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       scratch,
       attachments: createAttachmentStore(options.home),
       transfer,
+      remote,
     },
     new Set(options.allowedHosts ?? []),
     {
-      allowRemotePicker: options.allowRemotePicker === true,
       ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
       onSyncBroadcast: (send) => {
         broadcastSync = send;
       },
     },
   );
+  let unpublish: () => void = () => {};
   try {
-    await new Promise<void>((resolve, reject) => {
-      http.once("error", reject);
-      http.listen(options.port, options.host, () => {
-        http.off("error", reject);
-        resolve();
-      });
+    await remote.listen({
+      handler: (req, res) => {
+        if (transferHttp(req, res)) return;
+        staticHandler(req, res);
+      },
+      onUpgrade: sockets.onUpgrade,
     });
-  } catch (error) {
-    store.close();
-    throw error;
-  }
-  const { port } = http.address() as AddressInfo;
-  const host = options.host.includes(":") ? `[${options.host}]` : options.host;
-  const url = `http://${host}:${port}`;
-  let unpublish: () => void;
-  try {
-    unpublish = publishServerPresence(options.home, url);
+    unpublish = publishServerPresence(options.home, remote.url());
     setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
-    closeSockets();
-    http.close();
+    stopShipPolling();
+    transfer.replicas.stop();
+    sockets.close();
+    remote.closeTunnels();
+    await remote.closeServers();
     store.close();
     throw error;
   }
 
   let closing: Promise<void> | null = null;
   return {
-    url,
-    port,
+    get url() {
+      return remote.url();
+    },
+    get port() {
+      return remote.port();
+    },
+    addresses: () => remote.addresses(),
+    servePort: () => remote.servePort(),
     close() {
       // Stop new work first, then drain running turns while open sockets still get their
       // final events, and close the store last.
       closing ??= (async () => {
+        if (remote.servePort() !== null) await stopServe(remote);
         unpublish();
         stopShipPolling();
         dispatcher.close();
-        const stopped = new Promise<void>((resolve) => http.close(() => resolve()));
-        http.closeIdleConnections();
+        const httpServers = remote.servers();
+        const stopped = Promise.all(
+          httpServers.map((http) => new Promise<void>((resolve) => http.close(() => resolve()))),
+        );
+        for (const http of httpServers) http.closeIdleConnections();
         await runner.shutdown();
-        closeSockets();
-        http.closeAllConnections();
+        sockets.close();
+        remote.closeTunnels();
+        for (const http of httpServers) http.closeAllConnections();
         await stopped;
         await history.close();
         transfer.replicas.stop();

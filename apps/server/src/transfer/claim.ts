@@ -1,7 +1,7 @@
 import { HistoryTurn, type ReplicaModel, type ReadModel } from "@wooky/contracts";
 import { handoffTranscript } from "@wooky/domain";
 import type { EventStore } from "../store/event-store.ts";
-import type { PeerDirectory } from "./types.ts";
+import type { PeerDirectory } from "../remote/peers.ts";
 import { remoteDispatch } from "./remote-rpc.ts";
 
 export function historyFromReplica(

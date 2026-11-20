@@ -13,7 +13,8 @@ describe("resolveConfig", () => {
       host: "127.0.0.1",
       webDist: null,
       allowedHosts: [],
-      allowRemotePicker: false,
+      hostExplicit: false,
+      portExplicit: false,
     });
   });
 
@@ -32,7 +33,8 @@ describe("resolveConfig", () => {
       host: "::1",
       webDist: "/w",
       allowedHosts: [],
-      allowRemotePicker: false,
+      hostExplicit: true,
+      portExplicit: true,
     });
   });
 
@@ -41,16 +43,6 @@ describe("resolveConfig", () => {
       WOOKY_ALLOWED_HOSTS: " studio.local, ,",
     });
     expect(config).toMatchObject({ allowedHosts: ["box.lan", "mac.tailnet", "studio.local"] });
-  });
-
-  it("keeps the remote folder chooser off unless the operator opts in", () => {
-    expect(resolveConfig([], {})).toMatchObject({ allowRemotePicker: false });
-    expect(resolveConfig([], { WOOKY_ALLOW_REMOTE_PICKER: "1" })).toMatchObject({
-      allowRemotePicker: true,
-    });
-    expect(resolveConfig(["--allow-remote-picker"], {})).toMatchObject({
-      allowRemotePicker: true,
-    });
   });
 
   it("rejects bad input and recognises --help", () => {
