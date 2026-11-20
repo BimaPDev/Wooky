@@ -12,7 +12,7 @@ import {
 } from "../../state/environments.ts";
 import { IconChevron } from "../Icons.tsx";
 import { PopoverChip, usePopoverClose } from "../Popover.tsx";
-import { unreachableCopy } from "./format.ts";
+import { disambiguateNames, unreachableCopy } from "./format.ts";
 
 const PROBE_LABEL: Record<ProbeState, string> = {
   unknown: "Not checked",
@@ -62,11 +62,15 @@ function SwitcherPanel() {
   const environments = useEnvironments();
   const device = useDeviceInfo();
   const close = usePopoverClose();
+  const names = disambiguateNames([
+    { id: LOCAL_ENVIRONMENT_ID, name: device?.name ?? "This Mac" },
+    ...environments.map((environment) => ({ id: environment.id, name: environment.label })),
+  ]);
   return (
     <div className="env-panel">
       <EnvRow
         id={LOCAL_ENVIRONMENT_ID}
-        label={device?.name ?? "This Mac"}
+        label={names.get(LOCAL_ENVIRONMENT_ID) ?? device?.name ?? "This Mac"}
         hint="This machine"
         current={session.id === LOCAL_ENVIRONMENT_ID}
         onPick={close}
@@ -75,7 +79,7 @@ function SwitcherPanel() {
         <EnvRow
           key={environment.id}
           id={environment.id}
-          label={environment.label}
+          label={names.get(environment.id) ?? environment.label}
           hint={environment.connection.kind}
           current={session.id === environment.id}
           onPick={close}

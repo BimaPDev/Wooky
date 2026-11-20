@@ -183,7 +183,7 @@ export const PairingCode = z.object({
   /** Host URL another device can reach, or null when this host is not reachable by anyone else. */
   url: z.string().min(1).nullable(),
   /** Why there is no URL, in one sentence. Null when url is set. */
-  reason: z.string().nullable(),
+  reason: z.string().nullable().default(null),
 });
 export type PairingCode = z.infer<typeof PairingCode>;
 

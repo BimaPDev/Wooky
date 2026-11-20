@@ -109,3 +109,39 @@ export function formatWhen(iso: string | null): string {
 export function unreachableCopy(label: string): string {
   return `Can't reach ${label}. Retrying…`;
 }
+
+/**
+ * Display names for a list of devices. Two machines often share a host name; those get a
+ * short id suffix, "Mac (3f9a)", so they can be told apart. Unique names are left alone.
+ */
+const nameKey = (name: string) => name.trim().toLowerCase();
+
+export function disambiguateNames(
+  items: readonly { id: string; name: string }[],
+): Map<string, string> {
+  const groups = new Map<string, { id: string; name: string }[]>();
+  for (const item of items) {
+    const group = groups.get(nameKey(item.name)) ?? [];
+    group.push(item);
+    groups.set(nameKey(item.name), group);
+  }
+  const names = new Map<string, string>();
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      const only = group[0];
+      if (only) names.set(only.id, only.name);
+      continue;
+    }
+    // The shortest id prefix (at least 4 characters) that tells every duplicate apart.
+    const longest = Math.max(...group.map((item) => item.id.length));
+    let length = 4;
+    while (
+      length < longest &&
+      new Set(group.map((item) => item.id.slice(0, length))).size < group.length
+    ) {
+      length += 1;
+    }
+    for (const item of group) names.set(item.id, `${item.name} (${item.id.slice(0, length)})`);
+  }
+  return names;
+}

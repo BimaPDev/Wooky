@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { directPublicHttpWarning, groupPairingCode, pairRoute, pairingQrText } from "./format.ts";
+import {
+  directPublicHttpWarning,
+  disambiguateNames,
+  groupPairingCode,
+  pairRoute,
+  pairingQrText,
+} from "./format.ts";
 import { browserDeviceName, browserPlatform } from "./pair/device.ts";
 
 describe("pair route", () => {
@@ -70,5 +76,35 @@ describe("browser device", () => {
   it("maps phones to other", () => {
     expect(browserPlatform("Mozilla/5.0 (Linux; Android 14)")).toBe("other");
     expect(browserPlatform("Mozilla/5.0 (X11; Linux x86_64)")).toBe("linux");
+  });
+});
+
+describe("disambiguateNames", () => {
+  it("leaves unique names alone", () => {
+    const names = disambiguateNames([
+      { id: "aaaa1111", name: "Studio" },
+      { id: "bbbb2222", name: "Laptop" },
+    ]);
+    expect([...names.values()]).toEqual(["Studio", "Laptop"]);
+  });
+
+  it("tells same-named machines apart with a short id", () => {
+    const names = disambiguateNames([
+      { id: "3f9a1111", name: "Bimas-Mac" },
+      { id: "c41d2222", name: "bimas-mac" },
+      { id: "9b9b3333", name: "Linux box" },
+    ]);
+    expect(names.get("3f9a1111")).toBe("Bimas-Mac (3f9a)");
+    expect(names.get("c41d2222")).toBe("bimas-mac (c41d)");
+    expect(names.get("9b9b3333")).toBe("Linux box");
+  });
+
+  it("lengthens the suffix until it is unique", () => {
+    const names = disambiguateNames([
+      { id: "abcd1", name: "Mac" },
+      { id: "abcd2", name: "Mac" },
+    ]);
+    expect(names.get("abcd1")).toBe("Mac (abcd1)");
+    expect(names.get("abcd2")).toBe("Mac (abcd2)");
   });
 });

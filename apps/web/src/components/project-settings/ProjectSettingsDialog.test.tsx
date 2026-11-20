@@ -150,4 +150,33 @@ describe("ProjectSettingsDialog", () => {
     });
     expect(host?.querySelectorAll(".settings-inline")).toHaveLength(1);
   });
+
+  it("explains that nothing could be suggested when there are no gitignored entries", async () => {
+    setBackend({
+      call: <M extends RpcMethod>(method: M) =>
+        method === "scripts.suggestSharedPaths"
+          ? Promise.resolve([] as RpcResult<M>)
+          : Promise.reject(new Error(`unexpected ${method}`)),
+    });
+    render(<ProjectSettingsDialog projectId="p1" />);
+    await flush();
+    const suggest = [...(host?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent?.trim() === "Suggest",
+    );
+    await act(async () => {
+      suggest?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const hint = host?.querySelector(".suggestions .muted")?.textContent ?? "";
+    expect(hint).toContain("Nothing to suggest");
+    expect(hint).toContain("add a path by hand");
+  });
+
+  it("says the agent does not wait for the worktree setup command", async () => {
+    render(<ProjectSettingsDialog projectId="p1" />);
+    await flush();
+    expect(host?.textContent).toContain("does not wait for it to finish");
+    expect(field(host as HTMLElement, "Setup command")).not.toBeNull();
+  });
 });

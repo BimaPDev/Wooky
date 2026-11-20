@@ -62,7 +62,12 @@ describe("App on a fresh install (no projects, no threads)", () => {
     await act(async () => {
       useStore.setState({ settingsOpen: true, settingsPage: "anywhere" });
     });
+    // Settings is a lazy chunk: wait for its module, then let React render it.
+    await act(async () => {
+      await import("./Settings.tsx");
+    });
+    await act(async () => {});
+    expect(document.body.textContent).toContain("Pair a device");
     expect(errors.mock.calls.map((call) => String(call[0]))).toEqual([]);
-    expect(document.body.textContent).toContain("Anywhere");
   });
 });
