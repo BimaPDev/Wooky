@@ -4,13 +4,13 @@ import type {
   Environment,
   DeviceSettingsPatch,
   PairedDeviceView,
+  RpcResult,
   SyncStatus,
   SyncPush,
   TailscaleStatus,
 } from "@wooky/contracts";
 import { emptyReadModel } from "@wooky/domain";
 import { useSyncExternalStore } from "react";
-import { remoteConnectInfo, type RemoteConnectInfoResult } from "../rpc/anywhere-extra.ts";
 import type { ConnectionStatus } from "../rpc/client.ts";
 import { backend } from "./backend.ts";
 import { receiveSnapshot, useStore } from "./store.ts";
@@ -50,7 +50,7 @@ const listeners = new Set<() => void>();
 let transport: Transport | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 /** Connect info comes from the local server. A remote server cannot hand out the next machine's token. */
-const connectInfoCache = new Map<string, RemoteConnectInfoResult>();
+const connectInfoCache = new Map<string, RpcResult<"remote.connectInfo">>();
 let snapshot: EnvironmentSnapshot = {
   session: {
     id: LOCAL_ENVIRONMENT_ID,
@@ -276,9 +276,9 @@ async function resetModel() {
   useStore.setState({ status: "open" });
 }
 
-async function connectInfoFor(id: string): Promise<RemoteConnectInfoResult | null> {
+async function connectInfoFor(id: string): Promise<RpcResult<"remote.connectInfo"> | null> {
   if (!snapshot.session.remote) {
-    const info = await remoteConnectInfo(id);
+    const info = await backend().call("remote.connectInfo", { environmentId: id });
     connectInfoCache.set(id, info);
     return info;
   }

@@ -41,17 +41,21 @@ export function createTransferHttpHandler(deps: {
     const deviceId = auth.deviceId;
 
     const settings = deps.settings();
+    if (!settings.sync.peers.includes(deviceId)) {
+      sendText(res, 403, "Forbidden");
+      return true;
+    }
 
     if (url.pathname === "/sync/threads") {
-      if (!settings.sync.enabled || !settings.sync.categories.threads) {
-        sendJson(res, 200, { events: [], nextSince: Number(url.searchParams.get("since") ?? 0) });
-        return true;
-      }
-      if (!settings.sync.peers.includes(deviceId)) {
-        sendText(res, 403, "Forbidden");
-        return true;
-      }
       const since = Number(url.searchParams.get("since") ?? 0);
+      if (!Number.isSafeInteger(since) || since < 0) {
+        sendText(res, 400, "Bad since");
+        return true;
+      }
+      if (!settings.sync.enabled || !settings.sync.categories.threads) {
+        sendJson(res, 200, { events: [], nextSince: since });
+        return true;
+      }
       try {
         const batch = deps.replicas.ownerBatch(since, deviceId);
         sendJson(res, 200, batch);
@@ -64,10 +68,6 @@ export function createTransferHttpHandler(deps: {
     if (url.pathname === "/sync/settings") {
       if (!settings.sync.enabled || !settings.sync.categories.settings) {
         sendJson(res, 200, { values: {}, stamps: {} });
-        return true;
-      }
-      if (!settings.sync.peers.includes(deviceId)) {
-        sendText(res, 403, "Forbidden");
         return true;
       }
       const payload = exportSettingsForSync(
@@ -83,10 +83,6 @@ export function createTransferHttpHandler(deps: {
     if (url.pathname === "/sync/themes") {
       if (!settings.sync.enabled || !settings.sync.categories.themes) {
         sendJson(res, 200, { themes: [] });
-        return true;
-      }
-      if (!settings.sync.peers.includes(deviceId)) {
-        sendText(res, 403, "Forbidden");
         return true;
       }
       sendJson(res, 200, { themes: themeExportPayload(deps.themes) });

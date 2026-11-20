@@ -103,7 +103,6 @@ export function respondAnywhere(method: string, params: unknown): unknown {
       return syncStatus;
     case "sync.now":
       return { ok: true as const };
-    // TODO(A1): remote.join and remote.connectInfo move to contracts when A1 merges.
     case "remote.join": {
       const { connection, label } = params as {
         connection: Environment["connection"];

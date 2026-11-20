@@ -176,4 +176,35 @@ describe("anywhere decide", () => {
       expect(decision.effects).toEqual([]);
     }
   });
+
+  it("a moved thread refuses every way of starting a turn", () => {
+    const moved = applyEvents(modelWithThread("idle"), [
+      {
+        type: "queue.added",
+        commandId: "q",
+        threadId: "t1",
+        item: { id: "q1", prompt: "later", queuedAt: at },
+        seq: 10,
+        at,
+      },
+      {
+        type: "thread.released",
+        commandId: "m",
+        threadId: "t1",
+        toDeviceId: "peer-b",
+        seq: 11,
+        at,
+      },
+    ]);
+    for (const command of [
+      { commandId: "s", type: "turn.start", threadId: "t1", prompt: "hi" },
+      { commandId: "p", type: "queue.promote", threadId: "t1", queueId: "q1" },
+    ] as const) {
+      const decision = decide(moved, command, testContext());
+      expect(decision).toMatchObject({
+        ok: false,
+        message: expect.stringMatching(/moved to peer-b/),
+      });
+    }
+  });
 });
