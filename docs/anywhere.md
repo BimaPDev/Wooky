@@ -170,6 +170,14 @@ As built (A2, `apps/server/src/sync/`, git calls in `apps/server/src/git/shadow.
 - Project branch moves are not done: only the working tree syncs. The snapshot message records the
   project's HEAD and branch for a later station.
 - Only the sender's `refs/wooky/snap/<id>` chain is listed by `sync.snapshots.list`.
+- `/sync/*` runs on the real auth: the guarded HTTP handler checks `authenticateRequest` first, then
+  the sync routes demand a device token (loopback `local` gets 401) and serve only deviceIds listed in
+  `sync.peers` (403 otherwise). Revoking a device makes its token 401 at once. Outgoing pulls read
+  tokens from the `PeerDirectory` (`peers.json`); the device id is `remote.device.id()`, the single
+  `device.json` loader. Pairing must be done both ways for two-way sync. There is no test-peers env
+  hook or `--test-hooks` flag.
+- `scripts/live-sync-proof.mjs` boots two real servers, pairs them, syncs a project at two paths, raises
+  a conflict, reverts from a `before-apply` snapshot and revokes a device.
 
 ### Threads
 

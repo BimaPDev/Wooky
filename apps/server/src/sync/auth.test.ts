@@ -102,4 +102,24 @@ describe("/sync/* against the real device auth", () => {
     expect((await get("/sync/tips", peerToken)).status).toBe(401);
     expect((await get("/sync/bundle?project=missing", peerToken)).status).toBe(401);
   });
+
+  it("keeps the engine running after startup (a stopped engine silently skips every pull)", async () => {
+    const home = await tempDir("sync-running");
+    const server = await startServer({
+      home,
+      port: 0,
+      host: "127.0.0.1",
+      portExplicit: true,
+      adapters: [createDemoAdapter({ stepMs: 0 })],
+    });
+    servers.push(server);
+    const client = await rpc(server);
+    await client.call("settings.put", { settings: { sync: { enabled: true, peers: [STRANGER] } } });
+    expect((await client.call("sync.now", {})).ok).toBe(true);
+    const status = await client.call("sync.status", {});
+    if (!status.ok) throw new Error("no status");
+    expect(status.result).toMatchObject({
+      peers: [{ deviceId: STRANGER, state: "offline", error: "This device is not paired." }],
+    });
+  });
 });

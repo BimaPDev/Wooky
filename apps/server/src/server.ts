@@ -248,7 +248,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       },
       onUpgrade: sockets.onUpgrade,
     });
-    await sync.close();
     unpublish = publishServerPresence(options.home, remote.url());
     setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
@@ -290,6 +289,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         for (const http of httpServers) http.closeAllConnections();
         await stopped;
         await history.close();
+        await sync.close();
+        closeStore();
       })();
       return closing;
     },
