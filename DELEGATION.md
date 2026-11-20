@@ -48,6 +48,7 @@ agents on different models and harnesses). The method:
 | 23   | Anywhere A4b: history, conflicts, replicas, notifications, phone | Sonnet 5.5 → fixes LongCat 2.5 (OpenCode)            | Beam Free (OpenCode)                 | merged, 3 review fixes applied                                  | fixture tests; server RPCs pending            |
 | 24   | Theme: pixel wallpapers crisp in-app                             | DeepSeek V4.1 Flash (OpenCode)                       | head chef (screenshots)              | merged                                                          | scroll p95 16.7 ms, no animations when frozen |
 | 25   | Theme: t3 import with SVG data URLs + t3 DOM hooks               | Big Pickle (OpenCode)                                | head chef (diff + screenshots)       | merged; chef resolved App/ThreadView merge with A4b             | koi-pond via RPC, 4 screenshots               |
+| 26   | Anywhere A4a: switcher, pairing UI, Settings → Anywhere          | Grok 4.7 → Sonnet → Beam Free (OpenCode)             | Hy4 Flash (OpenCode), head chef      | merged after 3 fix rounds                                       | fixture tests; server RPCs from A1 pending    |
 
 Open items: the 19 server tests that fail on Windows (CRLF, path separators, POSIX
 signals) are unverified, because nobody has run them on Windows yet. A thrown effect is
