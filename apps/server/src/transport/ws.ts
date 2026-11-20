@@ -14,6 +14,7 @@ import {
 } from "@wooky/contracts";
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
+import { guardTransferCommand } from "../transfer/guard.ts";
 import { presentedToken, selectWebSocketProtocol } from "../remote/auth.ts";
 import type { RemoteRuntime } from "../remote/runtime.ts";
 import type { AttachmentStore } from "../attachments.ts";
@@ -34,6 +35,8 @@ import type { ShipService } from "../git/ship.ts";
 import type { SyncService } from "../sync/service.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
+import type { TransferService } from "../transfer/service.ts";
+import type { SyncPush } from "@wooky/contracts";
 
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -52,16 +55,21 @@ interface Services {
   scratch: ScratchService;
   sync: SyncService;
   attachments: AttachmentStore;
+  transfer: TransferService;
   remote: RemoteRuntime;
 }
 
 const MAX_AGENT_WAITS_PER_CONNECTION = 8;
 
 interface Connection {
+  /** The authenticated device: a paired device id, or "local" for an unpaired local client. */
+  readonly deviceId: string;
   readonly remoteAddress: string | undefined;
   /**
-   * True only for an unpaired client on this machine: loopback, no proxy headers, not the
-   * token-only Tailscale Serve listener, and no device token. Paired devices are never local.
+   * True only when authentication resolved to the operator's own unpaired client
+   * (`deviceId === "local"`: loopback, no proxy headers, not the token-only Tailscale Serve
+   * listener, and no valid device token). It follows the authenticated identity, never how the
+   * token was presented: a paired device is not local, even with only its cookie.
    */
   readonly local: boolean;
   readonly abort: AbortController;
@@ -114,13 +122,17 @@ function createHandlers(
     scratch,
     sync,
     attachments,
+    transfer,
     remote,
   }: Services,
   notifyThemes: (changedIds: string[]) => void,
   folderPicker: FolderPicker,
 ): Handlers {
   return {
-    dispatch: (command) => dispatcher.dispatch(command),
+    dispatch: (command, conn) => {
+      guardTransferCommand(command, conn, themes.getSettings());
+      return dispatcher.dispatch(command);
+    },
     snapshot: () => store.model,
     subscribe: ({ fromSeq }, conn) => ({ replayed: conn.follow(fromSeq) }),
     "providers.list": () => providers.list(),
@@ -262,7 +274,16 @@ function createHandlers(
       return remote.peers.connectInfo(environmentId);
     },
     "sync.status": () => sync.engine.status(),
-    "sync.now": ({ projectId }) => sync.engine.now(projectId),
+    "sync.now": async ({ projectId }) => {
+      const settings = themes.getSettings().sync;
+      // Files first (it throws when file sync is off), then threads, settings and themes.
+      if (settings.enabled && settings.categories.files) await sync.engine.now(projectId);
+      else if (!settings.enabled) throw new ServiceError("conflict", "Sync is turned off.");
+      await transfer.replicas.pullNow();
+      await transfer.pullSettingsAndThemes();
+      return { ok: true as const };
+    },
+    "sync.replicas": () => transfer.replicas.model,
     "sync.snapshots.list": (params) => sync.engine.list(params),
     "sync.snapshots.diff": (params) => sync.engine.diff(params),
     "sync.snapshots.restore": (params) => sync.engine.restore(params),
@@ -304,13 +325,21 @@ function createHandlers(
 export function attachWebSocket(
   services: Services,
   allowedHosts: ReadonlySet<string> = new Set(),
-  options: { folderPicker?: FolderPicker } = {},
+  options: {
+    folderPicker?: FolderPicker;
+    onSyncBroadcast?: (send: (message: SyncPush) => void) => void;
+  } = {},
 ): { close(): void; onUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void } {
   const connections = new Set<Connection>();
 
   const broadcastThemes = (message: ThemesPush) => {
     for (const conn of connections) conn.send(message);
   };
+
+  const broadcastSync = (message: SyncPush) => {
+    for (const conn of connections) conn.send(message);
+  };
+  options.onSyncBroadcast?.(broadcastSync);
 
   const notifyThemes = (changedIds: string[]) => {
     broadcastThemes({
@@ -343,6 +372,9 @@ export function attachWebSocket(
       socket.destroy();
       return;
     }
+    // Whether the token was sent explicitly (bearer or subprotocol) only decides if the browser
+    // origin must be checked: a cookie rides along on cross-site requests. It never decides who
+    // the caller is; that is `auth.deviceId`.
     const cookieAuth = presentedToken(req).source === "cookie";
     const tokenProvesIntent = auth.deviceId !== "local" && !cookieAuth;
     if (!tokenProvesIntent && !originAllowed(req.headers.origin, req.headers.host, allowedHosts)) {
@@ -350,17 +382,23 @@ export function attachWebSocket(
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       services.remote.track(auth.deviceId, ws);
-      serve(ws, remoteAddress, !tokenProvesIntent);
+      serve(ws, auth.deviceId, remoteAddress, auth.deviceId === "local");
     });
   }
 
-  function serve(ws: WebSocket, remoteAddress: string | undefined, local: boolean) {
+  function serve(
+    ws: WebSocket,
+    deviceId: string,
+    remoteAddress: string | undefined,
+    local: boolean,
+  ) {
     let unsubscribe: (() => void) | null = null;
     let lastSeq = 0;
     const abort = new AbortController();
     let agentWaits = 0;
 
     const conn: Connection = {
+      deviceId,
       remoteAddress,
       local,
       abort,

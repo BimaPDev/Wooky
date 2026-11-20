@@ -2,6 +2,7 @@ import { basename, isAbsolute, normalize, sep } from "node:path";
 import type {
   Command,
   CommandOf,
+  DeviceSettings,
   FailoverSettings,
   ModelTarget,
   TurnOrigin,
@@ -21,6 +22,8 @@ import {
   shouldSwitchBack,
   threadsSharingWorkspace,
 } from "@wooky/domain";
+import { importTitle, validateHistoryTurns } from "../transfer/history-validation.ts";
+import { projectIsMapped } from "../transfer/project.ts";
 import { cooledDownIfNeeded, expiredCooldownClears } from "../failover/cooldown.ts";
 import {
   decideFanoutPick,
@@ -46,6 +49,7 @@ export interface DecideContext {
   /** Adapters registered on this server. */
   hasProvider?(provider: ProviderKind): boolean;
   failoverSettings: FailoverSettings;
+  deviceSettings?: DeviceSettings;
 }
 
 export type Rejection = {
@@ -170,11 +174,11 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
     case "project.configure":
       return configureProject(model, command);
     case "thread.release":
-      throw new Error("not implemented");
+      return releaseThread(model, command);
     case "thread.import":
-      throw new Error("not implemented");
+      return importThread(model, command, ctx);
     case "thread.claim":
-      throw new Error("not implemented");
+      return claimThread(model, command, ctx);
   }
 }
 
@@ -313,6 +317,7 @@ function startTurn(
 ): Decision {
   const thread = model.threads[command.threadId];
   if (!thread) return notFound("thread", command.threadId);
+  if (thread.movedTo) return reject("conflict", `This thread moved to ${thread.movedTo.deviceId}.`);
   if (isBusy(thread)) {
     if (command.whenBusy !== "queue")
       return reject("conflict", "A turn is already running on this thread.");
@@ -495,6 +500,7 @@ function beginTurn(
   fromQueueId?: string,
   origin?: TurnOrigin,
 ): { ok: true; events: Draft[]; effects: Effect[] } | Rejection {
+  if (thread.movedTo) return reject("conflict", `This thread moved to ${thread.movedTo.deviceId}.`);
   if ((thread.interactionMode ?? "default") === "plan" && !supportsPlan(ctx, thread.provider))
     return reject("bad_request", "This provider does not support plan mode.");
   const turnId = ctx.newId("turn");
@@ -627,6 +633,119 @@ function workspaceOf(model: ReadModel, thread: Thread): string | null {
 
 function isBusy(thread: Thread): boolean {
   return thread.status === "running" || thread.status === "waiting";
+}
+
+function claimThread(
+  model: ReadModel,
+  command: CommandOf<"thread.claim">,
+  ctx: DecideContext,
+): Decision {
+  const sync = ctx.deviceSettings?.sync;
+  if (!sync?.enabled || !sync.categories.files || !sync.categories.threads)
+    return reject(
+      "bad_request",
+      "Turn on file and thread sync to continue threads across devices.",
+    );
+  if (!projectIsMapped(command.projectId, sync.projectMap, model.projects))
+    return notFound("project", command.projectId);
+  const pending = model.pendingClaims ?? {};
+  const duplicate = Object.values(pending).some(
+    (claim) =>
+      claim.ownerDeviceId === command.ownerDeviceId &&
+      claim.ownerThreadId === command.ownerThreadId,
+  );
+  if (duplicate) return reject("conflict", "A claim is already in progress for that thread.");
+  return accept(
+    command,
+    [
+      {
+        type: "thread.claimRequested",
+        claimId: command.commandId,
+        ownerDeviceId: command.ownerDeviceId,
+        ownerThreadId: command.ownerThreadId,
+        projectId: command.projectId,
+      },
+    ],
+    [
+      {
+        kind: "claimThread",
+        threadId: command.commandId,
+        claimId: command.commandId,
+        ownerDeviceId: command.ownerDeviceId,
+        ownerThreadId: command.ownerThreadId,
+        projectId: command.projectId,
+        ...(command.force ? { force: true } : {}),
+      },
+    ],
+  );
+}
+
+function releaseThread(model: ReadModel, command: CommandOf<"thread.release">): Decision {
+  const thread = model.threads[command.threadId];
+  if (!thread) return notFound("thread", command.threadId);
+  if (thread.movedTo) return reject("conflict", "This thread was already released.");
+  if (isBusy(thread)) {
+    if (!command.force)
+      return reject("conflict", "Stop the running turn before releasing this thread.");
+    const turn = activeTurn(model, thread.id);
+    if (!turn) return reject("conflict", "No turn is running.");
+    // Force only stops the turn. The release is a second command, accepted once the turn ended.
+    return accept(command, [], [{ kind: "turn.interrupt", threadId: thread.id, turnId: turn.id }]);
+  }
+  return accept(command, [
+    { type: "thread.released", threadId: thread.id, toDeviceId: command.toDeviceId },
+  ]);
+}
+
+function importThread(
+  model: ReadModel,
+  command: CommandOf<"thread.import">,
+  ctx: DecideContext,
+): Decision {
+  const project = model.projects[command.projectId];
+  if (!project) return notFound("project", command.projectId);
+  let provider = command.provider;
+  let modelName = command.model;
+  if (ctx.hasProvider && !ctx.hasProvider(provider)) {
+    provider = "demo";
+    modelName = "demo";
+  }
+  const now = ctx.now();
+  const threadId = ctx.newId("thread");
+  const pending = model.pendingClaims ?? {};
+  const claimId = Object.values(pending).find(
+    (claim) =>
+      claim.ownerDeviceId === command.sourceDeviceId &&
+      claim.ownerThreadId === command.sourceThreadId,
+  )?.claimId;
+  return accept(command, [
+    {
+      type: "thread.imported",
+      thread: {
+        id: threadId,
+        projectId: project.id,
+        title: importTitle(command.title),
+        provider,
+        model: modelName,
+        runtimeMode: "approve",
+        worktree: null,
+        providerSessionId: null,
+        ownerDeviceId: null,
+        movedTo: null,
+        movedFrom: null,
+        pullRequest: null,
+        queue: [],
+        status: "idle",
+        createdAt: now,
+        updatedAt: now,
+      },
+      sourceDeviceId: command.sourceDeviceId,
+      sourceThreadId: command.sourceThreadId,
+      transcript: command.transcript,
+      historyTurns: validateHistoryTurns(command.historyTurns ?? []),
+      ...(claimId ? { claimId } : {}),
+    },
+  ]);
 }
 
 function stripTrailingSep(path: string): string {

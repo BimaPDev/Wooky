@@ -59,6 +59,8 @@ interface RunnerDeps {
   deviceSettings?: () => DeviceSettings;
   limits?: LimitsService;
   now?: () => string;
+  runClaimThread?: (effect: Extract<Effect, { kind: "claimThread" }>) => Promise<void>;
+  recoverClaims?: () => void;
   /** After a thread worktree is bound. Must not wait for setup scripts to exit. */
   onWorktreeCreated?: (input: {
     threadId: string;
@@ -77,6 +79,7 @@ const RECOVERABLE: ReadonlySet<Effect["kind"]> = new Set([
   "worktree.remove",
   "session.rewind",
   "thread.merge",
+  "claimThread",
 ]);
 
 /**
@@ -95,6 +98,8 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     deviceSettings,
     limits,
     now = () => new Date().toISOString(),
+    runClaimThread,
+    recoverClaims,
     onWorktreeCreated,
   } = deps;
   const tails = new Map<string, Promise<void>>();
@@ -178,6 +183,9 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         return rewindSession(effect);
       case "thread.merge":
         return runMerge(effect);
+      case "claimThread":
+        if (!runClaimThread) throw new Error("claimThread handler not configured");
+        return runClaimThread(effect);
     }
   }
 
@@ -860,6 +868,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         else store.markEffect(effect.id, "retired");
       }
       enqueue(rerun);
+      recoverClaims?.();
       const busyRewind = new Set(
         store
           .pendingEffects()

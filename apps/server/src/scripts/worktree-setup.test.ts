@@ -122,6 +122,32 @@ describe("held setup notices", () => {
       pendingEffects() {
         return [];
       },
+      appendReplicaEvents() {
+        return 0;
+      },
+      replicaEventsAfter() {
+        return [];
+      },
+      replicaHighWater() {
+        return 0;
+      },
+      replicaOwners() {
+        return [];
+      },
+      dropReplicaOwner() {
+        return 0;
+      },
+      dropReplicaThreads() {
+        return 0;
+      },
+      claimCheckpoints() {
+        return [];
+      },
+      markClaimReleased() {},
+      isClaimReleased() {
+        return false;
+      },
+      clearClaimReleased() {},
       subscribe(listener) {
         listeners.add(listener);
         return () => listeners.delete(listener);

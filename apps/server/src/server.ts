@@ -15,7 +15,7 @@ import { createShipService } from "./git/ship.ts";
 import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
 import type { DecideContext } from "./orchestrator/decide.ts";
-import { createDispatcher } from "./orchestrator/dispatcher.ts";
+import { createDispatcher, type Dispatcher } from "./orchestrator/dispatcher.ts";
 import { builtinAdapters } from "./providers/index.ts";
 import { createProviderRegistry } from "./providers/registry.ts";
 import type { ProviderAdapter } from "./providers/types.ts";
@@ -36,6 +36,9 @@ import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
 import { createLimitsService } from "./usage/limits.ts";
 import { setAgentTokenIssuer } from "./providers/agent-env.ts";
+import { createTransferHttpHandler } from "./transfer/http.ts";
+import { createTransferService } from "./transfer/service.ts";
+import { createClaimFileSync } from "./transfer/file-sync.ts";
 
 const SERVE_OFF_TIMEOUT_MS = 3_000;
 
@@ -79,6 +82,13 @@ export interface ServerOptions {
   now?: () => number;
   /** Test seam. Production uses the socket's remote address. */
   remoteAddress?: (req: IncomingMessage) => string | undefined;
+  /** File sync around a claim. Defaults to the sync engine, bounded by `fileSyncTimeoutMs`. */
+  transfer?: {
+    syncNow?: import("./transfer/types.ts").SyncNow;
+    fileSyncTimeoutMs?: number;
+    releaseAttempts?: number;
+    sleep?: (ms: number) => Promise<void>;
+  };
 }
 
 export interface RunningServer {
@@ -137,33 +147,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     store.close();
   };
   const git = options.git ?? createGitService();
+  const remote = createRemoteRuntime({
+    home: options.home,
+    themes,
+    host: options.host,
+    port: options.port,
+    hostExplicit: options.hostExplicit === true,
+    portExplicit: options.portExplicit === true,
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.remoteAddress ? { remoteAddress: options.remoteAddress } : {}),
+    ...(options.tailscale ? { tailscale: options.tailscale } : {}),
+  });
+  const deviceId = remote.device.id();
+  const authenticate = remote.authenticateRequest;
+  const peers = remote.peers;
   const terminals = createTerminalManager();
-  let dispatchCommand: (command: Command) => void = () => {};
-  const runner = createEffectRunner({
-    store,
-    providers,
-    git,
-    newId: ctx.newId,
-    dispatch: (command) => dispatchCommand(command),
-    deviceSettings: () => themes.getSettings(),
-    limits,
-    now: ctx.now,
-    onWorktreeCreated: (input) =>
-      setupWorktree({
-        ...input,
-        store,
-        terminals,
-        newId: ctx.newId,
-      }),
-  });
-  let syncWriting: (projectId: string) => boolean = () => false;
-  const dispatcher = createDispatcher({
-    store,
-    runner,
-    ctx,
-    deviceSettings: () => themes.getSettings(),
-    projectBusy: (projectId) => syncWriting(projectId),
-  });
+  let dispatchCommand: (command: Command) => ReturnType<Dispatcher["dispatch"]> = () => {
+    throw new Error("dispatcher not ready");
+  };
+  let broadcastSync = (_message: import("@wooky/contracts").SyncPush) => {};
   /** A prompt whose start was refused during a sync write is started when the write ends. */
   const resumeQueuedPrompts = (projectId: string) => {
     for (const thread of Object.values(store.model.threads)) {
@@ -171,7 +173,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         thread.projectId === projectId && thread.status === "idle" ? thread.queue[0] : undefined;
       if (!head) continue;
       try {
-        dispatcher.dispatch({
+        dispatchCommand({
           commandId: `queue:${head.id}`,
           type: "queue.promote",
           threadId: thread.id,
@@ -182,10 +184,73 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
     }
   };
-  dispatchCommand = (command) => {
-    dispatcher.dispatch(command);
-  };
+  const sync = createSyncService({
+    home: options.home,
+    deviceId,
+    store,
+    settings: () => themes.getSettings(),
+    authenticate,
+    peers,
+    resumeQueued: resumeQueuedPrompts,
+  });
+  const syncWriting = sync.engine.isWriting;
+  const transfer = createTransferService({
+    home: options.home,
+    store,
+    themes,
+    deviceId,
+    peers,
+    authenticate,
+    syncNow:
+      options.transfer?.syncNow ??
+      createClaimFileSync({
+        settings: () => themes.getSettings(),
+        engine: sync.engine,
+        peerName: (id) => peers.get(id)?.name ?? id,
+        ...(options.transfer?.fileSyncTimeoutMs !== undefined
+          ? { timeoutMs: options.transfer.fileSyncTimeoutMs }
+          : {}),
+      }),
+    syncStatus: () => sync.engine.status(),
+    ...(options.transfer?.releaseAttempts !== undefined
+      ? { releaseAttempts: options.transfer.releaseAttempts }
+      : {}),
+    ...(options.transfer?.sleep ? { sleep: options.transfer.sleep } : {}),
+    dispatch: (command) => dispatchCommand(command),
+    newId: ctx.newId,
+    now: ctx.now,
+    hasProvider: (kind) => knownProviders.has(kind),
+    broadcastSync: (message) => broadcastSync(message),
+  });
+  const runner = createEffectRunner({
+    store,
+    providers,
+    git,
+    newId: ctx.newId,
+    dispatch: (command) => dispatchCommand(command),
+    deviceSettings: () => themes.getSettings(),
+    limits,
+    now: ctx.now,
+    runClaimThread: (effect) => transfer.runClaimThread(effect),
+    recoverClaims: () => transfer.recoverClaims(),
+    onWorktreeCreated: (input) =>
+      setupWorktree({
+        ...input,
+        store,
+        terminals,
+        newId: ctx.newId,
+      }),
+  });
+  const dispatcher = createDispatcher({
+    store,
+    runner,
+    ctx,
+    deviceSettings: () => themes.getSettings(),
+    projectBusy: (projectId) => syncWriting(projectId),
+  });
+  dispatchCommand = (command) => dispatcher.dispatch(command);
   runner.recover();
+  transfer.start();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
   const agentTokens = createAgentTokenService();
   const fleet = createFleetService({ store, dispatcher, git, tokens: agentTokens });
@@ -198,28 +263,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     enabled: () => themes.getSettings().importLocalHistory,
   });
 
-  const remote = createRemoteRuntime({
-    home: options.home,
-    themes,
-    host: options.host,
-    port: options.port,
-    hostExplicit: options.hostExplicit === true,
-    portExplicit: options.portExplicit === true,
-    ...(options.now ? { now: options.now } : {}),
-    ...(options.remoteAddress ? { remoteAddress: options.remoteAddress } : {}),
-    ...(options.tailscale ? { tailscale: options.tailscale } : {}),
-  });
-  const sync = createSyncService({
-    home: options.home,
-    deviceId: remote.device.id(),
-    store,
-    settings: () => themes.getSettings(),
-    authenticate: remote.authenticateRequest,
-    peers: remote.peers,
-    resumeQueued: (projectId) => resumeQueuedPrompts(projectId),
-  });
-  syncWriting = sync.engine.isWriting;
   const serveStatic = createHttpHandler(options.webDist ?? null);
+  const transferHttp = createTransferHttpHandler({
+    authenticate,
+    replicas: transfer.replicas,
+    themes,
+    deviceId,
+    settings: () => themes.getSettings(),
+    now: ctx.now,
+  });
   const sockets = attachWebSocket(
     {
       store,
@@ -235,15 +287,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       scratch,
       sync,
       attachments: createAttachmentStore(options.home),
+      transfer,
       remote,
     },
     new Set(options.allowedHosts ?? []),
-    options.folderPicker ? { folderPicker: options.folderPicker } : {},
+    {
+      ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
+      onSyncBroadcast: (send) => {
+        broadcastSync = send;
+      },
+    },
   );
   let unpublish: () => void = () => {};
   try {
     await remote.listen({
       handler: (req, res) => {
+        if (transferHttp(req, res)) return;
         if (!sync.routes(req, res)) serveStatic(req, res);
       },
       onUpgrade: sockets.onUpgrade,
@@ -252,6 +311,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
     stopShipPolling();
+    transfer.stop();
     sockets.close();
     remote.closeTunnels();
     await remote.closeServers();
@@ -289,6 +349,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         for (const http of httpServers) http.closeAllConnections();
         await stopped;
         await history.close();
+        transfer.stop();
         await sync.close();
         closeStore();
       })();

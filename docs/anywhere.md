@@ -94,6 +94,14 @@ launched, change hosting, or pair or revoke devices. Concretely, these stay loop
 device that touches any of them is rejected whole, not partially applied. A paired device also
 never gets the folder picker.
 
+Who is "the operator" comes only from the authenticated identity: a `/ws` connection is local when
+`authenticateRequest` resolved it to the unpaired `local` client (loopback, no proxy headers, not the
+Tailscale Serve listener, no valid device token). It never depends on how a token was presented. A
+paired device that sends only its `wooky_token` cookie is still that paired device, not the operator,
+so the rules above and the transfer guard (`thread.claim` / `thread.import`) apply to it. Presenting a
+token explicitly (bearer or `wooky.token.` subprotocol) only decides whether the browser `Origin` is
+checked, because a cookie rides along on cross-site requests.
+
 Project settings (scripts, worktree setup, shared files) are editable from paired devices, like
 running commands in the terminal. The pairing token is the trust boundary: revoking a device
 closes its sockets at once, so it can no longer read or change anything.
@@ -187,16 +195,44 @@ As built (A2, `apps/server/src/sync/`, git calls in `apps/server/src/git/shadow.
   separate `replica_events` table keyed by (ownerDeviceId, seq) and folds them with the
   same reducer into `ReadModel.replicas`.
 - **Continue on this device**: `thread.claim` on the receiver. It asks the owner to
-  `thread.release` (rejected while a turn is running unless `force` after an interrupt),
-  then imports the thread as its own (a new local thread with the transcript as handoff
-  context, the same as a provider handoff) and links `movedFrom`. The owner's copy shows
-  "moved to <device>". Files arrive through file sync, which is required for claim.
+  `thread.release`, then imports the thread as its own (a new local thread with the
+  transcript as handoff context, the same as a provider handoff) and links `movedFrom`. The
+  owner's copy shows "moved to <device>" and refuses new turns. Files arrive through file
+  sync, which is required for claim. When file sync is on, a claim first snapshots and pulls the
+    project from the owner (`apps/server/src/transfer/file-sync.ts`, through the sync engine) and waits
+    at most 30 seconds. If the owner is offline, refuses, or the pull does not finish in time, the claim
+    fails with a reason that says so, and nothing is released or imported. After the owner released
+    (a forced release stops its turn first) the pull is repeated for the final files; if that one fails
+    the claim fails with that reason and can be run again. Which local project a claim lands in is
+    `projectMap[<owner's project id>][<this device>]` (a folder path, as the sync engine reads it; a
+    local project id is also accepted), else the project with the same id.
+  - A running turn refuses the release. A claim with `force` first asks the owner to
+    interrupt the turn and sends the release again only once the turn ended, so the owner
+    never releases a thread with a turn still running.
+  - A release is bound to the authenticated device: a paired device can only release a thread
+    to itself, and only while it is a sync peer. `thread.claim` and `thread.import` are never
+    accepted from a paired device.
+  - The import is built from the replica before the release, is idempotent per claim id,
+    survives a crash after the owner released (a durable `claim_checkpoints` row), and always
+    lands at `approve` whatever the peer's runtime mode was. Imported history is validated
+    (schema, size caps, at most 500 turns); checkpoint refs, native session ids and unsafe
+    changed-file paths are cleared.
+  - Housekeeping (hourly): replica events of owners that are no longer peers, of threads that
+    now live here, were removed on the owner or sat idle for 90 days are dropped (the pull
+    cursor stays); claims that never reached the owner expire after an hour; a leftover release
+    marker expires after a day.
 - Host mode needs none of this: the client just views the host's environment.
 
 ### Settings and themes
 
-Last writer wins per top-level key, with `{value, updatedAt, deviceId}` stamps.
-Each accepted change is a snapshot (`settings` kind) so it can be reverted.
+Last writer wins per top-level key, with `{value, updatedAt, deviceId}` stamps. An equal time
+goes to the larger device id, so peers converge. Only an allowlist of appearance and behaviour
+keys travels; `hosting`, `sync`, `environments`, `deviceName`, `acpAgents` and a provider's
+`binaryPath`, `env` and `extraArgs` stay on the device that set them, and the receiver strips
+them again. A key edited locally is stamped the next time settings are exported, and a value
+applied from a peer keeps the peer's stamp, so it is never sent back as newer. Themes from a
+peer go through the normal theme validation and never overwrite a theme this device already has.
+Each accepted change is recorded so it can be reverted.
 
 ## One-command install
 

@@ -4,8 +4,8 @@ import {
   type RemoteConnection as Connection,
 } from "@wooky/contracts";
 import { useState } from "react";
-import { remoteJoin } from "../../../rpc/anywhere-extra.ts";
 import { loadDeviceSettings } from "../../../state/appearance.ts";
+import { backend } from "../../../state/backend.ts";
 import { useStore } from "../../../state/store.ts";
 import { directPublicHttpWarning } from "../format.ts";
 
@@ -63,7 +63,7 @@ export function AddMachineForm({
     if (!parsed.success || !codeParsed.success) return;
     setBusy(true);
     try {
-      const result = await remoteJoin({
+      const result = await backend().call("remote.join", {
         connection: parsed.data,
         code: codeParsed.data,
         ...(label.trim() ? { label: label.trim() } : {}),

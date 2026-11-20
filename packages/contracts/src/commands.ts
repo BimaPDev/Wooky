@@ -183,8 +183,9 @@ export const Command = z.discriminatedUnion("type", [
     extra: z.string().optional(),
   }),
   /**
-   * Give this thread to another device. Rejected while a turn is running unless `force`
-   * (the caller interrupts first). Files must already sync; the event only records the move.
+   * Give this thread to another device. Rejected while a turn is running. With `force` the
+   * running turn is interrupted instead and nothing is released; send the release again once
+   * the turn ended. Files must already sync; the event only records the move.
    */
   z.object({
     ...base,

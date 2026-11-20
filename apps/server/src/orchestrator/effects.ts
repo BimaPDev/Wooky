@@ -41,6 +41,16 @@ export type Effect =
       strategy: MergeStrategy;
       title: string;
       message?: string;
+    }
+  | {
+      kind: "claimThread";
+      /** Queue key for the effect runner (same as claimId). */
+      threadId: string;
+      claimId: string;
+      ownerDeviceId: string;
+      ownerThreadId: string;
+      projectId: string;
+      force?: boolean;
     };
 
 export type StoredEffect = Effect & { id: number };

@@ -22,6 +22,19 @@ export interface EventStore {
   markEffect(id: number, status: "done" | "retired"): void;
   /** Effects a previous process committed but never finished, oldest first. */
   pendingEffects(): StoredEffect[];
+  /** Append replica events from a peer owner (ignores duplicate owner/seq). */
+  appendReplicaEvents(ownerDeviceId: string, events: readonly AgeEvent[]): number;
+  replicaEventsAfter(ownerDeviceId: string, since: number): AgeEvent[];
+  /** The highest owner seq ever received. It survives pruning so pruned events are not pulled again. */
+  replicaHighWater(ownerDeviceId: string): number;
+  replicaOwners(): string[];
+  dropReplicaOwner(ownerDeviceId: string): number;
+  dropReplicaThreads(ownerDeviceId: string, threadIds: readonly string[]): number;
+  claimCheckpoints(): { claimId: string; releasedAt: string }[];
+  /** Durable checkpoint recording that the owner already released a claim's thread. */
+  markClaimReleased(claimId: string): void;
+  isClaimReleased(claimId: string): boolean;
+  clearClaimReleased(claimId: string): void;
   subscribe(listener: Listener): () => void;
   close(): void;
 }
@@ -58,6 +71,20 @@ export function openEventStore(home: string, clock: () => string): EventStore {
       payload TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('pending', 'done', 'retired'))
     );
+    CREATE TABLE IF NOT EXISTS replica_events (
+      owner_device_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      event_json TEXT NOT NULL,
+      PRIMARY KEY (owner_device_id, seq)
+    );
+    CREATE TABLE IF NOT EXISTS replica_cursors (
+      owner_device_id TEXT PRIMARY KEY,
+      seq INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS claim_checkpoints (
+      claim_id TEXT PRIMARY KEY,
+      released_at TEXT NOT NULL
+    );
   `);
 
   const insertEvent = db.prepare(
@@ -75,6 +102,38 @@ export function openEventStore(home: string, clock: () => string): EventStore {
   const selectPending = db.prepare(
     "SELECT id, payload FROM effects WHERE status = 'pending' ORDER BY id",
   );
+  const insertReplica = db.prepare(
+    "INSERT OR IGNORE INTO replica_events (owner_device_id, seq, event_json) VALUES (?, ?, ?)",
+  );
+  const selectReplicaAfter = db.prepare(
+    "SELECT seq, event_json FROM replica_events WHERE owner_device_id = ? AND seq > ? ORDER BY seq",
+  );
+  const selectReplicaHighWater = db.prepare(
+    `SELECT MAX(
+       COALESCE((SELECT seq FROM replica_cursors WHERE owner_device_id = ?1), 0),
+       COALESCE((SELECT MAX(seq) FROM replica_events WHERE owner_device_id = ?1), 0)
+     ) AS maxSeq`,
+  );
+  const upsertReplicaCursor = db.prepare(
+    `INSERT INTO replica_cursors (owner_device_id, seq) VALUES (?1, ?2)
+     ON CONFLICT(owner_device_id) DO UPDATE SET seq = MAX(seq, excluded.seq)`,
+  );
+  const selectReplicaOwners = db.prepare(
+    "SELECT DISTINCT owner_device_id AS id FROM replica_events",
+  );
+  const deleteReplicaOwner = db.prepare("DELETE FROM replica_events WHERE owner_device_id = ?");
+  const deleteReplicaThread = db.prepare(
+    `DELETE FROM replica_events WHERE owner_device_id = ?1
+       AND COALESCE(json_extract(event_json, '$.threadId'), json_extract(event_json, '$.thread.id')) = ?2`,
+  );
+  const selectClaimCheckpoints = db.prepare(
+    "SELECT claim_id AS claimId, released_at AS releasedAt FROM claim_checkpoints",
+  );
+  const insertClaimReleased = db.prepare(
+    "INSERT OR IGNORE INTO claim_checkpoints (claim_id, released_at) VALUES (?, ?)",
+  );
+  const selectClaimReleased = db.prepare("SELECT 1 FROM claim_checkpoints WHERE claim_id = ?");
+  const deleteClaimReleased = db.prepare("DELETE FROM claim_checkpoints WHERE claim_id = ?");
 
   const decode = (row: EventRow): AgeEvent => {
     const parsed = AgeEvent.safeParse({ ...JSON.parse(row.payload), seq: row.seq, at: row.at });
@@ -171,6 +230,62 @@ export function openEventStore(home: string, clock: () => string): EventStore {
     pendingEffects() {
       const rows = selectPending.all() as unknown as { id: number; payload: string }[];
       return rows.map((row) => ({ ...(JSON.parse(row.payload) as Effect), id: row.id }));
+    },
+    appendReplicaEvents(ownerDeviceId, events) {
+      let added = 0;
+      transaction(() => {
+        for (const event of events) {
+          const { changes } = insertReplica.run(ownerDeviceId, event.seq, JSON.stringify(event));
+          if (changes) added += 1;
+          upsertReplicaCursor.run(ownerDeviceId, event.seq);
+        }
+      });
+      return added;
+    },
+    replicaEventsAfter(ownerDeviceId, since) {
+      const rows = selectReplicaAfter.all(ownerDeviceId, since) as {
+        seq: number;
+        event_json: string;
+      }[];
+      return rows.flatMap((row) => {
+        const parsed = AgeEvent.safeParse({ ...JSON.parse(row.event_json), seq: row.seq });
+        if (!parsed.success) {
+          console.warn(`Skipping replica event ${ownerDeviceId}/${row.seq}: it does not decode`);
+          return [];
+        }
+        return [parsed.data];
+      });
+    },
+    replicaHighWater(ownerDeviceId) {
+      const row = selectReplicaHighWater.get(ownerDeviceId) as
+        { maxSeq: number | null } | undefined;
+      return row?.maxSeq ?? 0;
+    },
+    replicaOwners() {
+      return (selectReplicaOwners.all() as { id: string }[]).map((row) => row.id);
+    },
+    dropReplicaOwner(ownerDeviceId) {
+      return Number(deleteReplicaOwner.run(ownerDeviceId).changes);
+    },
+    dropReplicaThreads(ownerDeviceId, threadIds) {
+      let removed = 0;
+      transaction(() => {
+        for (const id of threadIds)
+          removed += Number(deleteReplicaThread.run(ownerDeviceId, id).changes);
+      });
+      return removed;
+    },
+    claimCheckpoints() {
+      return selectClaimCheckpoints.all() as { claimId: string; releasedAt: string }[];
+    },
+    markClaimReleased(claimId) {
+      insertClaimReleased.run(claimId, clock());
+    },
+    isClaimReleased(claimId) {
+      return selectClaimReleased.get(claimId) !== undefined;
+    },
+    clearClaimReleased(claimId) {
+      deleteClaimReleased.run(claimId);
     },
     subscribe(listener) {
       listeners.add(listener);
