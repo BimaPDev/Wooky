@@ -544,7 +544,9 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
   }
 
   function list(): TerminalInfo[] {
-    return [...sessions.values()].map(toInfo);
+    // A session that is being killed is already gone to a caller; it only lingers
+    // so its exit message still reaches whoever is attached.
+    return [...sessions.values()].filter((session) => !session.closing).map(toInfo);
   }
 
   function write(sessionId: string, data: string) {

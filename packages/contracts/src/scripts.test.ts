@@ -57,6 +57,8 @@ describe("ProjectSettings defaults", () => {
     expect(Project.parse({ id: "p1", name: "app", root: "/work", createdAt: at }).settings).toEqual(
       {
         scripts: [],
+        sharedPaths: [],
+        prompts: [],
       },
     );
   });
@@ -71,6 +73,6 @@ describe("ProjectSettings defaults", () => {
     });
     expect(event.type).toBe("project.added");
     if (event.type !== "project.added") return;
-    expect(event.project.settings).toEqual({ scripts: [] });
+    expect(event.project.settings).toEqual({ scripts: [], sharedPaths: [], prompts: [] });
   });
 });

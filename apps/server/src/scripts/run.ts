@@ -25,7 +25,8 @@ export function scriptArgv(
   platform: NodeJS.Platform,
 ): { file: string; args: string[] } {
   if (platform !== "win32") {
-    return { file: shell.file, args: [...shell.args, "-c", command] };
+    const args = shell.args.includes("-l") ? shell.args : [...shell.args, "-l"];
+    return { file: shell.file, args: [...args, "-c", command] };
   }
   const base = shell.file.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
   if (

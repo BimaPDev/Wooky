@@ -18,6 +18,8 @@ export function ScriptsBar() {
   });
   const threadId = useStore((state) => state.selectedThreadId);
   const scripts = project?.settings.scripts ?? [];
+  const scriptCount = scripts.length;
+  const projectId = project?.id;
   const [live, setLive] = useState<Record<string, string>>({});
   const [ports, setPorts] = useState<Record<string, number>>({});
   const [overflowOpen, setOverflowOpen] = useState(false);
@@ -27,7 +29,7 @@ export function ScriptsBar() {
 
   // sync: live script sessions from terminal.list
   useEffect(() => {
-    if (!project) return;
+    if (!projectId) return;
     let cancelled = false;
     void backend()
       .call("terminal.list", {})
@@ -35,7 +37,7 @@ export function ScriptsBar() {
         if (cancelled) return;
         const next: Record<string, string> = {};
         for (const session of listed) {
-          if (!session.exited && session.projectId === project.id && session.scriptId) {
+          if (!session.exited && session.projectId === projectId && session.scriptId) {
             next[session.scriptId] = session.sessionId;
           }
         }
@@ -45,11 +47,11 @@ export function ScriptsBar() {
     return () => {
       cancelled = true;
     };
-  }, [project?.id]);
+  }, [projectId]);
 
   // sync: terminal output for ${PORT} and session exit
   useEffect(() => {
-    if (!project) return;
+    if (!projectId) return;
     return subscribeTerminal((message) => {
       const scriptId = Object.entries(live).find(
         ([, sessionId]) => sessionId === message.sessionId,
@@ -72,10 +74,11 @@ export function ScriptsBar() {
         });
       }
     });
-  }, [project?.id, live]);
+  }, [projectId, live]);
 
   // sync: hide overflowing script chips on a narrow top bar
   useEffect(() => {
+    if (scriptCount === 0) return;
     const bar = barRef.current;
     const measure = measureRef.current;
     if (!bar || !measure || typeof ResizeObserver === "undefined") return;
@@ -95,7 +98,7 @@ export function ScriptsBar() {
     observer.observe(bar);
     observer.observe(measure);
     return () => observer.disconnect();
-  }, [scripts.length]);
+  }, [scriptCount]);
 
   if (!project || scripts.length === 0) return null;
 

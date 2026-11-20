@@ -25,8 +25,6 @@ export const SCRIPT_ICONS = [
   "branch",
 ] as const;
 
-export type ScriptIconName = (typeof SCRIPT_ICONS)[number];
-
 export function ScriptIcon({ name }: { name?: string }): ReactNode {
   switch (name) {
     case "web":

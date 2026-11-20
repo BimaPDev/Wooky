@@ -31,16 +31,22 @@ describe("applySharedPaths", () => {
     expect((await lstat(join(dest, ".env"))).isSymbolicLink()).toBe(true);
   });
 
-  it("copies a file and preserves mode", async () => {
+  it("copies a file", async () => {
     const { source, dest } = await twin();
-    const srcFile = join(source, ".env");
-    await writeFile(srcFile, "SECRET=1\n");
-    if (posix) await chmod(srcFile, 0o640);
+    await writeFile(join(source, ".env"), "SECRET=1\n");
     const result = await applySharedPaths(source, dest, [{ path: ".env", mode: "copy" }]);
     expect(result.copied).toEqual([".env"]);
     expect(await readFile(join(dest, ".env"), "utf8")).toBe("SECRET=1\n");
     expect((await lstat(join(dest, ".env"))).isSymbolicLink()).toBe(false);
-    if (posix) expect((await lstat(join(dest, ".env"))).mode & 0o777).toBe(0o640);
+  });
+
+  it.skipIf(!posix)("preserves the file mode on copy", async () => {
+    const { source, dest } = await twin();
+    const srcFile = join(source, ".env");
+    await writeFile(srcFile, "SECRET=1\n");
+    await chmod(srcFile, 0o640);
+    await applySharedPaths(source, dest, [{ path: ".env", mode: "copy" }]);
+    expect((await lstat(join(dest, ".env"))).mode & 0o777).toBe(0o640);
   });
 
   it("skips a missing source", async () => {
@@ -72,7 +78,7 @@ describe("applySharedPaths", () => {
     await symlink(outside, join(source, "link"));
     const result = await applySharedPaths(source, dest, [{ path: "link", mode: "link" }]);
     expect(result.results[0]?.action).toBe("refused");
-    await expect(lstat(join(dest, "link"))).rejects.toThrow();
+    await expect(lstat(join(dest, "link"))).rejects.toThrow(/ENOENT/);
   });
 
   it.runIf(process.platform === "win32")("uses a junction or copy for a directory", async () => {
