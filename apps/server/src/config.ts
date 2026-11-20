@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -46,9 +47,15 @@ export function resolveConfig(
   });
   if (values.help) return "help";
   const webDist = values["web-dist"] ?? env.WOOKY_WEB_DIST;
+  const home = resolve(values.home ?? env.WOOKY_HOME ?? join(homedir(), ".wooky"));
+  const explicitPort = values.port ?? env.WOOKY_PORT;
+  const port =
+    explicitPort !== undefined && explicitPort !== ""
+      ? parsePort(explicitPort)
+      : (readHostingPortFromSettings(home) ?? WOOKY_DEFAULT_PORT);
   return {
-    home: resolve(values.home ?? env.WOOKY_HOME ?? join(homedir(), ".wooky")),
-    port: parsePort(values.port ?? env.WOOKY_PORT),
+    home,
+    port,
     host: values.host ?? "127.0.0.1",
     webDist: webDist ? resolve(webDist) : null,
     allowedHosts: [...(values["allow-host"] ?? []), ...(env.WOOKY_ALLOWED_HOSTS ?? "").split(",")]
@@ -65,4 +72,35 @@ function parsePort(raw: string | undefined): number {
   if (!Number.isInteger(port) || port < 0 || port > 65_535)
     throw new Error(`Invalid port "${raw}". Use a number from 0 to 65535.`);
   return port;
+}
+
+/** Reads `hosting.port` from settings.json when the server is started without --port / WOOKY_PORT. */
+export function readHostingPortFromSettings(
+  wookyHome: string,
+  readSettingsFile?: (path: string) => string | null,
+): number | null {
+  const settingsPath = join(wookyHome, "settings.json");
+  const reader =
+    readSettingsFile ??
+    ((filePath: string) => {
+      try {
+        return readFileSync(filePath, "utf8");
+      } catch {
+        return null;
+      }
+    });
+  const raw = reader(settingsPath);
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const hosting = (parsed as { hosting?: unknown }).hosting;
+    if (!hosting || typeof hosting !== "object") return null;
+    const candidate = (hosting as { port?: unknown }).port;
+    if (typeof candidate !== "number" || !Number.isInteger(candidate)) return null;
+    if (candidate < 0 || candidate > 65_535) return null;
+    return candidate;
+  } catch {
+    return null;
+  }
 }

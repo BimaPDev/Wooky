@@ -10,6 +10,7 @@ import {
 import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, posix, win32 } from "node:path";
 import { WOOKY_DEFAULT_PORT } from "@wooky/contracts";
+import { readHostingPortFromSettings } from "../config.ts";
 import { defaultSelfCommandRunner, type SelfCommandRunner } from "../process/self-service.ts";
 
 export const DEFAULT_WOOKY_REPO = "BimaPDev/Wooky";
@@ -130,7 +131,7 @@ export function resolveSelfPaths(options: {
   };
 }
 
-/** Resolve service port: flag > WOOKY_PORT > settings.json `port` > WOOKY_DEFAULT_PORT. */
+/** Resolve service port: flag > WOOKY_PORT > settings.json `hosting.port` > WOOKY_DEFAULT_PORT. */
 export function resolveServicePort(options: {
   portFlag?: string;
   env: Record<string, string | undefined>;
@@ -142,32 +143,47 @@ export function resolveServicePort(options: {
   if (fromFlagOrEnv !== undefined && fromFlagOrEnv !== "") {
     return parseServicePort(fromFlagOrEnv);
   }
-  const p = pathApi(options.platform ?? process.platform);
-  const settingsPath = p.join(options.wookyHome, "settings.json");
-  const reader =
-    options.readSettingsFile ??
-    ((filePath: string) => {
-      try {
-        return readFileSync(filePath, "utf8");
-      } catch {
-        return null;
-      }
-    });
-  const raw = reader(settingsPath);
-  if (raw) {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && "port" in parsed) {
-        const candidate = (parsed as { port: unknown }).port;
-        if (typeof candidate === "number" && Number.isInteger(candidate)) {
-          if (candidate >= 1 && candidate <= 65_535) return candidate;
-        }
-      }
-    } catch {
-      // Ignore corrupt settings.json and fall back to default port.
-    }
-  }
+  const fromSettings = readHostingPortFromSettings(options.wookyHome, options.readSettingsFile);
+  if (fromSettings !== null && fromSettings >= 1) return fromSettings;
   return WOOKY_DEFAULT_PORT;
+}
+
+/** PATH for launchd/systemd units: launcher bin, node bin, then common system dirs. */
+export function buildServicePathEnv(binDir: string, nodeDir: string): string {
+  return [binDir, nodeDir, "/usr/local/bin", "/usr/bin", "/bin"].join(":");
+}
+
+export function resolveServiceNodeBinary(options: {
+  env: Record<string, string | undefined>;
+  launcherPath: string;
+  fallbackNode?: string;
+}): { nodeBin: string; nodeDir: string } {
+  if (options.env.WOOKY_NODE) {
+    const nodeBin = options.env.WOOKY_NODE;
+    return { nodeBin, nodeDir: dirname(nodeBin) };
+  }
+  try {
+    const launcher = readFileSync(options.launcherPath, "utf8");
+    const match = /(?:^|\n)\s*(?:export\s+)?WOOKY_NODE=(?:"([^"]+)"|'([^']+)'|([^\s]+))/.exec(
+      launcher,
+    );
+    const fromLauncher = match?.[1] ?? match?.[2] ?? match?.[3];
+    if (fromLauncher) {
+      return { nodeBin: fromLauncher, nodeDir: dirname(fromLauncher) };
+    }
+  } catch {
+    // Launcher may not exist yet during dry-run tests.
+  }
+  const nodeBin = options.fallbackNode ?? process.execPath;
+  return { nodeBin, nodeDir: dirname(nodeBin) };
+}
+
+function formatSystemdLogDirective(
+  kind: "StandardOutput" | "StandardError",
+  logPath: string,
+): string {
+  if (!/\s/.test(logPath)) return `${kind}=append:${logPath}`;
+  return `${kind}=append:${systemdQuote(logPath)}`;
 }
 
 function parseServicePort(raw: string): number {
@@ -200,15 +216,18 @@ function systemdQuote(value: string): string {
 export function renderLaunchdPlist(options: {
   label?: string;
   launcherPath: string;
-  port: number;
   wookyHome: string;
   logsDir: string;
-  pathEnv?: string;
+  wookyNode: string;
+  pathEnv: string;
 }): string {
   const label = options.label ?? LAUNCHD_LABEL;
-  const programArgs = [options.launcherPath, "--port", String(options.port)];
-  const envEntries: Array<[string, string]> = [["WOOKY_HOME", options.wookyHome]];
-  if (options.pathEnv) envEntries.push(["PATH", options.pathEnv]);
+  const programArgs = [options.launcherPath];
+  const envEntries: Array<[string, string]> = [
+    ["WOOKY_HOME", options.wookyHome],
+    ["WOOKY_NODE", options.wookyNode],
+    ["PATH", options.pathEnv],
+  ];
 
   const argsXml = programArgs.map((arg) => `      <string>${xmlEscape(arg)}</string>`).join("\n");
   const envXml = envEntries
@@ -247,11 +266,14 @@ ${envXml}
 /** Generate a Linux systemd --user service unit. */
 export function renderSystemdUnit(options: {
   launcherPath: string;
-  port: number;
   wookyHome: string;
   logsDir: string;
+  binDir: string;
+  nodeDir: string;
+  wookyNode: string;
 }): string {
-  const execStart = `${systemdQuote(options.launcherPath)} --port ${options.port}`;
+  const execStart = systemdQuote(options.launcherPath);
+  const pathEnv = buildServicePathEnv(options.binDir, options.nodeDir);
   const outLog = posix.join(options.logsDir, "server.out.log");
   const errLog = posix.join(options.logsDir, "server.err.log");
   return `[Unit]
@@ -265,8 +287,10 @@ ExecStart=${execStart}
 Restart=on-failure
 RestartSec=3
 Environment=${systemdQuote(`WOOKY_HOME=${options.wookyHome}`)}
-StandardOutput=append:${outLog}
-StandardError=append:${errLog}
+Environment=${systemdQuote(`WOOKY_NODE=${options.wookyNode}`)}
+Environment=${systemdQuote(`PATH=${pathEnv}`)}
+${formatSystemdLogDirective("StandardOutput", outLog)}
+${formatSystemdLogDirective("StandardError", errLog)}
 
 [Install]
 WantedBy=default.target
@@ -276,17 +300,25 @@ WantedBy=default.target
 /** Generate a Windows Task Scheduler 1.2 XML definition (at logon, hidden, restart on failure). */
 export function renderWindowsTaskXml(options: {
   launcherPath: string;
-  port: number;
   wookyHome: string;
+  userId: string;
 }): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>Wooky coding agent workspace server</Description>
   </RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>${xmlEscape(options.userId)}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <UserId>${xmlEscape(options.userId)}</UserId>
     </LogonTrigger>
   </Triggers>
   <Settings>
@@ -301,13 +333,13 @@ export function renderWindowsTaskXml(options: {
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <RestartOnFailure>
       <Interval>PT1M</Interval>
-      <Count>3</Count>
+      <Count>999</Count>
     </RestartOnFailure>
   </Settings>
   <Actions Context="Author">
     <Exec>
       <Command>${xmlEscape(options.launcherPath)}</Command>
-      <Arguments>--port ${options.port} --home ${xmlEscape(`"${options.wookyHome}"`)}</Arguments>
+      <Arguments>--home ${xmlEscape(`"${options.wookyHome}"`)}</Arguments>
     </Exec>
   </Actions>
 </Task>
@@ -537,18 +569,10 @@ function runService(args: string[], env: NodeJS.ProcessEnv, deps: ResolvedDeps):
   }
 
   const paths = resolveSelfPaths({ platform: deps.platform, homeDir: deps.homeDir, env });
-  const portFlag =
-    typeof flags.get("port") === "string" ? (flags.get("port") as string) : undefined;
 
   if (sub === "install") {
-    const port = resolveServicePort({
-      portFlag,
-      env,
-      wookyHome: paths.wookyHome,
-      platform: deps.platform,
-    });
     const dryRun = flags.has("dry-run");
-    return installService(paths, port, env, deps, dryRun);
+    return installService(paths, env, deps, dryRun);
   }
   if (sub === "uninstall") {
     return uninstallService(paths, env, deps);
@@ -564,23 +588,49 @@ function formatArgv(file: string, args: readonly string[]): string {
   return [file, ...quoted].join(" ");
 }
 
+function prependPathForService(
+  paths: SelfPaths,
+  nodeDir: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  const sep = platform === "win32" ? ";" : ":";
+  const prefix = `${paths.binDir}${sep}${nodeDir}`;
+  const base = env.PATH ?? "";
+  return { ...env, PATH: base ? `${prefix}${sep}${base}` : prefix };
+}
+
+function resolveWindowsTaskUserId(env: NodeJS.ProcessEnv, username: string | undefined): string {
+  const domain = env.USERDOMAIN ?? env.COMPUTERNAME ?? "";
+  const user = username ?? env.USERNAME ?? env.USER ?? "";
+  if (user.includes("\\")) return user;
+  if (domain) return `${domain}\\${user}`;
+  return user || "UNKNOWN";
+}
+
 function installService(
   paths: SelfPaths,
-  port: number,
   env: NodeJS.ProcessEnv,
   deps: ResolvedDeps,
   dryRun = false,
 ): number {
+  const { nodeBin, nodeDir } = resolveServiceNodeBinary({
+    env,
+    launcherPath: paths.launcherPath,
+  });
+  const serviceEnv = prependPathForService(paths, nodeDir, env, deps.platform);
+  const pathEnv = buildServicePathEnv(paths.binDir, nodeDir);
+
   if (deps.platform === "darwin") {
     if (!paths.serviceFile) throw new Error("Missing launchd plist path.");
     const uid = deps.uid;
     if (!dryRun && uid === undefined) throw new Error("Unable to determine user id for launchctl.");
     const plist = renderLaunchdPlist({
       launcherPath: paths.launcherPath,
-      port,
       wookyHome: paths.wookyHome,
       logsDir: paths.logsDir,
-      pathEnv: env.PATH,
+      wookyNode: nodeBin,
+      pathEnv,
     });
     const domain = uid !== undefined ? `gui/${uid}` : "gui/<uid>";
     const bootoutArgs = ["bootout", `${domain}/${LAUNCHD_LABEL}`] as const;
@@ -601,16 +651,14 @@ function installService(
     mkdirSync(dirname(paths.serviceFile), { recursive: true });
     mkdirSync(paths.logsDir, { recursive: true });
     writeFileSync(paths.serviceFile, plist, "utf8");
-    deps.runner.runSync("launchctl", bootoutArgs, { env });
-    const boot = deps.runner.runSync("launchctl", bootstrapArgs, { env });
+    deps.runner.runSync("launchctl", bootoutArgs, { env: serviceEnv });
+    const boot = deps.runner.runSync("launchctl", bootstrapArgs, { env: serviceEnv });
     if (boot.status !== 0) {
       throw new Error(
         `launchctl bootstrap failed: ${(boot.stderr || boot.stdout || boot.error?.message || "unknown error").trim()}`,
       );
     }
-    deps.io.stdout.write(
-      `Installed launchd agent ${paths.serviceFile} (port ${port}).\nLogs: ${paths.logsDir}\n`,
-    );
+    deps.io.stdout.write(`Installed launchd agent ${paths.serviceFile}.\nLogs: ${paths.logsDir}\n`);
     return 0;
   }
 
@@ -618,9 +666,11 @@ function installService(
     if (!paths.serviceFile) throw new Error("Missing systemd unit path.");
     const unit = renderSystemdUnit({
       launcherPath: paths.launcherPath,
-      port,
       wookyHome: paths.wookyHome,
       logsDir: paths.logsDir,
+      binDir: paths.binDir,
+      nodeDir,
+      wookyNode: nodeBin,
     });
     const reloadArgs = ["--user", "daemon-reload"] as const;
     const enableArgs = ["--user", "enable", "--now", SYSTEMD_UNIT_NAME] as const;
@@ -644,21 +694,21 @@ function installService(
     mkdirSync(dirname(paths.serviceFile), { recursive: true });
     mkdirSync(paths.logsDir, { recursive: true });
     writeFileSync(paths.serviceFile, unit, "utf8");
-    const reload = deps.runner.runSync("systemctl", reloadArgs, { env });
+    const reload = deps.runner.runSync("systemctl", reloadArgs, { env: serviceEnv });
     if (reload.status !== 0) {
       throw new Error(
         `systemctl --user daemon-reload failed: ${(reload.stderr || reload.stdout || reload.error?.message || "unknown error").trim()}`,
       );
     }
-    const enable = deps.runner.runSync("systemctl", enableArgs, { env });
+    const enable = deps.runner.runSync("systemctl", enableArgs, { env: serviceEnv });
     if (enable.status !== 0) {
       throw new Error(
         `systemctl --user enable --now failed: ${(enable.stderr || enable.stdout || enable.error?.message || "unknown error").trim()}`,
       );
     }
-    deps.io.stdout.write(`Installed systemd user unit ${paths.serviceFile} (port ${port}).\n`);
+    deps.io.stdout.write(`Installed systemd user unit ${paths.serviceFile}.\n`);
     if (deps.username) {
-      const linger = deps.runner.runSync("loginctl", lingerArgs, { env });
+      const linger = deps.runner.runSync("loginctl", lingerArgs, { env: serviceEnv });
       if (linger.status !== 0) {
         deps.io.stdout.write(
           `Note: could not enable linger automatically (may require privileges). To keep Wooky running after logout, run: sudo loginctl enable-linger ${deps.username}\n`,
@@ -672,8 +722,8 @@ function installService(
     const xmlPath = win32.join(paths.wookyHome, "wooky-task.xml");
     const xml = renderWindowsTaskXml({
       launcherPath: paths.launcherPath,
-      port,
       wookyHome: paths.wookyHome,
+      userId: resolveWindowsTaskUserId(env, deps.username),
     });
     const createArgs = buildSchtasksInstallArgs({ xmlPath });
     const runArgs = buildSchtasksRunArgs();
@@ -693,16 +743,14 @@ function installService(
     mkdirSync(paths.wookyHome, { recursive: true });
     mkdirSync(paths.logsDir, { recursive: true });
     writeFileSync(xmlPath, xml, "utf8");
-    const create = deps.runner.runSync("schtasks.exe", createArgs, { env });
+    const create = deps.runner.runSync("schtasks.exe", createArgs, { env: serviceEnv });
     if (create.status !== 0) {
       throw new Error(
         `schtasks.exe /Create failed: ${(create.stderr || create.stdout || create.error?.message || "unknown error").trim()}`,
       );
     }
-    deps.runner.runSync("schtasks.exe", runArgs, { env });
-    deps.io.stdout.write(
-      `Installed Windows Scheduled Task "${WINDOWS_TASK_NAME}" (port ${port}).\n`,
-    );
+    deps.runner.runSync("schtasks.exe", runArgs, { env: serviceEnv });
+    deps.io.stdout.write(`Installed Windows Scheduled Task "${WINDOWS_TASK_NAME}".\n`);
     return 0;
   }
 
@@ -847,6 +895,9 @@ async function runUpdate(
       WOOKY_REPO: repo,
       ...(version ? { WOOKY_VERSION: version } : {}),
     };
+    delete childEnv.WOOKY_BUNDLE_URL;
+    delete childEnv.WOOKY_SUMS_URL;
+    delete childEnv.WOOKY_ALLOW_LOCAL_BUNDLE;
     const [file, argv] =
       deps.platform === "win32"
         ? ["powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath]]

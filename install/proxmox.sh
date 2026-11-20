@@ -46,6 +46,29 @@ parse_storage_list() {
   awk 'NR > 1 && $3 == "active" { print $1 }'
 }
 
+curl_https() {
+  curl -q --proto '=https' --tlsv1.2 -fsSL "$@"
+}
+
+validate_wooky_repo() {
+  local repo="$1"
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+}
+
+validate_wooky_version() {
+  local ver="$1"
+  [[ "$ver" =~ ^(latest|v?[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+-]*)$ ]]
+}
+
+validate_wooky_agents() {
+  local agents="$1"
+  [[ "$agents" =~ ^[a-z,]*$ ]]
+}
+
+extract_pairing_code() {
+  printf '%s\n' "$1" | grep -oE '[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}' | tail -n 1 || true
+}
+
 # ── Output helpers ───────────────────────────────────────────────────────────
 
 init_colors() {
@@ -170,6 +193,18 @@ main() {
   local repo="${WOOKY_REPO:-BimaPDev/Wooky}"
   local version="${WOOKY_VERSION:-latest}"
   local agents="${WOOKY_AGENTS:-}"
+  if ! validate_wooky_repo "$repo"; then
+    step_err "Invalid WOOKY_REPO \"${repo}\"."
+    exit 1
+  fi
+  if ! validate_wooky_version "$version"; then
+    step_err "Invalid WOOKY_VERSION \"${version}\"."
+    exit 1
+  fi
+  if ! validate_wooky_agents "$agents"; then
+    step_err "Invalid WOOKY_AGENTS \"${agents}\"."
+    exit 1
+  fi
   local default_ctid
   default_ctid="$(pvesh get /cluster/nextid 2>/dev/null || echo 200)"
 
@@ -268,13 +303,19 @@ main() {
   # Wait for container network
   step_info "Waiting for container network..."
   local tries=0
+  local net_ready=0
   while [ "$tries" -lt 30 ]; do
     if pct exec "$ctid" -- sh -c 'ip -4 addr show eth0 | grep -q "inet "' >/dev/null 2>&1; then
+      net_ready=1
       break
     fi
     tries=$((tries + 1))
     sleep 1
   done
+  if [ "$net_ready" != "1" ]; then
+    step_err "Container ${ctid} did not obtain an IPv4 address on eth0 within 30s."
+    exit 1
+  fi
 
   # 3. Install base packages inside the container
   step_info "Installing prerequisites inside container ${ctid}..."
@@ -284,7 +325,7 @@ main() {
   # 4. Optional Tailscale
   if [ "$tailscale" = "1" ]; then
     step_info "Installing Tailscale inside container ${ctid}..."
-    pct exec "$ctid" -- bash -c 'curl -fsSL https://tailscale.com/install.sh | sh'
+    pct exec "$ctid" -- bash -c 'curl -q --proto '"'"'=https'"'"' --tlsv1.2 -fsSL https://tailscale.com/install.sh | sh'
     step_ok "Installed Tailscale (finish setup with: pct exec ${ctid} -- tailscale up)"
   fi
 
@@ -307,18 +348,20 @@ main() {
 
   local install_output
   install_output="$(
-    pct exec "$ctid" -- su - wooky -c "
-      set -eu
-      export XDG_RUNTIME_DIR=\"/run/user/\$(id -u)\"
-      export DBUS_SESSION_BUS_ADDRESS=\"unix:path=\${XDG_RUNTIME_DIR}/bus\"
-      export WOOKY_REPO='${repo}'
-      export WOOKY_VERSION='${version}'
-      export WOOKY_AGENTS='${agents}'
-      export WOOKY_SERVICE=1
-      export WOOKY_HOST=1
-      export WOOKY_YES=1
-      curl -fsSL '${install_url}' | bash
-    "
+    pct exec "$ctid" -- env \
+      "WOOKY_REPO=$repo" \
+      "WOOKY_VERSION=$version" \
+      "WOOKY_AGENTS=$agents" \
+      WOOKY_SERVICE=1 \
+      WOOKY_HOST=1 \
+      WOOKY_YES=1 \
+      "WOOKY_INSTALL_URL=$install_url" \
+      runuser -u wooky -- bash -c '
+        set -eu
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+        curl -q --proto "=https" --tlsv1.2 -fsSL "$WOOKY_INSTALL_URL" | bash
+      '
   )"
   printf '%s\n' "$install_output"
   step_ok "Installed Wooky inside container ${ctid}"
@@ -326,18 +369,14 @@ main() {
   # 6. Summary
   local ct_ip
   ct_ip="$(pct exec "$ctid" -- sh -c "hostname -I | awk '{print \$1}'" 2>/dev/null || echo "<container-ip>")"
-  local pair_line
-  pair_line="$(printf '%s\n' "$install_output" | grep -Ei 'pair|code' | tail -n 1 || true)"
+  local pair_code
+  pair_code="$(extract_pairing_code "$install_output")"
 
   printf '\n%sWooky Proxmox LXC %s is ready.%s\n' "$C_BOLD" "$ctid" "$C_RESET"
   printf '  Container ID:  %s (%s)\n' "$ctid" "$ct_hostname"
   printf '  Container IP:  %s\n' "$ct_ip"
   printf '  Wooky URL:     http://%s:4317\n' "$ct_ip"
-  if [ -n "$pair_line" ]; then
-    printf '  Pairing:       %s\n' "$pair_line"
-  else
-    printf '  Pairing:       run `pct exec %s -- su - wooky -c "wooky pair --print"` once pairing is enabled\n' "$ctid"
-  fi
+  printf '  Pairing:       %s\n' "$pair_code"
   if [ "$tailscale" = "1" ]; then
     printf '  Tailscale:     run `pct exec %s -- tailscale up` to join your tailnet\n' "$ctid"
   fi

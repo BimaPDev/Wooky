@@ -19,7 +19,13 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pnpmCommand } from "./pnpm-spawn.mjs";
 
-const NATIVE_EXTERNALS = ["node-pty"];
+const NATIVE_PACKAGE_CANDIDATES = ["node-pty"];
+
+function discoverNativeExternals(serverPkg) {
+  return NATIVE_PACKAGE_CANDIDATES.filter(
+    (name) => serverPkg.dependencies?.[name] ?? serverPkg.optionalDependencies?.[name],
+  );
+}
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._-]*$/;
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -158,6 +164,11 @@ async function main() {
   const stageDir = mkdtempSync(join(tmpdir(), "wooky-release-stage-"));
 
   try {
+    const serverPkg = JSON.parse(
+      readFileSync(join(root, "apps", "server", "package.json"), "utf8"),
+    );
+    const nativeExternals = discoverNativeExternals(serverPkg);
+
     const serverOutDir = join(stageDir, "server");
     const binOutDir = join(stageDir, "bin");
     const webOutDir = join(stageDir, "web");
@@ -169,7 +180,7 @@ async function main() {
       platform: "node",
       format: "esm",
       target: "node24",
-      external: ["node:*", ...NATIVE_EXTERNALS],
+      external: ["node:*", ...nativeExternals],
       banner: {
         js: 'import { createRequire as __wookyCreateRequire } from "node:module"; const require = __wookyCreateRequire(import.meta.url);',
       },
@@ -192,11 +203,8 @@ async function main() {
 
     cpSync(webDist, webOutDir, { recursive: true });
 
-    const serverPkg = JSON.parse(
-      readFileSync(join(root, "apps", "server", "package.json"), "utf8"),
-    );
     const nativeDeps = {};
-    for (const pkgName of NATIVE_EXTERNALS) {
+    for (const pkgName of nativeExternals) {
       const range = serverPkg.dependencies?.[pkgName] ?? serverPkg.optionalDependencies?.[pkgName];
       if (range) nativeDeps[pkgName] = range;
     }

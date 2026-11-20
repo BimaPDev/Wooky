@@ -201,6 +201,30 @@ describe.skipIf(process.platform === "win32")("install/install.sh pure helpers",
 });
 
 describe.skipIf(process.platform === "win32")("install/proxmox.sh pure helpers", () => {
+  it("validates Wooky env vars before use", () => {
+    expect(runProxmoxHelper('validate_wooky_repo "BimaPDev/Wooky"').status).toBe(0);
+    expect(runProxmoxHelper('validate_wooky_repo "bad/repo/name"').status).not.toBe(0);
+    expect(runProxmoxHelper('validate_wooky_version "latest"').status).toBe(0);
+    expect(runProxmoxHelper('validate_wooky_version "0.1.0"').status).toBe(0);
+    expect(runProxmoxHelper('validate_wooky_version "not-a-version"').status).not.toBe(0);
+    expect(runProxmoxHelper('validate_wooky_agents "claude,codex"').status).toBe(0);
+    expect(runProxmoxHelper('validate_wooky_agents "Claude"').status).not.toBe(0);
+  });
+
+  it("extracts an 8-char pairing code from installer output", () => {
+    const output = ["Wooky is ready.", "Pairing code: ABCDEFGH", "noise"].join("\n");
+    expect(
+      runProxmoxHelper('text="$(cat)"; extract_pairing_code "$text"', [], output).stdout.trim(),
+    ).toBe("ABCDEFGH");
+    expect(
+      runProxmoxHelper(
+        'text="$(cat)"; extract_pairing_code "$text"',
+        [],
+        "no pairing here\n",
+      ).stdout.trim(),
+    ).toBe("");
+  });
+
   it("normalizes disk sizes and builds net0 specs", () => {
     expect(runProxmoxHelper('normalize_disk_gb "$1"', ["16G"]).stdout.trim()).toBe("16");
     expect(runProxmoxHelper('normalize_disk_gb "$1"', ["32"]).stdout.trim()).toBe("32");

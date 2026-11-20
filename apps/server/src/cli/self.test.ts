@@ -12,6 +12,7 @@ import {
   buildSchtasksRunArgs,
   buildSchtasksStatusArgs,
   buildSchtasksUninstallArgs,
+  buildServicePathEnv,
   LAUNCHD_LABEL,
   renderLaunchdPlist,
   renderSystemdUnit,
@@ -156,7 +157,7 @@ describe("resolveServicePort", () => {
       resolveServicePort({
         env: {},
         wookyHome: "/tmp/h",
-        readSettingsFile: () => JSON.stringify({ port: 5123 }),
+        readSettingsFile: () => JSON.stringify({ hosting: { port: 5123 } }),
       }),
     ).toBe(5123);
 
@@ -164,7 +165,7 @@ describe("resolveServicePort", () => {
       resolveServicePort({
         env: { WOOKY_PORT: "6000" },
         wookyHome: "/tmp/h",
-        readSettingsFile: () => JSON.stringify({ port: 5123 }),
+        readSettingsFile: () => JSON.stringify({ hosting: { port: 5123 } }),
       }),
     ).toBe(6000);
 
@@ -173,7 +174,7 @@ describe("resolveServicePort", () => {
         portFlag: "7000",
         env: { WOOKY_PORT: "6000" },
         wookyHome: "/tmp/h",
-        readSettingsFile: () => JSON.stringify({ port: 5123 }),
+        readSettingsFile: () => JSON.stringify({ hosting: { port: 5123 } }),
       }),
     ).toBe(7000);
   });
@@ -199,17 +200,23 @@ describe("resolveServicePort", () => {
 
 describe("service config rendering", () => {
   it("renders a valid macOS launchd plist with XML escaping", () => {
+    const binDir = "/Users/a&b/.local/bin";
+    const nodeDir = "/Users/a&b/.wooky/runtime/node/bin";
+    const pathEnv = buildServicePathEnv(binDir, nodeDir);
     const plist = renderLaunchdPlist({
       launcherPath: "/Users/a&b/.local/bin/wooky",
-      port: 4317,
       wookyHome: "/Users/a&b/.wooky",
       logsDir: "/Users/a&b/.wooky/logs",
-      pathEnv: "/usr/local/bin:/usr/bin",
+      wookyNode: "/Users/a&b/.wooky/runtime/node/bin/node",
+      pathEnv,
     });
     expect(plist).toContain(`<string>${LAUNCHD_LABEL}</string>`);
     expect(plist).toContain("<string>/Users/a&amp;b/.local/bin/wooky</string>");
-    expect(plist).toContain("<string>--port</string>");
-    expect(plist).toContain("<string>4317</string>");
+    expect(plist).not.toContain("--port");
+    expect(plist).toContain("<key>WOOKY_NODE</key>");
+    expect(plist).toContain(
+      "<string>/Users/a&amp;b/.local/bin:/Users/a&amp;b/.wooky/runtime/node/bin:/usr/local/bin:/usr/bin:/bin</string>",
+    );
     expect(plist).toContain("<key>RunAtLoad</key>\n    <true/>");
     expect(plist).toContain("<key>KeepAlive</key>\n    <true/>");
     expect(plist).toContain("<string>/Users/a&amp;b/.wooky/logs/server.out.log</string>");
@@ -217,29 +224,42 @@ describe("service config rendering", () => {
   });
 
   it("renders a Linux systemd user unit with quoted paths", () => {
+    const binDir = "/home/my user/.local/bin";
+    const nodeDir = "/home/my user/.wooky/runtime/node/bin";
     const unit = renderSystemdUnit({
       launcherPath: "/home/my user/.local/bin/wooky",
-      port: 4400,
       wookyHome: "/home/my user/.wooky",
       logsDir: "/home/my user/.wooky/logs",
+      binDir,
+      nodeDir,
+      wookyNode: "/home/my user/.wooky/runtime/node/bin/node",
     });
     expect(unit).toContain("[Unit]");
-    expect(unit).toContain('ExecStart="/home/my user/.local/bin/wooky" --port 4400');
+    expect(unit).toContain('ExecStart="/home/my user/.local/bin/wooky"');
+    expect(unit).not.toContain("--port");
     expect(unit).toContain("Restart=on-failure");
     expect(unit).toContain('Environment="WOOKY_HOME=/home/my user/.wooky"');
+    expect(unit).toContain('Environment="WOOKY_NODE=/home/my user/.wooky/runtime/node/bin/node"');
+    expect(unit).toContain(`${binDir}:${nodeDir}:/usr/local/bin:/usr/bin:/bin`);
+    expect(unit).toContain('StandardOutput=append:"/home/my user/.wooky/logs/server.out.log"');
     expect(unit).toContain("WantedBy=default.target");
   });
 
   it("renders Windows Task XML and schtasks.exe argv arrays", () => {
     const xml = renderWindowsTaskXml({
       launcherPath: "C:\\Users\\ada\\AppData\\Local\\Wooky\\bin\\wooky.cmd",
-      port: 4317,
       wookyHome: "C:\\Users\\ada\\.wooky",
+      userId: "HOST\\ada",
     });
     expect(xml).toContain("<LogonTrigger>");
+    expect(xml).toContain("<Principals>");
+    expect(xml).toContain("<UserId>HOST\\ada</UserId>");
+    expect(xml).toContain("<LogonType>InteractiveToken</LogonType>");
+    expect(xml).toContain("<Count>999</Count>");
     expect(xml).toContain("<Hidden>true</Hidden>");
     expect(xml).toContain("<RestartOnFailure>");
     expect(xml).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
+    expect(xml).not.toContain("--port");
     expect(xml).toContain(
       "<Command>C:\\Users\\ada\\AppData\\Local\\Wooky\\bin\\wooky.cmd</Command>",
     );
@@ -341,11 +361,18 @@ describe("update URL validation", () => {
 describe("runSelfCli commands", () => {
   it("prints launchd files and commands with --dry-run on macOS", async () => {
     const home = makeTempDir("wooky-self-dry-mac-");
+    const binDir = join(home, ".local", "bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(binDir, "wooky"),
+      '#!/bin/sh\nexport WOOKY_NODE="/opt/node24/bin/node"\n',
+      "utf8",
+    );
     const { runner } = fakeRunner();
     const io = captureIo();
     const code = await runSelfCli(
-      ["service", "install", "--port", "4512", "--dry-run"],
-      {},
+      ["service", "install", "--dry-run"],
+      { WOOKY_NODE: "/opt/node24/bin/node" },
       {
         platform: "darwin",
         homeDir: home,
@@ -358,6 +385,8 @@ describe("runSelfCli commands", () => {
     const out = io.out();
     expect(out).toContain("Dry run: macOS launchd service install");
     expect(out).toContain(join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`));
+    expect(out).toContain("/opt/node24/bin/node");
+    expect(out).toContain(`${binDir}:/opt/node24/bin`);
     expect(out).toContain("launchctl bootout gui/501/dev.wooky.server");
     expect(out).toContain("launchctl bootstrap gui/501");
     expect(existsSync(join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`))).toBe(false);
@@ -365,6 +394,9 @@ describe("runSelfCli commands", () => {
 
   it("prints systemd files and commands with --dry-run on Linux", async () => {
     const home = makeTempDir("wooky-self-dry-linux-");
+    const binDir = join(home, ".local", "bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, "wooky"), '#!/bin/sh\nexport WOOKY_NODE="/usr/bin/node"\n', "utf8");
     const { runner } = fakeRunner();
     const io = captureIo();
     const code = await runSelfCli(
@@ -385,6 +417,8 @@ describe("runSelfCli commands", () => {
     expect(out).toContain("systemctl --user daemon-reload");
     expect(out).toContain(`systemctl --user enable --now ${SYSTEMD_UNIT_NAME}`);
     expect(out).toContain("loginctl enable-linger wooky");
+    expect(out).toContain(`${binDir}:/usr/bin`);
+    expect(out).toContain("WOOKY_NODE=/usr/bin/node");
   });
 
   it("prints schtasks files and commands with --dry-run on Windows", async () => {
@@ -411,6 +445,13 @@ describe("runSelfCli commands", () => {
 
   it("installs, inspects, and uninstalls a macOS launchd service", async () => {
     const home = makeTempDir("wooky-self-mac-");
+    const binDir = join(home, ".local", "bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(binDir, "wooky"),
+      '#!/bin/sh\nexport WOOKY_NODE="/usr/local/bin/node"\n',
+      "utf8",
+    );
     const { runner, calls } = fakeRunner((file, args) => {
       if (file === "launchctl" && args[0] === "print") {
         return { status: 0, stdout: "state = running\n", stderr: "" };
@@ -420,8 +461,8 @@ describe("runSelfCli commands", () => {
 
     const io1 = captureIo();
     const installCode = await runSelfCli(
-      ["service", "install", "--port", "4512"],
-      {},
+      ["service", "install"],
+      { WOOKY_NODE: "/usr/local/bin/node", PATH: "/usr/bin:/bin" },
       {
         platform: "darwin",
         homeDir: home,
@@ -433,7 +474,12 @@ describe("runSelfCli commands", () => {
     expect(installCode).toBe(0);
     const plistPath = join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
     expect(existsSync(plistPath)).toBe(true);
-    expect(readFileSync(plistPath, "utf8")).toContain("<string>4512</string>");
+    const plist = readFileSync(plistPath, "utf8");
+    expect(plist).toContain("<string>/usr/local/bin/node</string>");
+    expect(plist).toContain(`${binDir}:/usr/local/bin`);
+    expect(plist).not.toContain("--port");
+    const bootstrapCall = calls.find((c) => c.file === "launchctl" && c.args[0] === "bootstrap");
+    expect(bootstrapCall?.env?.PATH?.startsWith(`${binDir}:/usr/local/bin:`)).toBe(true);
     expect(
       calls.some(
         (c) => c.file === "launchctl" && c.args[0] === "bootstrap" && c.args[1] === "gui/501",
@@ -523,7 +569,11 @@ describe("runSelfCli commands", () => {
     const io = captureIo();
     const code = await runSelfCli(
       ["update", "--version", "0.2.0"],
-      {},
+      {
+        WOOKY_BUNDLE_URL: "file:///tmp/wooky.tgz",
+        WOOKY_SUMS_URL: "file:///tmp/SHA256SUMS",
+        WOOKY_ALLOW_LOCAL_BUNDLE: "1",
+      },
       {
         platform: "linux",
         homeDir: home,
@@ -535,6 +585,9 @@ describe("runSelfCli commands", () => {
     expect(code).toBe(0);
     expect(capturedEnv?.WOOKY_YES).toBe("1");
     expect(capturedEnv?.WOOKY_VERSION).toBe("0.2.0");
+    expect(capturedEnv?.WOOKY_BUNDLE_URL).toBeUndefined();
+    expect(capturedEnv?.WOOKY_SUMS_URL).toBeUndefined();
+    expect(capturedEnv?.WOOKY_ALLOW_LOCAL_BUNDLE).toBeUndefined();
     expect(existsSync(capturedScriptPath)).toBe(false);
   });
 

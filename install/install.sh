@@ -211,11 +211,19 @@ compute_sha256() {
   fi
 }
 
+curl_https() {
+  curl -q --proto '=https' --tlsv1.2 -fsSL "$@"
+}
+
 download_file() {
   _url="$1"
   _dest="$2"
   case "$_url" in
     file://*)
+      if [ "${WOOKY_ALLOW_LOCAL_BUNDLE:-0}" != "1" ]; then
+        step_err "Local bundle URLs require WOOKY_ALLOW_LOCAL_BUNDLE=1."
+        return 1
+      fi
       _local_path="${_url#file://}"
       if [ ! -f "$_local_path" ]; then
         step_err "Local file not found: $_local_path"
@@ -224,9 +232,21 @@ download_file() {
       cp "$_local_path" "$_dest"
       ;;
     *)
-      curl -fsSL "$_url" -o "$_dest"
+      curl_https "$_url" -o "$_dest"
       ;;
   esac
+}
+
+fix_node_pty_spawn_helpers() {
+  _root="$1"
+  if [ ! -d "$_root/node_modules/node-pty" ]; then
+    return 0
+  fi
+  find "$_root/node_modules/node-pty" -type f \( \
+    -path '*/prebuilds/*/spawn-helper' -o -path '*/build/Release/spawn-helper' \
+  \) 2>/dev/null | while IFS= read -r _helper; do
+    [ -n "$_helper" ] && chmod +x "$_helper" 2>/dev/null || true
+  done
 }
 
 node_has_sqlite() {
@@ -309,7 +329,7 @@ resolve_release_tag() {
   _repo="$1"
   _ver="$2"
   if [ "$_ver" = "latest" ] || [ -z "$_ver" ]; then
-    _effective="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${_repo}/releases/latest")" || {
+    _effective="$(curl_https -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${_repo}/releases/latest")" || {
       step_err "Failed to query latest release for ${_repo}."
       return 1
     }
@@ -358,7 +378,7 @@ install_agents() {
     case "$_agent" in
       claude)
         step_info "Installing Claude Code..."
-        if curl -fsSL https://claude.ai/install.sh | bash; then
+        if curl_https https://claude.ai/install.sh | bash; then
           step_ok "Installed Claude Code (sign in on this machine with: claude)"
           _installed_any=1
         else
@@ -381,7 +401,7 @@ install_agents() {
         ;;
       opencode)
         step_info "Installing OpenCode..."
-        if curl -fsSL https://opencode.ai/install | bash; then
+        if curl_https https://opencode.ai/install | bash; then
           step_ok "Installed OpenCode (sign in on this machine with: opencode)"
           _installed_any=1
         else
@@ -559,6 +579,7 @@ main() {
     if ! (cd "$STAGE_DIR" && PATH="$NODE_BIN_DIR:$PATH" npm install --omit=dev --no-audit --no-fund >/dev/null 2>&1); then
       step_warn "Optional native module build failed (missing C++ build tools); terminal will use pipe mode."
     fi
+    fix_node_pty_spawn_helpers "$STAGE_DIR"
   fi
 
   rm -rf "$VERSION_DIR"
@@ -576,9 +597,7 @@ main() {
     printf '%s\n' '#!/bin/sh'
     printf '%s\n' 'set -eu'
     printf 'WOOKY_PREFIX="${WOOKY_PREFIX:-%s}"\n' "$WOOKY_PREFIX"
-    if [ "$NODE_MANAGED" = "1" ]; then
-      printf 'export WOOKY_NODE="${WOOKY_NODE:-%s}"\n' "$NODE_BIN"
-    fi
+    printf 'export WOOKY_NODE="${WOOKY_NODE:-%s}"\n' "$NODE_BIN"
     printf '%s\n' 'exec "$WOOKY_PREFIX/current/bin/wooky" "$@"'
   } > "$LAUNCHER"
   chmod +x "$LAUNCHER"
@@ -595,10 +614,14 @@ main() {
       printf '    %s\n' "$HINT_LINE"
       if confirm_prompt "Append this line to ${RC_FILE}?"; then
         mkdir -p "$(dirname "$RC_FILE")"
+        _rc_updated=0
         if [ ! -f "$RC_FILE" ] || ! grep -Fq "$HINT_LINE" "$RC_FILE"; then
           printf '\n# Added by Wooky installer\n%s\n' "$HINT_LINE" >> "$RC_FILE"
+          _rc_updated=1
         fi
-        step_ok "Updated ${RC_FILE}"
+        if [ "$_rc_updated" = "1" ]; then
+          step_ok "Updated ${RC_FILE}"
+        fi
       fi
       ;;
   esac
@@ -606,7 +629,7 @@ main() {
   # 5. Optional background service
   if [ "$WOOKY_SERVICE" = "1" ]; then
     step_info "Configuring background service..."
-    if WOOKY_HOME="$WOOKY_HOME" WOOKY_PREFIX="$WOOKY_PREFIX" WOOKY_BIN_DIR="$WOOKY_BIN_DIR" "$LAUNCHER" service install; then
+    if PATH="${WOOKY_BIN_DIR}:${NODE_BIN_DIR}:${PATH}" WOOKY_HOME="$WOOKY_HOME" WOOKY_PREFIX="$WOOKY_PREFIX" WOOKY_BIN_DIR="$WOOKY_BIN_DIR" WOOKY_NODE="$NODE_BIN" "$LAUNCHER" service install; then
       step_ok "Background service installed and started"
     else
       step_warn "Background service setup failed; you can still run 'wooky' directly."

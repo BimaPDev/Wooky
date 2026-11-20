@@ -106,11 +106,35 @@ function Save-WookyUrl {
     [string]$Destination
   )
   if ($Url.StartsWith('file://')) {
+    if ($env:WOOKY_ALLOW_LOCAL_BUNDLE -ne '1') {
+      throw 'Local bundle URLs require WOOKY_ALLOW_LOCAL_BUNDLE=1.'
+    }
     $uri = [Uri]$Url
     Copy-Item -Path $uri.LocalPath -Destination $Destination -Force
     return
   }
+  $uri = [Uri]$Url
+  if ($uri.Scheme -ne 'https') {
+    throw "Refusing non-HTTPS URL: $Url"
+  }
   Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+}
+
+function Repair-WookyNodePtySpawnHelper {
+  param([string]$BundleRoot)
+  if ($PSVersionTable.PSVersion.Major -lt 6 -or $IsWindows) { return }
+  $ptyRoot = Join-Path $BundleRoot 'node_modules/node-pty'
+  if (-not (Test-Path $ptyRoot)) { return }
+  Get-ChildItem -Path $ptyRoot -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.Name -eq 'spawn-helper' -and (
+        $_.FullName -match '[/\\]prebuilds[/\\][^/\\]+[/\\]spawn-helper$' -or
+        $_.FullName -match '[/\\]build[/\\]Release[/\\]spawn-helper$'
+      )
+    } |
+    ForEach-Object {
+      & chmod +x $_.FullName 2>$null
+    }
 }
 
 function Ensure-WookyNode {
@@ -376,6 +400,7 @@ function Invoke-WookyInstall {
         if ($LASTEXITCODE -ne 0) {
           Write-WookyStep 'warn' 'Optional native module build failed (missing build tools); terminal will use pipe mode.'
         }
+        Repair-WookyNodePtySpawnHelper -BundleRoot $stageDir
       } finally {
         $env:Path = $oldPath
         Pop-Location
@@ -388,10 +413,18 @@ function Invoke-WookyInstall {
     Move-Item -Path $stageDir -Destination $versionDir
 
     $currentLink = Join-Path $prefix 'current'
-    if (Test-Path $currentLink) {
+    if (Test-Path -LiteralPath $currentLink) {
       cmd.exe /d /c rmdir "$currentLink" 2>$null | Out-Null
-      if (Test-Path $currentLink) {
-        Remove-Item -Path $currentLink -Recurse -Force
+      if (Test-Path -LiteralPath $currentLink) {
+        $linkItem = Get-Item -LiteralPath $currentLink -Force
+        $isJunction = ($linkItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+        if (-not $isJunction) {
+          throw "Refusing to remove non-junction path at $currentLink (expected directory junction)."
+        }
+        cmd.exe /d /c rmdir "$currentLink"
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to remove junction $currentLink"
+        }
       }
     }
     cmd.exe /d /c mklink /J "$currentLink" "$versionDir" *> $null
@@ -408,9 +441,7 @@ function Invoke-WookyInstall {
       'setlocal',
       "if not defined WOOKY_PREFIX set `"WOOKY_PREFIX=$prefix`""
     )
-    if ($nodeInfo.Managed) {
-      $launcherLines += "if not defined WOOKY_NODE set `"WOOKY_NODE=$nodePath`""
-    }
+    $launcherLines += "if not defined WOOKY_NODE set `"WOOKY_NODE=$nodePath`""
     $launcherLines += '"%WOOKY_PREFIX%\current\bin\wooky.cmd" %*'
     $launcherLines += 'exit /b %ERRORLEVEL%'
     Set-Content -Path $launcher -Value ($launcherLines -join "`r`n") -Encoding ASCII
@@ -423,6 +454,8 @@ function Invoke-WookyInstall {
       $env:WOOKY_HOME = $wookyHome
       $env:WOOKY_PREFIX = $prefix
       $env:WOOKY_BIN_DIR = $binDir
+      $env:WOOKY_NODE = $nodePath
+      $env:Path = "$binDir;$nodeDir;$env:Path"
       & $launcher service install
       if ($LASTEXITCODE -eq 0) {
         Write-WookyStep 'ok' 'Background service installed and started'
