@@ -13,6 +13,9 @@ export const MAX_THEME_IMPORT_TEXT = 7_000_000;
 
 const SVG_START_RE = /^\s*(?:<\?xml[\s\S]*?\?>\s*)?<svg\b/i;
 const ANIMATED_SVG_RE = /<\s*animate(?:Transform)?\b|@keyframes\b|<\s*set\b/i;
+const RTF_START_RE = /^\s*\{\\rtf/i;
+const RTF_MESSAGE =
+  "This file is rich text (RTF), not JSON. In TextEdit choose Format → Make Plain Text, or download the .json from the theme page.";
 
 const T3_TO_AGE: Record<string, keyof ThemeColorRoles | "canvas" | "accent"> = {
   canvas: "canvas",
@@ -36,6 +39,10 @@ const T3_TO_AGE: Record<string, keyof ThemeColorRoles | "canvas" | "accent"> = {
   errorSurface: "redBg",
 };
 
+function invalidT3Field(field: string, detail: string): Error {
+  return new Error(`Invalid t3 theme field "${field}": ${detail}`);
+}
+
 function slugify(input: string): string {
   const slug = input
     .toLowerCase()
@@ -51,7 +58,10 @@ function idFromFilename(filename: string | undefined, fallback: string): string 
   return slugify(base || fallback);
 }
 
-function mapT3Colors(colors: Record<string, unknown>): {
+function mapT3Colors(
+  colors: Record<string, unknown>,
+  prefix = "colors",
+): {
   canvas: string;
   accent: string;
   roles: ThemeColorRoles;
@@ -60,25 +70,30 @@ function mapT3Colors(colors: Record<string, unknown>): {
   let accent = "#d7c9a7";
   const roles: ThemeColorRoles = {};
   for (const [key, value] of Object.entries(colors)) {
-    if (typeof value !== "string") continue;
-    const parsed = HexColor.safeParse(value);
-    if (!parsed.success) continue;
     const target = T3_TO_AGE[key];
+    if (!target) continue;
+    const parsed = HexColor.safeParse(value);
+    if (!parsed.success) {
+      throw invalidT3Field(
+        `${prefix}.${key}`,
+        `expected a hex colour, got ${JSON.stringify(value)}.`,
+      );
+    }
     if (target === "canvas") canvas = parsed.data;
     else if (target === "accent") accent = parsed.data;
-    else if (target) roles[target] = parsed.data;
+    else roles[target] = parsed.data;
   }
   return { canvas, accent, roles };
 }
 
-function mapT3Variant(raw: Record<string, unknown>): ThemeVariant | undefined {
+function mapT3Variant(raw: Record<string, unknown>, field: string): ThemeVariant {
   const nested =
     typeof raw.colors === "object" && raw.colors !== null
       ? (raw.colors as Record<string, unknown>)
       : {};
   const merged = { ...nested, ...raw };
   delete merged.colors;
-  const mapped = mapT3Colors(merged);
+  const mapped = mapT3Colors(merged, `${field}.colors`);
   return {
     canvas: mapped.canvas,
     accent: mapped.accent,
@@ -89,11 +104,15 @@ function mapT3Variant(raw: Record<string, unknown>): ThemeVariant | undefined {
 function isT3codeTheme(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null) return false;
   const obj = value as Record<string, unknown>;
-  if (typeof obj.name !== "string") return false;
-  if (obj.appearance !== "dark" && obj.appearance !== "light") return false;
-  const colors = obj.colors;
-  if (typeof colors !== "object" || colors === null) return false;
-  return typeof (colors as Record<string, unknown>).canvas === "string";
+  return typeof obj.name === "string" && typeof obj.colors === "object" && obj.colors !== null;
+}
+
+function themeContentField(message: string): string {
+  if (message.startsWith("Theme css")) return "css";
+  if (message.startsWith("Theme background")) return "background";
+  if (message.startsWith("Dark variant background")) return "variants.dark.background";
+  if (message.startsWith("Light variant background")) return "variants.light.background";
+  return "theme";
 }
 
 function isWookyTheme(value: unknown): boolean {
@@ -133,29 +152,41 @@ function importSvg(text: string, filename?: string): { theme: Theme; format: The
 }
 
 function importT3code(raw: Record<string, unknown>): { theme: Theme; format: ThemeImportFormat } {
-  const name = String(raw.name);
+  const name = raw.name;
+  if (typeof name !== "string" || name.length === 0 || name.length > 80) {
+    throw invalidT3Field("name", "expected a string of 1 to 80 characters.");
+  }
+  if (raw.appearance !== "dark" && raw.appearance !== "light") {
+    throw invalidT3Field(
+      "appearance",
+      `expected "dark" or "light", got ${JSON.stringify(raw.appearance)}.`,
+    );
+  }
+  if (raw.css !== undefined && typeof raw.css !== "string") {
+    throw invalidT3Field("css", "expected a string.");
+  }
+  if (typeof raw.css === "string" && raw.css.trim().length > 50_000) {
+    throw invalidT3Field("css", "exceeds 50,000 characters.");
+  }
   const id = slugify(name);
-  const { canvas, accent, roles } = mapT3Colors((raw.colors ?? {}) as Record<string, unknown>);
-  const appearance = raw.appearance === "light" ? "light" : "dark";
+  const { canvas, accent, roles } = mapT3Colors(raw.colors as Record<string, unknown>);
   const css = typeof raw.css === "string" ? raw.css.trim() : "";
   const variants: Theme["variants"] = {};
   const rawVariants = raw.variants;
   if (typeof rawVariants === "object" && rawVariants !== null) {
     const v = rawVariants as Record<string, unknown>;
     if (typeof v.light === "object" && v.light !== null) {
-      const mapped = mapT3Variant(v.light as Record<string, unknown>);
-      if (mapped) variants.light = mapped;
+      variants.light = mapT3Variant(v.light as Record<string, unknown>, "variants.light");
     }
     if (typeof v.dark === "object" && v.dark !== null) {
-      const mapped = mapT3Variant(v.dark as Record<string, unknown>);
-      if (mapped) variants.dark = mapped;
+      variants.dark = mapT3Variant(v.dark as Record<string, unknown>, "variants.dark");
     }
   }
-  const theme = AppearanceTheme.parse({
+  const parsed = AppearanceTheme.safeParse({
     version: 1,
     id,
     name,
-    appearance,
+    appearance: raw.appearance,
     canvas,
     accent,
     colors: roles,
@@ -163,7 +194,14 @@ function importT3code(raw: Record<string, unknown>): { theme: Theme; format: The
     css,
     builtin: false,
   });
-  return { theme, format: "t3code" };
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw invalidT3Field(
+      issue?.path.length ? issue.path.join(".") : "theme",
+      issue?.message ?? "invalid value",
+    );
+  }
+  return { theme: parsed.data, format: "t3code" };
 }
 
 function importWooky(raw: unknown): { theme: Theme; format: ThemeImportFormat } {
@@ -175,6 +213,7 @@ export function importTheme(
   text: string,
   filename?: string,
 ): { theme: Theme; format: ThemeImportFormat } {
+  if (RTF_START_RE.test(text)) throw new Error(RTF_MESSAGE);
   if (text.length > MAX_THEME_IMPORT_TEXT) {
     throw new Error(`Theme import text exceeds ${MAX_THEME_IMPORT_TEXT} characters.`);
   }
@@ -194,6 +233,12 @@ export function importTheme(
     else throw new Error("Unrecognized theme format.");
   }
 
-  validateThemeContent(result.theme);
+  try {
+    validateThemeContent(result.theme);
+  } catch (error) {
+    if (result.format !== "t3code") throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw invalidT3Field(themeContentField(message), message);
+  }
   return result;
 }

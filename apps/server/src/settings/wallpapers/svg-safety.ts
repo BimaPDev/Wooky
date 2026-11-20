@@ -55,7 +55,7 @@ const SMIL_TAGS = new Set(
   ["animate", "animatetransform", "animatemotion", "set"].map((t) => t.toLowerCase()),
 );
 
-import { assertSafeCss, assertSafeSvgAttributeValue } from "../css-safety.ts";
+import { assertSafeCssSyntax, assertSafeSvgAttributeValue } from "../css-syntax.ts";
 
 const FRAGMENT_HREF_RE = /^#[A-Za-z_][A-Za-z0-9_.:-]*$/;
 const ON_ATTR_SEGMENT_RE = /^on[a-z]/i;
@@ -211,7 +211,7 @@ function assertSafeAttribute(tagName: string, attr: ParsedAttr): void {
   }
   assertSafeSvgAttributeValue(attr.value, `attribute ${attr.name}`);
   if (localLower === "style" || nameLower === "style") {
-    assertSafeCss(attr.value, `Unsafe SVG: style attribute`, "svg");
+    assertSafeCssSyntax(attr.value, `Unsafe SVG: style attribute`, "svg");
   }
   const tagLocal = tagLocalName(tagName).toLowerCase();
   if (SMIL_TAGS.has(tagLocal) && localLower === "attributename") {
@@ -278,7 +278,7 @@ export function assertSafeSvg(svg: string): void {
     const tagLocal = tagLocalName(open.name).toLowerCase();
     if (!open.selfClose && tagLocal === "style") {
       const block = readStyleContent(svg, i);
-      assertSafeCss(block.content, "Unsafe SVG: <style> content", "svg");
+      assertSafeCssSyntax(block.content, "Unsafe SVG: <style> content", "svg");
       i = block.end;
     }
   }

@@ -50,7 +50,7 @@ export function ThreadView({
   }, []);
 
   return (
-    <div className="thread-scroll" data-workspace-area="conversation" ref={scroller}>
+    <div className="thread-scroll messages-timeline-scroll" ref={scroller}>
       {peerTurns ? null : <FallbackBanner threadId={threadId} />}
       <div className="thread-content" ref={content}>
         {peerTurns ? null : <ContinuedFromMarker threadId={threadId} />}

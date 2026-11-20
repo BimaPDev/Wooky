@@ -194,13 +194,18 @@ connected clients:
 
 Theme `css` may target only the selectors in this list.
 
-- **Page root**: `:root`, `html.dark` (set when the effective colour mode is dark), `:root:not(.dark)` (light mode), `html[data-theme="dark"]`, `html[data-theme="light"]`, `html[data-wallpaper]` (present when a wallpaper is active).
+- **Page root**: `:root`, `.dark` / `html.dark` (Wooky toggles `dark` on `<html>` when the effective colour mode is dark), `:root:not(.dark)` (light mode), `html[data-theme="dark"]`, `html[data-theme="light"]`, `html[data-wallpaper]` (present when a wallpaper is active).
 - **Panels that frost over a wallpaper**: `.sidebar`, `[data-workspace-area="sidebar"]`, `.workspace`, `.composer-box`, `.popover`, `.composer-menu`, `.usage-filter-menu`, `.usage-info-popover`, `.modal`.
 - **Sidebar**: `.sidebar`, `[data-workspace-area="sidebar"]`.
 - **Thread header**: `.topbar`, `[data-chat-header]`.
-- **Transcript**: `.thread-scroll`, `[data-workspace-area="conversation"]`, `.prompt`, `[data-user-message-bubble]`, `.md`, `.chat-markdown`, `.code-block`, `.chat-markdown-codeblock`.
-- **Composer**: `.composer-col`, `[data-slot="composer-host"]`, `.composer`, `.composer-box`.
+- **Main column**: `[data-workspace-area="conversation"]` is the stable wrapper for both an open thread and the new-thread screen. It wraps the thread or draft view with its composer, is not the scroller, and creates an isolated stacking context so a `::before` with `z-index: -1` paints above the wrapper background and below its content.
+- **Transcript**: `.thread-scroll`, `.messages-timeline-scroll` (both on the thread scroller), `.prompt`, `[data-user-message-bubble]`, `.md`, `.chat-markdown`, `.code-block`, `.chat-markdown-codeblock`.
+- **Composer**: `.composer-col`, `[data-slot="composer-host"]`, `.composer`, `[data-chat-composer-form]` (on the composer form), `.composer-box`. The running-turn stop button is `[data-chat-composer-form] button[aria-label^="Stop"]`.
 - **Wallpaper layer**: `.wallpaper`, `[data-wallpaper]`, `.wallpaper-image`, `.wallpaper-tile`, `.wallpaper-veil`.
+
+These are the t3code layout hooks Wooky supports: `[data-workspace-area="sidebar"]`,
+`[data-workspace-area="conversation"]`, `[data-chat-header]`, `[data-chat-composer-form]`,
+`.messages-timeline-scroll`, and `.dark` on the root with `:root:not(.dark)` for light mode.
 
 ### T3-style variable aliases
 
