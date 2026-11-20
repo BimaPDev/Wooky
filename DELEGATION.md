@@ -38,6 +38,7 @@ agents on different models and harnesses). The method:
 | 13   | P0 provider adapters (Station 2)         | Sonnet 5.5 → Composer 2.5 (Cursor)                   | Grok 4.7 (Cursor), 3 security rounds | merged; plan-file reads confined (O_NOFOLLOW, fstat, inode pin) | 236 provider tests, attack scripts |
 | 14   | Workspace file search (Station 3)        | Sonnet 5.5                                           | Grok 4.7 (Cursor)                    | merged, no findings                                             | real-git tests                     |
 | 15   | P0 web UI (Station 4)                    | Composer 2.5 (Cursor)                                | Grok 4.7 (Cursor)                    | merged after 3 review rounds                                    | fixture screenshots                |
+| 16   | Anywhere W1: Windows tree-kill + CI      | Composer 2.5 (Cursor)                                | Gemini 4 Hydrogen (Antigravity)      | merged after 2 review rounds, 11 findings applied               | `pnpm check`; Windows CI not run   |
 
 Open items: the 19 server tests that fail on Windows (CRLF, path separators, POSIX
 signals) are unverified, because nobody has run them on Windows yet. A thrown effect is
