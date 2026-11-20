@@ -4,19 +4,21 @@
 //   node scripts/live-providers.mjs <claude|opencode|cursor> [model] [--keep]
 //
 // Per provider: providers.list, a turn that streams and creates a file under approve mode (approval card
-// answered), a resumed second turn, a queued prompt, interrupt mid-turn, checkpoint + revert, usage
-// limits, an isolated-worktree thread, the Ship commit, then shutdown with an orphan-process check.
-// Needs `pnpm install`. Uses port 47411.
+// answered), a denied edit, a resumed second turn, a queued prompt, interrupt mid-turn, checkpoint + revert, usage
+// limits, a turn on a switched model, plan mode, an agent question, an isolated-worktree thread, the Ship commit, then shutdown with an orphan-process check.
+// Needs `pnpm install`. Uses port 47411 (WOOKY_LIVE_PORT overrides).
 import { spawn, execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -31,7 +33,7 @@ const TSX = join(REPO, "apps/server/node_modules/.bin/tsx");
 const base = realpathSync(mkdtempSync(join(tmpdir(), `wooky-live-${provider}-`)));
 const home = join(base, "home");
 const root = join(base, "project");
-const port = 47411;
+const port = Number(process.env.WOOKY_LIVE_PORT ?? 47411);
 const url = `http://127.0.0.1:${port}`;
 const out = (t) => process.stdout.write(`${t}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -163,6 +165,7 @@ const finished = async (threadId, count) =>
 
 // auto-answer approvals while we wait, remembering what was asked
 const approvals = [];
+const questions = [];
 let approvalMode = "allow";
 async function approvalPump() {
   const seen = new Set();
@@ -180,11 +183,42 @@ async function approvalPump() {
           }).catch((err) => out(`  (approval ${e.requestId} not answerable: ${err.message})`));
         }
       }
+      if (e.type === "question.requested" && !seen.has(e.requestId)) {
+        seen.add(e.requestId);
+        questions.push(e);
+        const answers = Object.fromEntries(
+          e.questions.map((q) => [q.id, [q.options.at(-1)?.label ?? "blue"]]),
+        );
+        await dispatch({
+          type: "question.respond",
+          threadId: e.threadId,
+          requestId: e.requestId,
+          answers,
+        }).catch((err) => out(`  (question ${e.requestId} not answerable: ${err.message})`));
+      }
     }
     await sleep(100);
   }
 }
 const pumpState = { stop: false };
+
+// The model of the newest assistant entry in Claude Code's own transcript for this project.
+function lastTranscriptModel(cwd) {
+  if (provider !== "claude") return null;
+  const dir = join(homedir(), ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".jsonl"))
+    .map((f) => join(dir, f))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  if (!files[0]) return null;
+  const lines = readFileSync(files[0], "utf8").trim().split("\n").reverse();
+  for (const line of lines) {
+    const entry = JSON.parse(line);
+    if (entry.type === "assistant" && entry.message?.model) return entry.message.model;
+  }
+  return null;
+}
 
 const itemKinds = (turn) => turn.items.map((i) => i.kind + (i.kind === "tool" ? `:${i.tool}` : ""));
 const text = (turn) =>
@@ -301,6 +335,27 @@ try {
     `${sessionAfter1} -> ${thread2.providerSessionId}`,
   );
 
+  say("denied edit in approve mode");
+  approvalMode = "deny";
+  const deniedBefore = approvals.length;
+  await dispatch({
+    type: "turn.start",
+    threadId,
+    prompt:
+      "Create a file denied.txt containing exactly: no. If you cannot, reply with the single word blocked.",
+  });
+  const denyTurn = await finished(threadId, 3);
+  approvalMode = "allow";
+  out(`  status=${denyTurn.status} reply=${JSON.stringify(text(denyTurn).slice(0, 120))}`);
+  check("deny turn finished", denyTurn.status === "completed", denyTurn.error ?? denyTurn.status);
+  check("deny approval asked", approvals.length > deniedBefore);
+  check(
+    "approval resolved as deny",
+    denyTurn.items.some((i) => i.kind === "approval" && i.decision === "deny"),
+  );
+  check("denied.txt not written", !existsSync(join(root, "denied.txt")));
+  check("thread idle after deny", (await snapshot()).threads[threadId].status === "idle");
+
   say("queue: a prompt submitted while a turn runs");
   await dispatch({
     type: "turn.start",
@@ -319,14 +374,14 @@ try {
     events.some((e) => e.type === "queue.added" && e.threadId === threadId) ||
       (await snapshot()).threads[threadId].queue?.length > 0,
   );
-  const turn4 = await finished(threadId, 4);
+  const turn4 = await finished(threadId, 5);
   out(`  turn4 status=${turn4.status} reply=${JSON.stringify(text(turn4).slice(0, 80))}`);
   check(
     "queued prompt ran after the first",
     turn4.status === "completed" && /queued/i.test(text(turn4)),
     turn4.error ?? "",
   );
-  const turn3 = (await turnsOf(threadId))[2];
+  const turn3 = (await turnsOf(threadId))[3];
   check("turn 3 completed", turn3.status === "completed", turn3.status);
 
   say("interrupt mid-turn (long shell command)");
@@ -403,8 +458,10 @@ try {
   );
   out(`  history: ${JSON.stringify(history).slice(0, 200)}`);
 
-  say("model selection mid-thread");
-  const alt = status.models.find((m) => m.id !== model);
+  say("model switch mid-thread, with a real turn");
+  const alt =
+    status.models.find((m) => m.id !== model && /sonnet/.test(m.id) && !/\d/.test(m.id)) ??
+    status.models.find((m) => m.id !== model && m.id !== "default");
   if (alt) {
     await dispatch({ type: "thread.configure", threadId, model: alt.id });
     check(
@@ -412,8 +469,69 @@ try {
       (await snapshot()).threads[threadId].model === alt.id,
       alt.id,
     );
+    const nSwitch = (await turnsOf(threadId)).length;
+    await dispatch({
+      type: "turn.start",
+      threadId,
+      prompt: "Reply with the single word switched.",
+    });
+    const sw = await finished(threadId, nSwitch + 1);
+    check(
+      "turn on switched model completed",
+      sw.status === "completed" && /switched/i.test(text(sw)),
+      `${sw.status} model=${sw.model} ${sw.error ?? ""}`,
+    );
+    check("turn records the new model", sw.model === alt.id, sw.model);
+    const transcriptModel = lastTranscriptModel(root);
+    out(`  native transcript model: ${transcriptModel}`);
+    check(
+      "CLI actually ran the new model",
+      !!transcriptModel && transcriptModel.includes(alt.id),
+      transcriptModel ?? "",
+    );
     await dispatch({ type: "thread.configure", threadId, model });
   } else out("  (only one model)");
+
+  say("plan mode");
+  await dispatch({ type: "thread.configure", threadId, interactionMode: "plan" });
+  const nPlan = (await turnsOf(threadId)).length;
+  await dispatch({
+    type: "turn.start",
+    threadId,
+    prompt:
+      "Plan how to create plan.txt containing exactly: p. Keep the plan to two short lines and present it for approval now; do not explore the repo.",
+  });
+  const planTurn = await finished(threadId, nPlan + 1);
+  out(`  status=${planTurn.status} items=${itemKinds(planTurn).join(",")}`);
+  check("plan turn completed", planTurn.status === "completed", planTurn.error ?? planTurn.status);
+  check(
+    "a proposed plan item",
+    planTurn.items.some((i) => i.kind === "plan" && i.status === "proposed"),
+  );
+  check("plan mode wrote nothing", !existsSync(join(root, "plan.txt")));
+  await dispatch({ type: "thread.configure", threadId, interactionMode: "default" });
+
+  say("agent question");
+  const nQ = (await turnsOf(threadId)).length;
+  const qBefore = questions.length;
+  await dispatch({
+    type: "turn.start",
+    threadId,
+    prompt:
+      "Use the AskUserQuestion tool once to ask me which colour I prefer, with exactly the options red and blue. Then reply with only the colour I chose.",
+  });
+  const qTurn = await finished(threadId, nQ + 1);
+  out(`  status=${qTurn.status} reply=${JSON.stringify(text(qTurn).slice(0, 120))}`);
+  check("question asked", questions.length > qBefore);
+  check(
+    "question item answered",
+    qTurn.items.some((i) => i.kind === "question" && i.answers),
+  );
+  check(
+    "agent used the answer",
+    qTurn.status === "completed" && /blue/i.test(text(qTurn)),
+    qTurn.error ?? "",
+  );
 
   say("worktree-isolated thread");
   await dispatch({
@@ -483,14 +601,25 @@ try {
   out(`server log tail:\n${serverLog.join("").slice(-2500)}`);
 } finally {
   pumpState.stop = true;
-  const kids = descendants(server.pid).map((d) => d.pid);
+  const kidRows = descendants(server.pid);
+  const kids = kidRows.map((d) => d.pid);
+  out(
+    `\nchildren at shutdown: ${kidRows.map((d) => `${d.pid}:${d.cmd.slice(0, 50)}`).join(" | ")}`,
+  );
   const t = Date.now();
   server.kill("SIGTERM");
   await new Promise((r) => (server.on("exit", r), setTimeout(r, 15000)));
   out(`\nserver exit after ${Date.now() - t}ms`);
-  await sleep(1500);
-  const live = new Set(psTable().map((r) => r.pid));
-  const orphans = kids.filter((pid) => live.has(pid));
+  // A child may take a moment to act on the SIGTERM the SDK sends at exit; only one still alive
+  // after 10s is an orphan.
+  const lingering = () => {
+    const live = new Set(psTable().map((r) => r.pid));
+    return kids.filter((pid) => live.has(pid));
+  };
+  const exitAt = Date.now();
+  while (lingering().length > 0 && Date.now() - exitAt < 10000) await sleep(250);
+  out(`children gone ${Date.now() - exitAt}ms after server exit`);
+  const orphans = lingering();
   const rows = psTable().filter((r) => orphans.includes(r.pid));
   check(
     "no orphans after server shutdown",
