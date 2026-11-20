@@ -105,6 +105,10 @@ SMIL or CSS. The document is rendered as an image, so scripts never run. The pic
 stays still when `wallpaperMotion` is `off`, when reduced motion is on, or while the
 window is hidden.
 
+When `panelBlur` is 8 or less, the conversation pane drops the frost so the picture stays
+sharp behind the thread, and only message bodies get a translucent scrim. The sidebar,
+composer and menus keep the glass. Higher values frost the whole pane.
+
 `wallpaperMotion` is a device setting, not a theme field. It is `on` or `off` and
 defaults to `on`, so the loop is opt-out. It is stored with the other device settings
 and comes back from `settings.get`, `settings.put` and `themes.activate`.

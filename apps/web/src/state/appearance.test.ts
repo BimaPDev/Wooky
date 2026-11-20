@@ -165,6 +165,32 @@ describe("buildAppearanceCss", () => {
     );
     expect(css).toContain("@supports (backdrop-filter: blur(1px))");
     expect(css).toContain("backdrop-filter: blur(var(--panel-blur, 0px));");
+    expect(css).toContain(
+      'html:root[data-theme="dark"] .workspace {\n  background: color-mix(in srgb, var(--bg-1) var(--surface-opacity, 82%), transparent);\n}',
+    );
+  });
+
+  it("keeps the conversation pane sharp and scrims only message bodies when panel blur is light", () => {
+    const withImage = AppearanceTheme.parse({
+      ...theme,
+      background: {
+        image: "data:image/png;base64,iVBORw0KGgo=",
+        dim: 6,
+        surfaceOpacity: 46,
+        panelBlur: 6,
+      },
+    });
+    const css = buildAppearanceCss(withImage, ui);
+    expect(css).toContain(
+      'html:root[data-theme="dark"] .workspace {\n  background: transparent;\n  -webkit-backdrop-filter: none;\n  backdrop-filter: none;\n}',
+    );
+    expect(css).toContain(
+      'html:root[data-theme="dark"] .turn-body > .md, html:root[data-theme="dark"] .trail > .md {',
+    );
+    expect(css).toContain("background: color-mix(in srgb, var(--bg-1) 68%, transparent);");
+    expect(css).not.toContain(
+      'html:root[data-theme="dark"] .sidebar, html:root[data-theme="dark"] [data-workspace-area="sidebar"], html:root[data-theme="dark"] .workspace,',
+    );
   });
 });
 

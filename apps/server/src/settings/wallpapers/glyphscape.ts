@@ -443,14 +443,14 @@ export function buildGlyphscapeScene(): WallpaperScene {
     canvas: DARK.canvas,
     accent: "#6fe0c0",
     svg: buildGlyphscape("dark"),
-    tuning: { dim: 4, panelBlur: 20, surfaceOpacity: 46 },
+    tuning: { dim: 4, panelBlur: 6, surfaceOpacity: 44 },
     colors: DARK_COLORS,
     css: "[data-chat-header]{font-family:var(--font-mono);font-size:12.5px}",
     variant: {
       canvas: LIGHT.canvas,
       accent: "#1f8a72",
       svg: buildGlyphscape("light"),
-      tuning: { dim: 6, panelBlur: 22, surfaceOpacity: 78 },
+      tuning: { dim: 6, panelBlur: 6, surfaceOpacity: 66 },
       colors: LIGHT_COLORS,
     },
   };
