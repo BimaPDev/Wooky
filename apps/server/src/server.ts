@@ -26,6 +26,7 @@ import { createAttachmentStore } from "./attachments.ts";
 import { createScratchService } from "./scratch.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
+import { setupWorktree } from "./scripts/worktree-setup.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
 import { createHttpHandler } from "./transport/static.ts";
@@ -101,6 +102,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const store = openEventStore(options.home, ctx.now);
   const git = options.git ?? createGitService();
+  const terminals = createTerminalManager();
   let dispatchCommand: (command: Command) => void = () => {};
   const runner = createEffectRunner({
     store,
@@ -111,6 +113,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     deviceSettings: () => themes.getSettings(),
     limits,
     now: ctx.now,
+    onWorktreeCreated: (input) =>
+      setupWorktree({
+        ...input,
+        store,
+        terminals,
+        newId: ctx.newId,
+      }),
   });
   const dispatcher = createDispatcher({
     store,
@@ -128,7 +137,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const ship = createShipService({ store, git, gh: options.gh ?? createGhClient() });
   const stopShipPolling = ship.startPolling();
   const scratch = createScratchService({ home: options.home, store, dispatcher });
-  const terminals = createTerminalManager();
   const history = createHistoryService({
     home: options.home,
     userHome: options.userHome ?? homedir(),

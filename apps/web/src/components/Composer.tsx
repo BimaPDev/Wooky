@@ -25,7 +25,12 @@ import {
   uploadAttachment,
 } from "../state/actions.ts";
 import { useStore } from "../state/store.ts";
-import { ComposerMenuPanel, useComposerMenu } from "./ComposerMenu.tsx";
+import {
+  ComposerMenuPanel,
+  insertPromptText,
+  promptIdFromPick,
+  useComposerMenu,
+} from "./ComposerMenu.tsx";
 import { IconClose, IconMic, IconPaperclip, IconSend, IconStop } from "./Icons.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import {
@@ -117,6 +122,7 @@ export function ComposerForm({
     trigger,
     menuOpen,
     slashItems,
+    promptItems,
     mentionItems,
     mentionQuery,
     entriesQuery,
@@ -238,12 +244,30 @@ export function ComposerForm({
   const menuDismissed = composerMenuDismissalForDraft(menuDismissedFor, draft);
   const panelOpen = menuOpen && trigger !== null && composerMenuVisible(trigger, menuDismissed);
 
+  const applyPrompt = (pickId: string): boolean => {
+    const promptId = promptIdFromPick(pickId);
+    if (promptId === null || !trigger) return false;
+    const prompt = promptItems.find((item) => item.id === pickId);
+    if (!prompt) return true;
+    const next = insertPromptText(draft, trigger, prompt.text);
+    setDraft(next.text);
+    setCaret(next.caret);
+    setMenuDismissedFor(null);
+    requestAnimationFrame(() => {
+      const el = area.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.caret, next.caret);
+    });
+    return true;
+  };
+
   const acceptMenu = () => {
     if (!trigger || menuItems.length === 0) return;
     const choice = menuItems[Math.min(menuIndex, menuItems.length - 1)];
     if (!choice) return;
     if (trigger.kind === "slash") {
-      applySlash(choice.id as SlashCommandId);
+      if (!applyPrompt(choice.id)) applySlash(choice.id as SlashCommandId);
       return;
     }
     const next = insertMentionPath(draft, trigger, choice.id);
@@ -297,8 +321,9 @@ export function ComposerForm({
             activeIndex={Math.min(menuIndex, Math.max(0, menuItems.length - 1))}
             listId={listId}
             onPick={(id) => {
-              if (trigger.kind === "slash") applySlash(id as SlashCommandId);
-              else {
+              if (trigger.kind === "slash") {
+                if (!applyPrompt(id)) applySlash(id as SlashCommandId);
+              } else {
                 const next = insertMentionPath(draft, trigger, id);
                 setDraft(next.text);
                 setCaret(next.caret);

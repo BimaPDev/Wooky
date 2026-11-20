@@ -3,6 +3,7 @@ import type { RpcResult, TerminalInfo } from "@wooky/contracts";
 import { toggleTerminal } from "../state/actions.ts";
 import { backend } from "../state/backend.ts";
 import { useStore } from "../state/store.ts";
+import { subscribeTerminalSession } from "../state/terminal.ts";
 import { IconClose, IconPlus } from "./Icons.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import { XtermSession } from "./terminal/XtermSession.tsx";
@@ -121,6 +122,30 @@ export function TerminalPane() {
       cancelled = true;
     };
   }, [status]);
+
+  // sync: a script run elsewhere asks this pane to show its session
+  useEffect(() => {
+    return subscribeTerminalSession((info) => {
+      const opened = tabFromInfo(info);
+      setTabs((current) =>
+        current.some((tab) => tab.sessionId === info.sessionId)
+          ? current
+          : [
+              ...current.filter(
+                (tab) =>
+                  !(
+                    tab.scriptId &&
+                    tab.scriptId === info.scriptId &&
+                    tab.projectId === info.projectId
+                  ),
+              ),
+              opened,
+            ],
+      );
+      setActiveId(info.sessionId);
+      setError(null);
+    });
+  }, []);
 
   const addTab = async () => {
     try {

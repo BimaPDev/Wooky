@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { backend } from "../../state/backend.ts";
 import { useStore } from "../../state/store.ts";
 import { subscribeTerminal } from "../../state/terminal.ts";
+import { findHttpLinks, openExternalUrl, shouldOpenTerminalLink } from "./links.ts";
 import { applyXtermTheme } from "./theme.ts";
 import { xtermStyles } from "./xterm-styles.ts";
 
@@ -40,6 +41,26 @@ export function XtermSession({
     term.loadAddon(fit);
     term.open(host);
     applyXtermTheme(term, host);
+    const links = term.registerLinkProvider({
+      provideLinks(row, callback) {
+        const line = term.buffer.active.getLine(row - 1)?.translateToString(true) ?? "";
+        const found = findHttpLinks(line);
+        callback(
+          found.length === 0
+            ? undefined
+            : found.map((link) => ({
+                text: link.text,
+                range: {
+                  start: { x: link.start + 1, y: row },
+                  end: { x: link.end, y: row },
+                },
+                activate(event, text) {
+                  if (shouldOpenTerminalLink(event)) openExternalUrl(text);
+                },
+              })),
+        );
+      },
+    });
     termRef.current = term;
     fitRef.current = fit;
     const data = term.onData((chunk) => {
@@ -61,6 +82,7 @@ export function XtermSession({
     });
     return () => {
       data.dispose();
+      links.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

@@ -209,7 +209,9 @@ Schemas live in `packages/contracts`. Old logs omit the new fields and decode to
 - `ConflictResolution` `mine | theirs | both` — `both` keeps theirs as files with a `.theirs` suffix
 - `SyncStatus` `{enabled, peers, conflicts}`
 - `ProjectScript` `{id, name, command, icon?, runOnWorktreeCreate: false, previewUrl?}`
-- `ProjectSettings` `{scripts: [], worktreeSetup?, defaultPreviewUrl?}` — `previewUrl` may contain `${PORT}`
+- `SharedPath` `{path, mode: link|copy}` — relative, no `..`, not inside `.git`
+- `ProjectPrompt` `{id, name (≤60), text (≤20000)}` — a reusable prompt preset, listed under `/` in the composer
+- `ProjectSettings` `{scripts: [], worktreeSetup?, defaultPreviewUrl?, sharedPaths: [], prompts: [] (≤50)}` — `previewUrl` may contain `${PORT}`
 - `TerminalSize` `{cols, rows}`
 - `TerminalInfo` `{sessionId, title, cwd, shell, pty, createdAt, exited, projectId, scriptId}` —
   `pty: false` is the pipe fallback
@@ -219,7 +221,7 @@ Schemas live in `packages/contracts`. Old logs omit the new fields and decode to
 - `PendingClaim` `{claimId, ownerDeviceId, ownerThreadId, projectId, at}`
 - `ReplicaSlice` `{seq, threads, turns}`, `ReplicaModel` `{replicas: { [deviceId]: ReplicaSlice }}`
 
-`Project.settings` is `ProjectSettings` (default `{scripts: []}`).
+`Project.settings` is `ProjectSettings` (default `{scripts: [], sharedPaths: [], prompts: []}`).
 
 `Thread` adds `ownerDeviceId` (`null` means this device), `movedTo`, `movedFrom`, and
 `pullRequest`, each defaulting to `null`.
@@ -290,6 +292,7 @@ Params → result.
   `pty`, `createdAt`, `exited`, `projectId`, `scriptId`) are optional on this result until T1
   fills them. `terminal.list`, `terminal.attach`, and `scripts.run` return `TerminalInfo`.
 - `scripts.run` `{projectId, scriptId, threadId?}` → `TerminalInfo`
+- `scripts.suggestSharedPaths` `{projectId}` → `string[]` (gitignored top-level entries of the project root)
 - `git.status` `{threadId}` → `{branch, upstream, ahead, behind, dirty, hasRemote, ghAvailable, ghAuthed}`
 - `git.commit` `{threadId, message}` → `{sha}`
 - `git.push` `{threadId, setUpstream?}` → `{ok: true, remoteUrl}`

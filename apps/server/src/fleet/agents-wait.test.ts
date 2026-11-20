@@ -44,7 +44,7 @@ describe("agents.wait", () => {
             name: "demo",
             root: "/work",
             createdAt: at,
-            settings: { scripts: [] },
+            settings: { scripts: [], sharedPaths: [], prompts: [] },
           },
         },
         {

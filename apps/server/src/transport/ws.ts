@@ -23,6 +23,8 @@ import { watchThemeFiles } from "../settings/theme-watch.ts";
 import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
 import { openSignInTerminal } from "../terminal/login.ts";
+import { runProjectScript } from "../scripts/run.ts";
+import { suggestSharedPaths } from "../scripts/shared-paths.ts";
 import type { TerminalManager, TerminalSubscriber } from "../terminal/session.ts";
 import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
@@ -239,7 +241,24 @@ function createHandlers(
       conn.trackTerminal(sessionId);
       return attached;
     },
-    "scripts.run": notImplemented,
+    "scripts.run": async (params, conn) => {
+      const opened = await runProjectScript(
+        { model: store.model, terminals, subscriber: conn.terminalSink },
+        {
+          projectId: params.projectId,
+          scriptId: params.scriptId,
+          threadId: params.threadId,
+          restart: params.restart,
+        },
+      );
+      conn.trackTerminal(opened.sessionId);
+      return opened;
+    },
+    "scripts.suggestSharedPaths": async ({ projectId }) => {
+      const project = store.model.projects[projectId];
+      if (!project) throw new ServiceError("not_found", `No project with id ${projectId}.`);
+      return suggestSharedPaths(project.root);
+    },
     "git.status": (params) => ship.status(params),
     "git.commit": (params) => ship.commit(params),
     "git.push": (params) => ship.push(params),

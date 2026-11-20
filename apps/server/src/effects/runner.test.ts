@@ -146,7 +146,13 @@ function seededStore(home: string, root: string, thread: Partial<Thread> = {}): 
       {
         type: "project.added",
         commandId: "seed",
-        project: { id: "p1", name: "p", root, createdAt: at, settings: { scripts: [] } },
+        project: {
+          id: "p1",
+          name: "p",
+          root,
+          createdAt: at,
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
+        },
       },
       {
         type: "thread.created",
@@ -546,7 +552,13 @@ describe("effect runner effects and recovery", () => {
         {
           type: "project.added",
           commandId: "c1",
-          project: { id: "p1", name: "p", root: "/p", createdAt: at, settings: { scripts: [] } },
+          project: {
+            id: "p1",
+            name: "p",
+            root: "/p",
+            createdAt: at,
+            settings: { scripts: [], sharedPaths: [], prompts: [] },
+          },
         },
         {
           type: "thread.created",

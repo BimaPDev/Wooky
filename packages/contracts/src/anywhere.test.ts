@@ -236,11 +236,9 @@ describe("sync and script contracts", () => {
     });
     expect(SyncSettings.safeParse({ intervalSec: 4 }).success).toBe(false);
     expect(SyncSettings.safeParse({ intervalSec: 3601 }).success).toBe(false);
-    expect(ProjectSettings.parse({})).toEqual({ scripts: [] });
+    expect(ProjectSettings.parse({})).toEqual({ scripts: [], sharedPaths: [], prompts: [] });
     expect(Project.parse({ id: "p1", name: "app", root: "/work", createdAt: at }).settings).toEqual(
-      {
-        scripts: [],
-      },
+      { scripts: [], sharedPaths: [], prompts: [] },
     );
 
     const script = ProjectScript.parse({ id: "dev", name: "Dev", command: "pnpm dev" });
@@ -329,7 +327,7 @@ describe("terminal, commands, events, and rpc", () => {
         commandId: "c1",
         type: "project.configure",
         projectId: "p1",
-        settings: { scripts: [] },
+        settings: { scripts: [], sharedPaths: [], prompts: [] },
       }).type,
     ).toBe("project.configure");
     expect(
@@ -444,6 +442,9 @@ describe("terminal, commands, events, and rpc", () => {
     expect(
       RpcMethods["scripts.run"].params.parse({ projectId: "p1", scriptId: "dev" }).scriptId,
     ).toBe("dev");
+    expect(
+      RpcMethods["scripts.suggestSharedPaths"].params.parse({ projectId: "p1" }).projectId,
+    ).toBe("p1");
     expect(RpcMethods["remote.devices.revoke"].result.parse({ ok: true })).toEqual({ ok: true });
   });
 });

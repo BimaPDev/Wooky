@@ -26,6 +26,8 @@ export interface TerminalOpenInput {
   projectId?: string | null;
   scriptId?: string | null;
   title?: string;
+  /** When set, spawn this argv instead of an interactive login shell. */
+  commandArgv?: { file: string; args: string[] };
 }
 
 export type TerminalOpenResult = TerminalInfo & {
@@ -480,7 +482,14 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
         `At most ${MAX_SESSIONS} terminal sessions (${detachedCount()} detached).`,
       );
     }
-    const shell = resolveShell();
+    const resolved = resolveShell();
+    const shell: ShellCommand = input.commandArgv
+      ? {
+          ...resolved,
+          file: input.commandArgv.file,
+          args: input.commandArgv.args,
+        }
+      : resolved;
     const cwd = defaultCwd(input.cwd);
     const cols = input.cols ?? DEFAULT_COLS;
     const rows = input.rows ?? DEFAULT_ROWS;
@@ -491,7 +500,7 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     const bind = (usePty: boolean) => (backend: SessionBackend) =>
       createSession(
         backend,
-        { shell, cwd, pty: usePty, projectId, scriptId, title: input.title },
+        { shell: resolved, cwd, pty: usePty, projectId, scriptId, title: input.title },
         subscriber,
       );
 

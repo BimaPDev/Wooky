@@ -23,10 +23,12 @@ import {
   IconPanelBottom,
   IconPanelRight,
   IconSidebar,
+  IconSliders,
 } from "./Icons.tsx";
 import { InlineRename } from "./InlineRename.tsx";
 import { modelLabel, providerLabels, runtimeLabel } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
+import { ScriptsBar } from "./project-settings/ScriptsBar.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import { ProviderMark } from "./ProviderMark.tsx";
 
@@ -42,6 +44,7 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
     const id = draftProjectId(state);
     return id ? state.model.projects[id] : undefined;
   });
+  const settingsProject = project ?? draftProject;
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const changesOpen = useStore((state) => state.changes.open);
   const terminalOpen = useStore((state) => state.terminalOpen);
@@ -139,6 +142,23 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
         ) : null}
       </div>
       <div className="topbar-actions">
+        <ScriptsBar />
+        {settingsProject ? (
+          <Tooltip label="Project settings">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Project settings"
+              onClick={() =>
+                useStore.setState({
+                  dialog: { kind: "projectSettings", projectId: settingsProject.id },
+                })
+              }
+            >
+              <IconSliders />
+            </button>
+          </Tooltip>
+        ) : null}
         {thread ? (
           <div className="popover-anchor">
             <Tooltip label="Details">
