@@ -128,24 +128,35 @@ export interface ScanResult {
   skipped: Array<{ path: string; bytes: number }>;
 }
 
-/** HFS+ ignores these code points when it compares names. */
-const HFS_IGNORABLE = /[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/g;
+/** HFS+ and NTFS fold format characters away; a zero-width spelling must not slip past. */
+const FORMAT_CHARS = /\p{Cf}/gu;
 
 /** True for `.git` and the spellings NTFS or HFS+ resolve to it: `git~1`, `.git.`, `.git `, `.g\u200cit`. */
 function isDotGitAlias(part: string): boolean {
   const base = part.split(":")[0] ?? part;
-  const name = base.normalize("NFKC").replace(HFS_IGNORABLE, "").toLowerCase();
+  const name = base.normalize("NFKC").replace(FORMAT_CHARS, "").toLowerCase();
   const trimmed = name.replace(/[. ]+$/, "");
   return trimmed === ".git" || /^git~\d+$/.test(trimmed);
 }
 
+/** Control characters would break the line-oriented git plumbing formats (index-info). */
+function hasControlChars(path: string): boolean {
+  for (const char of path) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
 /** Rejects anything that could land outside the work tree or inside a .git folder. */
 export function safeRelativePath(path: string): string | null {
-  if (path.length === 0 || path.includes("\0") || path.startsWith("/")) return null;
+  if (path.length === 0 || hasControlChars(path) || path.startsWith("/")) return null;
   if (/^[A-Za-z]:/.test(path)) return null;
   if (sep === "\\" && path.includes("\\")) return null;
   for (const part of path.split("/")) {
     if (part === "" || part === "." || part === "..") return null;
+    // NTFS strips trailing dots and spaces, so `.. ` and `...` resolve like `.` / `..`.
+    if (part.replace(/[. ]+$/, "") === "") return null;
     if (isDotGitAlias(part)) return null;
   }
   return path;
@@ -157,7 +168,7 @@ function underExclusion(path: string, exclude: readonly string[]): boolean {
 
 /** Windows holds files open (AV, indexers); a short retry rides out EBUSY and EPERM. */
 async function retryBusy<T>(fn: () => Promise<T>): Promise<T> {
-  const attempts = process.platform === "win32" ? 3 : 1;
+  const attempts = 3;
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await fn();
@@ -592,7 +603,7 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     repo: ShadowRepo,
     targetTree: string,
     list: readonly TreeChange[],
-    options: {
+    rules: {
       exclude: readonly string[];
       mineTree: string | null;
       maxFileBytes: number;
@@ -606,7 +617,7 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     for (const change of list) {
       if (safeRelativePath(change.path) === null)
         skipped.push({ path: change.path, reason: "unsafe" });
-      else if (!underExclusion(change.path, options.exclude)) usable.push(change);
+      else if (!underExclusion(change.path, rules.exclude)) usable.push(change);
     }
     const writes: TreeChange[] = [];
     const removals: TreeChange[] = [];
@@ -615,10 +626,10 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
       targetTree,
       usable.filter((c) => c.status !== "D").map((c) => c.path),
     );
-    const inMine = options.mineTree
+    const inMine = rules.mineTree
       ? await blobSizes(
           repo,
-          options.mineTree,
+          rules.mineTree,
           usable.filter((c) => c.status === "A" || c.status === "T").map((c) => c.path),
         )
       : null;
@@ -638,14 +649,14 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
         }
       }
       const size = sizes.get(change.path) ?? 0;
-      if (size > options.maxFileBytes) {
+      if (size > rules.maxFileBytes) {
         skipped.push({ path: change.path, reason: "too-large" });
         continue;
       }
       total += size;
       writes.push(change);
     }
-    if (total > options.maxTotalBytes) {
+    if (total > rules.maxTotalBytes) {
       throw new ApplyFailed("The incoming change is too large to apply.");
     }
     try {
@@ -662,7 +673,7 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
             run(repo, ["checkout-index", "-f", "-z", "--stdin"], {
               env: withIndex(tmp),
               input: writes.map((c) => c.path).join("\0") + "\0",
-              allowFail: options.bestEffort === true,
+              allowFail: rules.bestEffort === true,
             }),
           );
         } finally {
@@ -678,16 +689,16 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
           : error instanceof Error
             ? error.message
             : String(error);
-      if (!options.mineTree) throw error;
+      if (!rules.mineTree) throw error;
       // Best effort: put back every path this apply could have touched. The caller checks
       // whether the folder really matches the backup again.
       try {
         const touched = new Set([...writes, ...removals].map((c) => c.path));
-        const back = (await changes(repo, targetTree, options.mineTree)).filter((c) =>
+        const back = (await changes(repo, targetTree, rules.mineTree)).filter((c) =>
           touched.has(c.path),
         );
-        await applyChanges(repo, options.mineTree, back, {
-          exclude: options.exclude,
+        await applyChanges(repo, rules.mineTree, back, {
+          exclude: rules.exclude,
           mineTree: null,
           maxFileBytes: Number.MAX_SAFE_INTEGER,
           maxTotalBytes: Number.MAX_SAFE_INTEGER,
@@ -796,6 +807,9 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     input: { merged: string; side: string; paths: readonly string[] },
   ): Promise<string> {
     const tmp = join(repo.gitDir, `pick-${process.pid}-${Date.now()}.index`);
+    // A path that cannot be written safely is dropped from the result, never passed to the
+    // line-oriented index-info format (a newline in a name would inject extra entries).
+    const safe = input.paths.filter((path) => safeRelativePath(path) !== null);
     try {
       const env = withIndex(tmp);
       await run(repo, ["read-tree", input.merged], { env });
@@ -803,8 +817,11 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
         env,
         input: input.paths.join("\0") + "\0",
       });
-      const listed = await run(repo, ["ls-tree", "-r", "-z", input.side, "--", ...input.paths]);
-      if (listed.text.length > 0) {
+      const listed =
+        safe.length === 0
+          ? null
+          : await run(repo, ["ls-tree", "-r", "-z", input.side, "--", ...safe]);
+      if (listed?.text.length) {
         const lines = listed.text
           .split("\0")
           .filter(Boolean)
