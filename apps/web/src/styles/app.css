@@ -5456,6 +5456,46 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   background: var(--bg-1);
 }
 
+.ship-menu {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.ship-menu-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ship-hint {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.ship-hint.error {
+  color: var(--red);
+}
+
+.ship-pr-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.ship-pr-pill:hover {
+  color: var(--text-1);
+  border-color: var(--line-strong);
+}
+
 .merge-control {
   display: grid;
   gap: var(--space-2);

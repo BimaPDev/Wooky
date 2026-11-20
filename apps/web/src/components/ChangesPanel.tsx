@@ -7,6 +7,7 @@ import { useStore } from "../state/store.ts";
 import { Counts, FileDiffView, fileAnchor } from "./DiffView.tsx";
 import { IconClose } from "./Icons.tsx";
 import { Tooltip } from "./Tooltip.tsx";
+import { ShipMenu } from "./ShipMenu.tsx";
 import { MergeControl } from "./review/MergeControl.tsx";
 import { groupNotesByPath } from "./review/notes.ts";
 import { ReviewBar } from "./review/ReviewBar.tsx";
@@ -122,6 +123,7 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
         ) : null}
       </div>
       <footer className="panel-foot">
+        <ShipMenu threadId={threadId} />
         <MergeControl threadId={threadId} />
         {notes.length > 0 ? <ReviewBar threadId={threadId} count={notes.length} /> : null}
       </footer>
