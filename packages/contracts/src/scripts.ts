@@ -3,15 +3,21 @@ import { parseHttpUrl } from "./remote.ts";
 
 const ScriptId = z.string().min(1).max(128);
 
+/** `.git` under any spelling the filesystem would fold into it: case, trailing dots, 8.3 names. */
+function isGitComponent(part: string): boolean {
+  const cleaned = part.toLowerCase().replace(/[. ]+$/, "");
+  return cleaned === ".git" || cleaned === "git~1";
+}
+
 /** Relative path brought into a worktree. `.gitignore` is allowed; `.git` itself is not. */
-function isSharedRelPath(value: string): boolean {
+export function isSharedRelPath(value: string): boolean {
   if (value.includes("\0")) return false;
   if (value.startsWith("/") || value.startsWith("\\")) return false;
   if (/^[A-Za-z]:[\\/]/.test(value)) return false;
   if (value.startsWith("\\\\")) return false;
   const parts = value.split(/[\\/]/);
   if (parts.some((part) => part === "" || part === "." || part === "..")) return false;
-  return parts[0] !== ".git";
+  return !parts.some(isGitComponent);
 }
 
 export const SharedRelPath = z.string().min(1).max(512).refine(isSharedRelPath, {

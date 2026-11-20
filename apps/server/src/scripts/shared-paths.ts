@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, lstat, mkdir, realpath, symlink, link } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
-import type { SharedPath } from "@wooky/contracts";
+import { isSharedRelPath, type SharedPath } from "@wooky/contracts";
 import { gitChildEnv } from "../git/env.ts";
 
 export type SharedPathAction = "linked" | "copied" | "skipped" | "refused";
@@ -57,7 +57,16 @@ export async function applySharedPaths(
   const results: SharedPathResult[] = [];
 
   for (const entry of entries) {
-    results.push(await applyOne(sourceReal, destReal, entry, platform));
+    // One bad entry must not take the rest of the setup down with it.
+    try {
+      results.push(await applyOne(sourceReal, destReal, entry, platform));
+    } catch (error) {
+      results.push({
+        path: entry.path,
+        action: "skipped",
+        reason: error instanceof Error ? error.message : "could not be applied",
+      });
+    }
   }
 
   return {
@@ -77,6 +86,9 @@ async function applyOne(
   platform: NodeJS.Platform,
 ): Promise<SharedPathResult> {
   const rel = entry.path;
+  if (!isSharedRelPath(rel)) {
+    return { path: rel, action: "refused", reason: "path is not allowed in a worktree" };
+  }
   const source = resolve(sourceRoot, rel);
   const dest = resolve(destRoot, rel);
 

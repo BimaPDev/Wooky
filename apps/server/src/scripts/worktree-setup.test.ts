@@ -124,7 +124,10 @@ describe("worktree setup hook", () => {
               runOnWorktreeCreate: true,
             },
           ],
-          sharedPaths: [{ path: ".env", mode: "link" }],
+          sharedPaths: [
+            { path: ".env", mode: "link" },
+            { path: "missing.env", mode: "link" },
+          ],
           worktreeSetup: "echo setup-done",
           prompts: [],
         },
@@ -174,7 +177,9 @@ describe("worktree setup hook", () => {
       );
       expect(notice.item).toMatchObject({
         kind: "notice",
-        text: expect.stringMatching(/^Setting up worktree: linked \.env; running Setup, Install$/),
+        text: expect.stringMatching(
+          /^Setting up worktree: linked \.env; skipped missing\.env; running Setup, Install$/,
+        ),
       });
       await client.next("turn.finished", (event) => event.threadId === threadId);
     },

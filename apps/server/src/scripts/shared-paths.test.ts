@@ -65,6 +65,41 @@ describe("applySharedPaths", () => {
     expect(await readFile(join(dest, ".env"), "utf8")).toBe("OLD=1\n");
   });
 
+  it("refuses .git spelled any way and keeps applying the rest", async () => {
+    const { source, dest } = await twin();
+    await writeFile(join(source, ".env"), "SECRET=1\n");
+    const result = await applySharedPaths(source, dest, [
+      { path: ".GIT/config", mode: "link" },
+      { path: "foo/.git/config", mode: "link" },
+      { path: ".git /config", mode: "link" },
+      { path: ".env", mode: "link" },
+    ]);
+    expect(result.results.slice(0, 3).map((item) => item.action)).toEqual([
+      "refused",
+      "refused",
+      "refused",
+    ]);
+    expect(result.skipped).toEqual([".GIT/config", "foo/.git/config", ".git /config"]);
+    expect(result.linked).toEqual([".env"]);
+    expect(await readFile(join(dest, ".env"), "utf8")).toBe("SECRET=1\n");
+    await expect(lstat(join(dest, ".GIT"))).rejects.toThrow(/ENOENT/);
+  });
+
+  it("keeps applying the other entries when one of them fails", async () => {
+    const { source, dest } = await twin();
+    await mkdir(join(source, "blocker", "child"), { recursive: true });
+    await writeFile(join(dest, "blocker"), "not a directory\n");
+    await writeFile(join(source, ".env"), "SECRET=1\n");
+    const result = await applySharedPaths(source, dest, [
+      { path: "blocker/child", mode: "link" },
+      { path: ".env", mode: "link" },
+    ]);
+    expect(result.results[0]?.action).toBe("skipped");
+    expect(result.skipped).toEqual(["blocker/child"]);
+    expect(result.linked).toEqual([".env"]);
+    expect(await readFile(join(dest, ".env"), "utf8")).toBe("SECRET=1\n");
+  });
+
   it("refuses a path that escapes via ..", async () => {
     const { source, dest } = await twin();
     const result = await applySharedPaths(source, dest, [{ path: "../outside", mode: "link" }]);

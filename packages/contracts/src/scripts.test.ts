@@ -31,6 +31,17 @@ describe("shared paths", () => {
     expect(SharedRelPath.safeParse(".git").success).toBe(false);
     expect(SharedRelPath.safeParse(".git/config").success).toBe(false);
   });
+
+  it("rejects .git in any component however it is spelled", () => {
+    expect(SharedRelPath.safeParse(".GIT/config").success).toBe(false);
+    expect(SharedRelPath.safeParse("foo/.git/config").success).toBe(false);
+    expect(SharedRelPath.safeParse(".git /config").success).toBe(false);
+    expect(SharedRelPath.safeParse(".git./config").success).toBe(false);
+    expect(SharedRelPath.safeParse("foo/GIT~1/config").success).toBe(false);
+    expect(SharedRelPath.safeParse(".gitignore").success).toBe(true);
+    expect(SharedRelPath.safeParse("git.config").success).toBe(true);
+    expect(SharedRelPath.safeParse("config/git").success).toBe(true);
+  });
 });
 
 describe("project prompts", () => {
