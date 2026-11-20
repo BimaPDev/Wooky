@@ -26,6 +26,7 @@ import { openSignInTerminal } from "../terminal/login.ts";
 import type { TerminalManager } from "../terminal/session.ts";
 import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
+import type { ShipService } from "../git/ship.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
 
@@ -43,6 +44,7 @@ interface Services {
   limits: LimitsService;
   history: HistoryService;
   fleet: FleetService;
+  ship: ShipService;
   scratch: ScratchService;
   attachments: AttachmentStore;
 }
@@ -79,6 +81,7 @@ function createHandlers(
     limits,
     history,
     fleet,
+    ship,
     scratch,
     attachments,
   }: Services,
@@ -217,11 +220,11 @@ function createHandlers(
     "terminal.list": notImplemented,
     "terminal.attach": notImplemented,
     "scripts.run": notImplemented,
-    "git.status": notImplemented,
-    "git.commit": notImplemented,
-    "git.push": notImplemented,
-    "git.pr.create": notImplemented,
-    "git.pr.status": notImplemented,
+    "git.status": (params) => ship.status(params),
+    "git.commit": (params) => ship.commit(params),
+    "git.push": (params) => ship.push(params),
+    "git.pr.create": (params) => ship.prCreate(params),
+    "git.pr.status": (params) => ship.prStatus(params),
   };
 }
 

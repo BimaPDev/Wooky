@@ -6,6 +6,7 @@
  * NUL-delimited), so a later `git commit` cannot record a file the restore removed. That
  * step only ever removes entries for paths restore itself deleted; it never alters entries
  * for other files and never touches HEAD, branches or the stash.
+ * User commit, push and pull requests are implemented in ship.ts.
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, readdir, rmdir, realpath } from "node:fs/promises";

@@ -732,6 +732,28 @@ export function loadMergePreview(threadId: string): Promise<MergePreview> {
   return backend().call("git.mergePreview", { threadId });
 }
 
+export function loadGitStatus(threadId: string) {
+  return backend().call("git.status", { threadId });
+}
+
+export function commitGit(threadId: string, message: string) {
+  return backend().call("git.commit", { threadId, message });
+}
+
+export function pushGit(threadId: string, setUpstream?: boolean) {
+  return backend().call("git.push", { threadId, setUpstream });
+}
+
+export function createPullRequest(params: {
+  threadId: string;
+  title: string;
+  body: string;
+  base?: string;
+  draft?: boolean;
+}) {
+  return backend().call("git.pr.create", params);
+}
+
 const FANOUT_GROUP_WAIT_MS = 8_000;
 
 function waitForGroupCreated(commandId: string): { promise: Promise<string>; cancel: () => void } {
