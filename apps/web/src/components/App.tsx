@@ -187,16 +187,30 @@ function mainView({
 }): ReactNode {
   if (fleetBoardOpen) return <FleetBoard />;
   if (compareGroupId) return <CompareView groupId={compareGroupId} />;
-  if (draftView) return <NewThreadView />;
+  if (draftView) {
+    return (
+      <Conversation>
+        <NewThreadView />
+      </Conversation>
+    );
+  }
   if (splitActive) return <PaneDock />;
   if (threadId) {
     return (
-      <>
+      <Conversation>
         <CoordinatorStrip threadId={threadId} />
         <ThreadView key={threadId} threadId={threadId} />
         <Composer key={`composer-${threadId}`} threadId={threadId} />
-      </>
+      </Conversation>
     );
   }
   return <p className="empty-state">Pick a thread or start a new one.</p>;
+}
+
+function Conversation({ children }: { children: ReactNode }) {
+  return (
+    <div className="conversation" data-workspace-area="conversation">
+      {children}
+    </div>
+  );
 }
