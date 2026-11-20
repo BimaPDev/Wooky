@@ -1,6 +1,13 @@
 import { WOOKY_WS_PATH } from "@wooky/contracts";
 import { emptyReadModel } from "@wooky/domain";
 import { createFixtureBackend } from "../dev/fixture.ts";
+import { loadPairedToken } from "../components/anywhere/pair/token.ts";
+import {
+  bindTransport,
+  bootEnvironments,
+  noteConnectionStatus,
+  noteSyncPush,
+} from "../state/environments.ts";
 import { handleThemesPush, loadDeviceSettings } from "../state/appearance.ts";
 import { refreshProviders } from "../state/actions.ts";
 import { setBackend } from "../state/backend.ts";
@@ -29,12 +36,14 @@ export function startConnection() {
       }
     });
     void refreshProviders();
-    void loadDeviceSettings();
+    void loadDeviceSettings().then(() => bootEnvironments());
     return;
   }
   let firstOpen = true;
+  const localUrl = `${location.origin.replace(/^http/, "ws")}${WOOKY_WS_PATH}`;
   const client = createRpcClient({
-    url: `${location.origin.replace(/^http/, "ws")}${WOOKY_WS_PATH}`,
+    url: localUrl,
+    token: loadPairedToken(),
     socketFactory: browserSocket,
     getSeq: () => useStore.getState().model.seq,
     onSnapshot: receiveSnapshot,
@@ -43,20 +52,28 @@ export function startConnection() {
     onThemes: (push) => {
       void handleThemesPush(push);
     },
+    onSync: noteSyncPush,
     onStatus: (status) => {
       useStore.setState({ status });
+      noteConnectionStatus(status);
       if (status === "open" && firstOpen) {
         firstOpen = false;
         void refreshProviders();
-        void loadDeviceSettings();
+        void loadDeviceSettings().then(() => bootEnvironments());
+      } else if (status === "open") {
+        void refreshProviders();
       }
     },
   });
   setBackend(client);
+  bindTransport({
+    reconnect: (url, token) => client.reconnect(url, token),
+    localUrl: () => localUrl,
+  });
 }
 
-function browserSocket(url: string, handlers: SocketHandlers): SocketLike {
-  const ws = new WebSocket(url);
+function browserSocket(url: string, handlers: SocketHandlers, token: string | null): SocketLike {
+  const ws = token ? new WebSocket(url, [`wooky.token.${token}`]) : new WebSocket(url);
   ws.addEventListener("open", () => handlers.open());
   ws.addEventListener("message", (event) => handlers.message(event.data));
   ws.addEventListener("close", () => handlers.close());

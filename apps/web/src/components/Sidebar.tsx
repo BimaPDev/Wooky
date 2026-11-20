@@ -34,6 +34,7 @@ import {
   IconSidebar,
   IconTrash,
 } from "./Icons.tsx";
+import { EnvironmentSwitcher } from "./anywhere/EnvironmentSwitcher.tsx";
 import { InlineRename } from "./InlineRename.tsx";
 import { providerLabels } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
@@ -121,6 +122,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
           </button>
         </Tooltip>
         <span className="brand">Wooky</span>
+        <EnvironmentSwitcher />
       </div>
       <div className="sidebar-tools">
         <label className="search-field">

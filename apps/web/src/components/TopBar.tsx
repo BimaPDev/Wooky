@@ -11,6 +11,7 @@ import {
   toggleTerminal,
 } from "../state/actions.ts";
 import { draftProjectId, isDraftView, useStore } from "../state/store.ts";
+import { EnvironmentTag } from "./anywhere/EnvironmentSwitcher.tsx";
 import { Counts } from "./DiffView.tsx";
 import {
   IconBranch,
@@ -91,6 +92,7 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
             <IconChevronRight />
           </button>
         </Tooltip>
+        {!sidebarOpen ? <EnvironmentTag /> : null}
       </div>
       <div className="topbar-title">
         {thread && project ? (

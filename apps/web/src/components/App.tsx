@@ -3,6 +3,7 @@ import { dismissNotice, setPaletteOpen } from "../state/actions.ts";
 import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
 import { isDraftView, useStore, type Theme } from "../state/store.ts";
 import { syncRootThemeClass } from "../state/theme.ts";
+import { EnvironmentBanner } from "./anywhere/EnvironmentSwitcher.tsx";
 import { ChangesPanel } from "./ChangesPanel.tsx";
 import { Composer } from "./Composer.tsx";
 import { CompareView } from "./fleet/CompareView.tsx";
@@ -134,6 +135,7 @@ export function App() {
         {sidebarOpen ? <Sidebar macDesktop={macDesktop} /> : null}
         <div className="workspace">
           <TopBar macDesktop={macDesktop} />
+          <EnvironmentBanner />
           <div className={terminalOpen ? "workspace-stack with-terminal" : "workspace-stack"}>
             <div className={bodyClass}>
               <main className="main">
