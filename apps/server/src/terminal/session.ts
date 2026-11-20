@@ -26,6 +26,8 @@ export interface TerminalOpenInput {
   projectId?: string | null;
   scriptId?: string | null;
   title?: string;
+  /** When set, spawn this argv instead of an interactive login shell. */
+  commandArgv?: { file: string; args: string[] };
 }
 
 export type TerminalOpenResult = TerminalInfo & {
@@ -221,6 +223,11 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     clearDetached(session);
     clearExited(session);
     sessions.delete(session.id);
+  }
+
+  /** Sessions a caller can still reach: one being killed is already gone to them. */
+  function liveSessions(): Session[] {
+    return [...sessions.values()].filter((session) => !session.closing);
   }
 
   function detachedCount() {
@@ -473,14 +480,22 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     input: TerminalOpenInput,
     subscriber: TerminalSubscriber,
   ): Promise<TerminalOpenResult> {
-    if (sessions.size >= MAX_SESSIONS) reapExited();
-    if (sessions.size >= MAX_SESSIONS) {
+    // A closing session is already gone to a caller, so it must not hold a slot.
+    if (liveSessions().length >= MAX_SESSIONS) reapExited();
+    if (liveSessions().length >= MAX_SESSIONS) {
       throw new ServiceError(
         "conflict",
         `At most ${MAX_SESSIONS} terminal sessions (${detachedCount()} detached).`,
       );
     }
-    const shell = resolveShell();
+    const resolved = resolveShell();
+    const shell: ShellCommand = input.commandArgv
+      ? {
+          ...resolved,
+          file: input.commandArgv.file,
+          args: input.commandArgv.args,
+        }
+      : resolved;
     const cwd = defaultCwd(input.cwd);
     const cols = input.cols ?? DEFAULT_COLS;
     const rows = input.rows ?? DEFAULT_ROWS;
@@ -491,7 +506,7 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
     const bind = (usePty: boolean) => (backend: SessionBackend) =>
       createSession(
         backend,
-        { shell, cwd, pty: usePty, projectId, scriptId, title: input.title },
+        { shell: resolved, cwd, pty: usePty, projectId, scriptId, title: input.title },
         subscriber,
       );
 
@@ -535,7 +550,7 @@ export function createTerminalManager(options: TerminalManagerOptions = {}): Ter
   }
 
   function list(): TerminalInfo[] {
-    return [...sessions.values()].map(toInfo);
+    return liveSessions().map(toInfo);
   }
 
   function write(sessionId: string, data: string) {

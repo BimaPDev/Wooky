@@ -7,7 +7,13 @@ const at = "2026-01-01T00:00:00.000Z";
 const added: PendingEvent = {
   type: "project.added",
   commandId: null,
-  project: { id: "p1", name: "p", root: "/p", createdAt: at, settings: { scripts: [] } },
+  project: {
+    id: "p1",
+    name: "p",
+    root: "/p",
+    createdAt: at,
+    settings: { scripts: [], sharedPaths: [], prompts: [] },
+  },
 };
 
 describe("waitForEvent", () => {

@@ -1,0 +1,249 @@
+/*
+ * Phone layout, 640px and narrower: one column, the sidebar as a slide-over drawer, tap
+ * targets of at least 44px, safe-area insets, and nothing wider than the screen. Loaded
+ * after app.css so these rules win. Keep the breakpoint in step with PHONE_QUERY.
+ */
+
+@media (max-width: 640px) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    height: 100dvh;
+  }
+
+  /* Sidebar drawer */
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 20;
+    width: min(88vw, 340px);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: var(--shadow);
+    animation: drawer-in var(--duration-slow) var(--ease);
+  }
+
+  .drawer-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    border: 0;
+    border-radius: 0;
+    background: var(--scrim);
+    animation: scrim-in var(--duration) var(--ease);
+  }
+
+  @keyframes drawer-in {
+    from {
+      transform: translateX(-100%);
+    }
+  }
+
+  @keyframes scrim-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  /* Top bar */
+  .topbar {
+    height: auto;
+    min-height: 48px;
+    padding-top: env(safe-area-inset-top);
+    padding-right: max(var(--space-2), env(safe-area-inset-right));
+    padding-left: max(var(--space-2), env(safe-area-inset-left));
+  }
+
+  .topbar-title {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .topbar-lead .icon-button:not([aria-label="Show sidebar"]) {
+    display: none;
+  }
+
+  /* Tap targets */
+  .icon-button,
+  .button,
+  .ghost-button,
+  .link-button,
+  .composer-icon-btn,
+  .thread-button,
+  .sidebar-section-toggle,
+  .history-row-button,
+  .conflict-path-head,
+  .settings-nav-item,
+  .popover-row,
+  .palette-item {
+    min-height: 44px;
+  }
+
+  .icon-button,
+  .composer-icon-btn {
+    min-width: 44px;
+  }
+
+  .toggle {
+    position: relative;
+  }
+
+  .toggle::after {
+    content: "";
+    position: absolute;
+    inset: -10px -4px;
+  }
+
+  input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+  }
+
+  .history-file,
+  .history-compare {
+    min-height: 44px;
+  }
+
+  /* Panes stack: the changes panel takes the whole screen */
+  .workspace-body.split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-body.split .panel,
+  .panel {
+    position: fixed;
+    inset: 0;
+    z-index: 18;
+    width: 100vw;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    border-left: 0;
+  }
+
+  .panel-head {
+    height: 48px;
+  }
+
+  /* Conversation and composer */
+  .main {
+    border-right: 0;
+  }
+
+  .thread-content {
+    padding: var(--space-4) max(var(--space-4), env(safe-area-inset-left)) var(--space-6)
+      max(var(--space-4), env(safe-area-inset-right));
+  }
+
+  .composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    background: var(--bg-1);
+  }
+
+  .composer-col {
+    padding: var(--space-2) max(var(--space-3), env(safe-area-inset-left))
+      max(var(--space-3), env(safe-area-inset-bottom))
+      max(var(--space-3), env(safe-area-inset-right));
+  }
+
+  .composer textarea {
+    font-size: 16px;
+  }
+
+  .claim-banner,
+  .moved-banner,
+  .notice-bar {
+    width: calc(100% - 2 * var(--space-4));
+  }
+
+  /* Diffs scroll inside their own box */
+  .file-diff,
+  .diff-wrap,
+  .approval-diff,
+  .conflict-side-body {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .diff {
+    min-width: max-content;
+  }
+
+  .markdown pre,
+  .tool-output {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  /* The terminal stays behind its button and opens as a sheet */
+  .terminal-dock {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 17;
+    height: 55dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: var(--shadow);
+  }
+
+  /* Dialogs fill the screen */
+  .modal,
+  .modal.app-route-modal,
+  .modal.history-modal {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .modal.small {
+    width: calc(100vw - 2 * var(--space-4));
+    max-width: calc(100vw - 2 * var(--space-4));
+    height: auto;
+    max-height: calc(100dvh - 2 * var(--space-4));
+    margin: auto;
+    border-radius: var(--radius-lg);
+  }
+
+  .settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history-save {
+    flex-wrap: wrap;
+  }
+
+  .history-save input {
+    height: 44px;
+    min-width: 160px;
+  }
+
+  .history-timeline {
+    max-height: none;
+    overflow-y: visible;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .history-body {
+    overflow-y: auto;
+  }
+
+  .anywhere-toast {
+    bottom: max(var(--space-4), env(safe-area-inset-bottom));
+    width: calc(100vw - 2 * var(--space-4));
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .drawer-scrim {
+    animation: none;
+  }
+}

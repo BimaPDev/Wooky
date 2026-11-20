@@ -25,7 +25,7 @@ import {
   Worktree,
 } from "./model.ts";
 import { DeviceId } from "./remote.ts";
-import { ProjectSettings } from "./scripts.ts";
+import { StoredProjectSettings } from "./scripts.ts";
 
 /**
  * Events are the durable record of decisions. Projections (the read model) are
@@ -47,7 +47,7 @@ export const AgeEvent = z.discriminatedUnion("type", [
     ...meta,
     type: z.literal("project.configured"),
     projectId: Id,
-    settings: ProjectSettings,
+    settings: StoredProjectSettings,
   }),
   z.object({ ...meta, type: z.literal("thread.created"), thread: Thread }),
   z.object({ ...meta, type: z.literal("thread.renamed"), threadId: Id, title: z.string() }),

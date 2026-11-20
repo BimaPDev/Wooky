@@ -49,7 +49,7 @@ const project = (seq: number, id: string): AgeEvent => ({
     name: id,
     root: `/tmp/${id}`,
     createdAt: "2026-01-01T00:00:00.000Z",
-    settings: { scripts: [] },
+    settings: { scripts: [], sharedPaths: [], prompts: [] },
   },
 });
 
@@ -57,14 +57,16 @@ const flush = () => Promise.resolve().then(() => Promise.resolve());
 
 function setup(options: { timeoutMs?: number } = {}) {
   const sockets: FakeSocket[] = [];
+  const connections: { url: string; token: string | null }[] = [];
   let model: ReadModel = emptyReadModel();
   const applied: number[] = [];
   const statuses: string[] = [];
   const client = createRpcClient({
     url: "ws://test/ws",
-    socketFactory: (_url, handlers) => {
+    socketFactory: (url, handlers, token) => {
       const socket = new FakeSocket(handlers);
       sockets.push(socket);
+      connections.push({ url, token });
       return socket;
     },
     getSeq: () => model.seq,
@@ -85,7 +87,7 @@ function setup(options: { timeoutMs?: number } = {}) {
     if (!last) throw new Error("no socket");
     return last;
   };
-  return { client, sockets, socket, applied, statuses, model: () => model };
+  return { client, sockets, connections, socket, applied, statuses, model: () => model };
 }
 
 describe("rpc client", () => {
@@ -115,6 +117,19 @@ describe("rpc client", () => {
     const error = await call.catch((e: unknown) => e);
     expect(error).toBeInstanceOf(RpcCallError);
     expect(error).toMatchObject({ code: "not_found", message: "No such thread." });
+    client.close();
+  });
+
+  it("surfaces forbidden as a normal error, not a timeout", async () => {
+    const { client, socket } = setup({ timeoutMs: 500 });
+    socket().open();
+    const call = client.call("settings.put", { settings: { hosting: { enabled: true } } });
+    socket().fail(socket().last("settings.put").id, "forbidden", "Loopback only.");
+    const error = await call.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RpcCallError);
+    expect(error).toMatchObject({ code: "forbidden", message: "Loopback only." });
+    vi.advanceTimersByTime(500);
+    expect(error).not.toMatchObject({ code: "timeout" });
     client.close();
   });
 
@@ -216,6 +231,37 @@ describe("rpc client", () => {
     expect(socket().sent.map((r) => r.method)).toEqual(["subscribe"]);
     expect(socket().last("subscribe").params).toEqual({ fromSeq: 2 });
     expect(statuses.at(-1)).toBe("open");
+    client.close();
+  });
+
+  it("reconnect moves to another server with its token and a fresh snapshot", async () => {
+    const { client, sockets, connections, socket, statuses } = setup();
+    socket().open();
+    socket().reply(socket().last("snapshot").id, emptyReadModel());
+    await flush();
+    socket().reply(socket().last("subscribe").id, { replayed: 0 });
+    const first = socket();
+    const inflight = client.call("providers.list", {}).catch((e: unknown) => e);
+
+    client.reconnect("ws://remote/ws", "abc");
+    expect(await inflight).toMatchObject({ code: "disconnected" });
+    expect(sockets).toHaveLength(2);
+    expect(connections.at(-1)).toEqual({ url: "ws://remote/ws", token: "abc" });
+    expect(statuses.at(-1)).toBe("connecting");
+
+    // The old socket closing late must not schedule a retry or flip the status.
+    first.drop();
+    vi.advanceTimersByTime(10_000);
+    expect(sockets).toHaveLength(2);
+
+    socket().open();
+    await flush();
+    expect(socket().sent.map((r) => r.method)).toEqual(["snapshot"]);
+    expect(statuses.at(-1)).toBe("open");
+
+    socket().drop();
+    vi.advanceTimersByTime(250);
+    expect(connections.at(-1)).toEqual({ url: "ws://remote/ws", token: "abc" });
     client.close();
   });
 });

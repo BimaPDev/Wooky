@@ -8,6 +8,7 @@ import {
   type RpcMethod,
   type RpcParams,
   type RpcResult,
+  type SyncPush,
   type TerminalPush,
   type ThemesPush,
 } from "@wooky/contracts";
@@ -27,7 +28,12 @@ export interface SocketHandlers {
   close(): void;
 }
 
-export type SocketFactory = (url: string, handlers: SocketHandlers) => SocketLike;
+/** `token` is the device token for a remote host, sent as the `wooky.token.<token>` subprotocol. */
+export type SocketFactory = (
+  url: string,
+  handlers: SocketHandlers,
+  token: string | null,
+) => SocketLike;
 
 export type CallErrorCode = RpcError["code"] | "timeout" | "disconnected";
 
@@ -43,6 +49,8 @@ export class RpcCallError extends Error {
 
 export interface RpcClientOptions {
   url: string;
+  /** Device token for the first connection. Absent for the local server. */
+  token?: string | null;
   socketFactory: SocketFactory;
   /** Seq of the last event the caller applied; used to resubscribe after a reconnect. */
   getSeq: () => number;
@@ -50,6 +58,7 @@ export interface RpcClientOptions {
   onEvent: (event: AgeEvent) => void;
   onTerminal?: (message: TerminalPush) => void;
   onThemes?: (message: ThemesPush) => void;
+  onSync?: (message: SyncPush) => void;
   onStatus?: (status: ConnectionStatus) => void;
   requestTimeoutMs?: number;
   backoffBaseMs?: number;
@@ -89,6 +98,8 @@ export function createRpcClient(options: RpcClientOptions) {
   let attempt = 0;
   let hasSnapshot = false;
   let stopped = false;
+  let url = options.url;
+  let token = options.token ?? null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let status: ConnectionStatus = "connecting";
   const pending = new Map<number, Pending>();
@@ -102,13 +113,17 @@ export function createRpcClient(options: RpcClientOptions) {
   function connect() {
     retryTimer = null;
     if (stopped) return;
-    const ws: SocketLike = options.socketFactory(options.url, {
-      open: () => onOpen(ws),
-      message: (data) => {
-        if (socket === ws) receive(data);
+    const ws: SocketLike = options.socketFactory(
+      url,
+      {
+        open: () => onOpen(ws),
+        message: (data) => {
+          if (socket === ws) receive(data);
+        },
+        close: () => onClose(ws),
       },
-      close: () => onClose(ws),
-    });
+      token,
+    );
     socket = ws;
   }
 
@@ -172,6 +187,7 @@ export function createRpcClient(options: RpcClientOptions) {
       if (message.push === "terminal") options.onTerminal?.(message);
       else if (message.push === "event") options.onEvent(message.event);
       else if (message.push === "themes") options.onThemes?.(message);
+      else if (message.push === "sync") options.onSync?.(message);
       return;
     }
     const entry = pending.get(message.id);
@@ -182,7 +198,15 @@ export function createRpcClient(options: RpcClientOptions) {
       entry.reject(new RpcCallError(message.error.code, message.error.message));
       return;
     }
-    const result = RpcMethods[entry.method].result.safeParse(message.result);
+    // TODO(A3): methods not in the contract yet (sync.replicas) resolve unparsed; the caller validates.
+    const spec = (RpcMethods as Partial<Record<string, (typeof RpcMethods)[RpcMethod]>>)[
+      entry.method
+    ];
+    if (!spec) {
+      entry.resolve(message.result);
+      return;
+    }
+    const result = spec.result.safeParse(message.result);
     if (result.success) entry.resolve(result.data);
     else entry.reject(new RpcCallError("internal", `Unexpected ${entry.method} result.`));
   }
@@ -216,6 +240,28 @@ export function createRpcClient(options: RpcClientOptions) {
     });
   }
 
+  /** Drop the socket and connect to another server. The next one starts with a fresh snapshot. */
+  function reconnect(nextUrl: string, nextToken: string | null) {
+    if (stopped) return;
+    url = nextUrl;
+    token = nextToken;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+    const ws = socket;
+    socket = null;
+    for (const entry of pending.values()) {
+      if (!entry.sent) continue;
+      clearTimeout(entry.timer);
+      entry.reject(new RpcCallError("disconnected", "Switched to another machine."));
+    }
+    for (const [id, entry] of pending) if (entry.sent) pending.delete(id);
+    hasSnapshot = false;
+    attempt = 0;
+    setStatus("connecting");
+    ws?.close();
+    connect();
+  }
+
   function close() {
     stopped = true;
     if (retryTimer) clearTimeout(retryTimer);
@@ -230,5 +276,5 @@ export function createRpcClient(options: RpcClientOptions) {
   }
 
   connect();
-  return { call, close, status: () => status };
+  return { call, close, reconnect, status: () => status };
 }

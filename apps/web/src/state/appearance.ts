@@ -336,14 +336,36 @@ interface Interface {
   glassOpacity: number;
 }
 
-function glassRules(root: string): string {
+/** Pixel wallpapers ask for light glass; the conversation pane skips frost below this. */
+const CRISP_PANE_MAX_BLUR = 8;
+
+function glassRules(root: string, crisp: boolean): string {
+  const frosted = [
+    `${root} .sidebar`,
+    `${root} [data-workspace-area="sidebar"]`,
+    ...(crisp ? [] : [`${root} .workspace`]),
+    `${root} .composer-box`,
+    `${root} .popover`,
+    `${root} .composer-menu`,
+    `${root} .usage-filter-menu`,
+    `${root} .usage-info-popover`,
+    `${root} .modal`,
+  ].join(", ");
   return [
     `${root} body, ${root} .shell, ${root} .topbar, ${root} .workspace-body, ${root} .main, ${root} .panel, ${root} .terminal-pane, ${root} .settings-shell, ${root} .settings-main, ${root} .usage-shell, ${root} .usage-topbar { background: transparent; }`,
     `${root} .sidebar, ${root} [data-workspace-area="sidebar"], ${root} .terminal-dock, ${root} .settings-nav { background: color-mix(in srgb, var(--bg-0) var(--surface-opacity, 82%), transparent); }`,
-    `${root} .workspace, ${root} .modal.app-route-modal { background: color-mix(in srgb, var(--bg-1) var(--surface-opacity, 82%), transparent); }`,
+    crisp
+      ? `${root} .workspace {\n  background: transparent;\n  -webkit-backdrop-filter: none;\n  backdrop-filter: none;\n}`
+      : `${root} .workspace {\n  background: color-mix(in srgb, var(--bg-1) var(--surface-opacity, 82%), transparent);\n}`,
+    `${root} .modal.app-route-modal { background: color-mix(in srgb, var(--bg-1) var(--surface-opacity, 82%), transparent); }`,
     `${root} .composer-box, ${root} .popover, ${root} .composer-menu, ${root} .usage-filter-menu, ${root} .usage-info-popover, ${root} .modal:not(.app-route-modal) { background: color-mix(in srgb, var(--bg-2) var(--surface-opacity, 82%), transparent); }`,
-    `@supports (backdrop-filter: blur(1px)) {\n  ${root} .sidebar, ${root} [data-workspace-area="sidebar"], ${root} .workspace, ${root} .composer-box, ${root} .popover, ${root} .composer-menu, ${root} .usage-filter-menu, ${root} .usage-info-popover, ${root} .modal {\n    -webkit-backdrop-filter: blur(var(--panel-blur, 0px));\n    backdrop-filter: blur(var(--panel-blur, 0px));\n  }\n}`,
-  ].join("\n");
+    crisp
+      ? `${root} .turn-body > .md, ${root} .trail > .md {\n  padding: var(--space-3) var(--space-4);\n  border-radius: var(--radius-lg);\n  background: color-mix(in srgb, var(--bg-1) 68%, transparent);\n}`
+      : "",
+    `@supports (backdrop-filter: blur(1px)) {\n  ${frosted} {\n    -webkit-backdrop-filter: blur(var(--panel-blur, 0px));\n    backdrop-filter: blur(var(--panel-blur, 0px));\n  }\n}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** The whole appearance as one stylesheet. Selectors outrank tokens.css in every mode. */
@@ -413,10 +435,12 @@ export function buildAppearanceCss(theme: AppearanceTheme | null, ui: Interface)
   out.push(`html:root {\n${globals.join("\n")}\n}`);
 
   for (const mode of ["dark", "light"] as const) {
-    if (resolvedFor(mode)?.background?.image) {
+    const bg = resolvedFor(mode)?.background;
+    if (bg?.image) {
+      const crisp = (bg.panelBlur ?? 0) <= CRISP_PANE_MAX_BLUR;
       out.push(
-        glassRules(`html:root[data-theme="${mode}"]`),
-        `@media (prefers-color-scheme: ${mode}) {\n${glassRules("html:root:not([data-theme])")}\n}`,
+        glassRules(`html:root[data-theme="${mode}"]`, crisp),
+        `@media (prefers-color-scheme: ${mode}) {\n${glassRules("html:root:not([data-theme])", crisp)}\n}`,
       );
     }
   }

@@ -39,6 +39,9 @@ vi.mock("@xterm/xterm", () => {
     onData() {
       return { dispose() {} };
     }
+    registerLinkProvider() {
+      return { dispose() {} };
+    }
   }
   return { Terminal: MockTerminal };
 });

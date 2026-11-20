@@ -15,10 +15,35 @@ type Item<K extends TimelineItem["kind"]> = Extract<TimelineItem, { kind: K }>;
 export const TimelineEntry = memo(function TimelineEntry({
   item,
   threadId,
+  readOnly = false,
 }: {
   item: TimelineItem;
   threadId: string;
+  /** A peer's thread: nothing here can answer the agent, so cards that ask become plain text. */
+  readOnly?: boolean;
 }) {
+  if (readOnly) {
+    if (item.kind === "approval") {
+      const state =
+        item.decision === null
+          ? "Waiting for approval"
+          : item.decision === "allow"
+            ? "Approved"
+            : "Denied";
+      return <p className="item-notice">{`${state}: ${item.title}`}</p>;
+    }
+    if (item.kind === "question") {
+      const open = item.answers === null && !item.dismissed;
+      return (
+        <p className="item-notice">
+          {open
+            ? `Waiting for an answer: ${item.questions[0]?.question ?? ""}`
+            : "Question answered"}
+        </p>
+      );
+    }
+    if (item.kind === "plan") return <Markdown text={item.markdown} />;
+  }
   switch (item.kind) {
     case "tool":
       return <ToolRow item={item} />;

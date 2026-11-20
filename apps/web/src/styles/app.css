@@ -149,6 +149,15 @@ dialog * {
   border-right: 1px solid var(--line);
 }
 
+.conversation {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .right-pane {
   display: flex;
   flex-direction: column;
@@ -7229,4 +7238,192 @@ html[data-wallpaper] .popover.popover-picker {
   .pk-tab {
     transition: none;
   }
+}
+
+/* Project scripts bar and settings */
+.scripts-bar-wrap {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45vw;
+}
+
+.scripts-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.scripts-bar.measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.script-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+}
+
+.script-run,
+.script-preview,
+.script-overflow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.script-run:hover,
+.script-preview:hover:not(:disabled),
+.script-overflow:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.script-run:active,
+.script-preview:active:not(:disabled),
+.script-overflow:active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.script-preview {
+  border-left: 1px solid var(--line);
+  color: var(--text-3);
+}
+
+.script-preview:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.script-run:focus-visible,
+.script-preview:focus-visible,
+.script-overflow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.script-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.script-overflow {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.scripts-overflow-menu {
+  padding: var(--space-1);
+}
+
+.modal.project-settings-modal {
+  width: min(620px, calc(100vw - 32px));
+  overflow: auto;
+}
+
+.settings-section-title {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.project-settings-modal .settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.project-settings-modal .settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg-1);
+}
+
+.settings-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-inline input.mono {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.icon-pick {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.icon-pick:hover {
+  background: var(--bg-hover);
+}
+
+.icon-pick:active {
+  background: var(--bg-active);
+}
+
+.icon-pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.icon-pick.selected {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.composer-menu-heading {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-3);
 }

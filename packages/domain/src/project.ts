@@ -518,7 +518,10 @@ function presentThread(thread: Thread): Thread {
 }
 
 function presentProject(project: Project): Project {
-  return { ...project, settings: project.settings ?? { scripts: [] } };
+  return {
+    ...project,
+    settings: project.settings ?? { scripts: [], sharedPaths: [], prompts: [] },
+  };
 }
 
 function withNotes(model: ReadModel, threadId: string, notes: ReviewNote[]): ReadModel {

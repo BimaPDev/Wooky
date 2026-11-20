@@ -1,7 +1,7 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadDeviceId } from "./device.ts";
+import { loadDeviceIdentity } from "../remote/device.ts";
 import { localProject, sharedProjectId } from "./project-map.ts";
 import { cleanupSyncTests, tempDir } from "./testing.ts";
 
@@ -10,8 +10,8 @@ afterEach(cleanupSyncTests);
 describe("device id", () => {
   it("creates device.json once, mode 0600, and keeps it", async () => {
     const home = await tempDir();
-    const id = loadDeviceId(home);
-    expect(loadDeviceId(home)).toBe(id);
+    const id = loadDeviceIdentity(home).deviceId;
+    expect(loadDeviceIdentity(home).deviceId).toBe(id);
     const file = JSON.parse(await readFile(join(home, "device.json"), "utf8"));
     expect(file).toEqual({ deviceId: id, createdAt: expect.any(String) });
     const mode = (await stat(join(home, "device.json"))).mode & 0o777;
@@ -24,7 +24,7 @@ describe("device id", () => {
       join(home, "device.json"),
       JSON.stringify({ deviceId: "from-a1", createdAt: "2026-01-01T00:00:00.000Z" }),
     );
-    expect(loadDeviceId(home)).toBe("from-a1");
+    expect(loadDeviceIdentity(home).deviceId).toBe("from-a1");
   });
 });
 

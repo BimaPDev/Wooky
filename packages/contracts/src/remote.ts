@@ -33,7 +33,7 @@ export const PairingCodeText = z.string().transform((value, ctx) => {
 export type PairingCodeText = z.infer<typeof PairingCodeText>;
 
 /** Protocol and host only. Contracts cannot use the DOM `URL` type. */
-function parseHttpUrl(
+export function parseHttpUrl(
   value: string,
 ): { protocol: "http:" | "https:"; hostname: string; userinfo: boolean } | null {
   const match = /^(https?):\/\/([^/?#]*)/i.exec(value);
@@ -219,5 +219,7 @@ export const TailscaleStatus = z.object({
   running: z.boolean(),
   hostName: z.string().nullable(),
   ips: z.array(z.string()),
+  /** Set when `tailscale serve` could not be enabled or disabled. */
+  serveError: z.string().optional(),
 });
 export type TailscaleStatus = z.infer<typeof TailscaleStatus>;

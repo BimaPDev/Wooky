@@ -3,6 +3,7 @@ import { reviewNotesFor } from "@wooky/domain";
 import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { closeChanges, loadDiff, openChanges } from "../state/actions.ts";
+import { openHistory } from "../state/anywhere-history.ts";
 import { useStore } from "../state/store.ts";
 import { Counts, FileDiffView, fileAnchor } from "./DiffView.tsx";
 import { IconClose } from "./Icons.tsx";
@@ -26,6 +27,7 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
   const notes = useStore(useShallow((state) => reviewNotesFor(state.model, threadId)));
   const notesByPath = useMemo(() => groupNotesByPath(notes), [notes]);
   const snippets = useStore((state) => state.reviewSnippets);
+  const projectId = useStore((state) => state.model.threads[threadId]?.projectId);
   const [load, setLoad] = useState<{ key: string; value: Load } | null>(null);
   const key = `${threadId}:${turnId ?? ""}:${version}`;
 
@@ -76,6 +78,11 @@ export function ChangesPanel({ threadId }: { threadId: string }) {
         {turnId ? (
           <button type="button" className="link-button" onClick={() => openChanges(null, null)}>
             Whole thread
+          </button>
+        ) : null}
+        {projectId ? (
+          <button type="button" className="link-button" onClick={() => openHistory(projectId)}>
+            Project history
           </button>
         ) : null}
         <Tooltip label="Close changes">

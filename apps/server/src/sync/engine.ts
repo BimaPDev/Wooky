@@ -27,7 +27,8 @@ import {
 import { createConflictStore } from "./conflicts.ts";
 import { decodeMeta, encodeMeta, toSnapshot, type SnapshotMeta } from "./meta.ts";
 import { localProject, sharedProjectId } from "./project-map.ts";
-import type { PeerEntry, SyncDeps, SyncProject, SyncTimers } from "./types.ts";
+import type { PeerRecord as PeerEntry } from "../remote/peers.ts";
+import type { SyncDeps, SyncProject, SyncTimers } from "./types.ts";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 1024 * 1024 * 1024;
@@ -886,7 +887,7 @@ export function createSyncEngine(deps: SyncDeps) {
   // ── serving peers ──────────────────────────────────────────────────────────────────
 
   function servesPeer(deviceId: string): boolean {
-    return filesOn() && (deviceId === "local" || settings().peers.includes(deviceId));
+    return filesOn() && settings().peers.includes(deviceId);
   }
 
   async function tips(): Promise<Array<{ projectId: string; tip: string }>> {

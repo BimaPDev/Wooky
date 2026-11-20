@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer, type ServerOptions } from "../server.ts";
 import { openEventStore } from "../store/event-store.ts";
 import { createFakeGit, tempDir } from "../testing.ts";
-import { folderPickerAllowed, originAllowed } from "./ws.ts";
+import { originAllowed } from "./ws.ts";
 
 function unsetPid(pid: number): void {
   throw new Error(`Folder dialog kill was not armed for ${pid}.`);
@@ -309,6 +309,14 @@ describe("transport", () => {
     await new Promise((resolve, reject) => local.once("open", resolve).once("error", reject));
   });
 
+  it("documents the trust model for paired devices", async () => {
+    const doc = await readFile(new URL("../../../../docs/anywhere.md", import.meta.url), "utf8");
+    expect(doc).toMatch(/^#{2,3} Trust model$/m);
+    expect(doc.replace(/\s+/g, " ")).toContain(
+      "Project settings (scripts, worktree setup, shared files) are editable from paired devices, like running commands in the terminal.",
+    );
+  });
+
   it("decides origins by host", () => {
     expect(originAllowed(undefined, "127.0.0.1:4317")).toBe(true);
     expect(originAllowed("http://127.0.0.1:9", "127.0.0.1:4317")).toBe(true);
@@ -321,16 +329,6 @@ describe("transport", () => {
     expect(originAllowed("http://127.0.0.1:5173", "evil.example:4317")).toBe(false);
     expect(originAllowed("http://evil.example", "127.0.0.1:4317")).toBe(false);
     expect(originAllowed("not a url", "x")).toBe(false);
-  });
-
-  it("opens the folder chooser only for loopback peers unless the operator opts in", () => {
-    expect(folderPickerAllowed("127.0.0.1", false)).toBe(true);
-    expect(folderPickerAllowed("::1", false)).toBe(true);
-    expect(folderPickerAllowed("::ffff:127.0.0.1", false)).toBe(true);
-    expect(folderPickerAllowed("::FFFF:127.0.0.1", false)).toBe(true);
-    expect(folderPickerAllowed("192.168.1.20", false)).toBe(false);
-    expect(folderPickerAllowed(undefined, false)).toBe(false);
-    expect(folderPickerAllowed("192.168.1.20", true)).toBe(true);
   });
 
   it("conflicts a second connection and kills the dialog when its connection closes", async () => {

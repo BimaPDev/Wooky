@@ -1,21 +1,6 @@
-import type { IncomingMessage } from "node:http";
 import type { SyncSettings } from "@wooky/contracts";
 
-/** Supplied by the pairing station (A1). Loopback is `{ deviceId: "local" }`. */
-export type AuthenticateRequest = (req: IncomingMessage) => { deviceId: string } | null;
-
-export interface PeerEntry {
-  deviceId: string;
-  name: string;
-  baseUrl: string;
-  token: string;
-}
-
-/** Supplied by the pairing station (A1): the paired devices this server may call. */
-export interface PeerDirectory {
-  list(): PeerEntry[];
-  get(deviceId: string): PeerEntry | null | undefined;
-}
+import type { PeerDirectory } from "../remote/peers.ts";
 
 export interface SyncProject {
   id: string;

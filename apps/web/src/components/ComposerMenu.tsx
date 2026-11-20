@@ -1,4 +1,4 @@
-import type { WorkspaceEntry } from "@wooky/contracts";
+import type { ProjectPrompt, WorkspaceEntry } from "@wooky/contracts";
 import { useEffect, useRef, useState } from "react";
 import { RpcCallError } from "../rpc/client.ts";
 import { mentionMenuFooter } from "../lib/composer-mention-menu.ts";
@@ -8,6 +8,34 @@ import {
   type ComposerTrigger,
 } from "../lib/composer-trigger.ts";
 import { backend } from "../state/backend.ts";
+import { draftProjectId, useStore } from "../state/store.ts";
+
+export const PROMPT_PICK_PREFIX = "prompt:";
+
+export function promptPickId(id: string): string {
+  return `${PROMPT_PICK_PREFIX}${id}`;
+}
+
+export function promptIdFromPick(id: string): string | null {
+  return id.startsWith(PROMPT_PICK_PREFIX) ? id.slice(PROMPT_PICK_PREFIX.length) : null;
+}
+
+export function filterPromptPresets(prompts: readonly ProjectPrompt[], query: string) {
+  const needle = query.toLowerCase();
+  return prompts.filter(
+    (prompt) =>
+      prompt.name.toLowerCase().includes(needle) || prompt.id.toLowerCase().includes(needle),
+  );
+}
+
+export function insertPromptText(
+  text: string,
+  trigger: ComposerTrigger,
+  promptText: string,
+): { text: string; caret: number } {
+  const next = text.slice(0, trigger.replaceStart) + promptText + text.slice(trigger.replaceEnd);
+  return { text: next, caret: trigger.replaceStart + promptText.length };
+}
 
 /** `threadId` null is the draft screen: there is no workspace to search, so only / commands apply. */
 export function useComposerMenu(threadId: string | null, text: string, caret: number) {
@@ -59,12 +87,29 @@ export function useComposerMenu(threadId: string | null, text: string, caret: nu
     return () => clearTimeout(timer);
   }, [threadId, mentionQuery]);
 
+  const prompts = useStore((state) => {
+    const thread = threadId ? state.model.threads[threadId] : undefined;
+    const projectId = thread?.projectId ?? draftProjectId(state);
+    return (projectId ? state.model.projects[projectId]?.settings.prompts : undefined) ?? [];
+  });
+
   const slashItems =
     trigger?.kind === "slash"
       ? filterSlashCommands(trigger.query).map((cmd) => ({
           id: cmd.id,
           label: `/${cmd.id}`,
           detail: cmd.label,
+        }))
+      : [];
+
+  const promptItems =
+    trigger?.kind === "slash"
+      ? filterPromptPresets(prompts, trigger.query).map((prompt) => ({
+          id: promptPickId(prompt.id),
+          label: prompt.name,
+          detail: "Prompt",
+          section: "prompts" as const,
+          text: prompt.text,
         }))
       : [];
 
@@ -82,8 +127,11 @@ export function useComposerMenu(threadId: string | null, text: string, caret: nu
 
   return {
     trigger,
-    menuOpen: trigger !== null && (trigger.kind === "slash" ? slashItems.length > 0 : true),
-    slashItems,
+    menuOpen:
+      trigger !== null &&
+      (trigger.kind === "slash" ? slashItems.length + promptItems.length > 0 : true),
+    slashItems: [...slashItems, ...promptItems],
+    promptItems,
     mentionItems,
     mentionQuery,
     entriesQuery,
@@ -103,8 +151,8 @@ export function ComposerMenuPanel({
   onPick,
 }: {
   trigger: ComposerTrigger;
-  slashItems: { id: string; label: string; detail?: string }[];
-  mentionItems: { id: string; label: string; detail?: string }[];
+  slashItems: { id: string; label: string; detail?: string; section?: "prompts" }[];
+  mentionItems: { id: string; label: string; detail?: string; section?: "prompts" }[];
   mentionQuery: string | null;
   entriesQuery: string | null;
   searchUnavailable: boolean;
@@ -132,23 +180,36 @@ export function ComposerMenuPanel({
           aria-label={trigger.kind === "slash" ? "Commands" : "Files"}
           id={listId}
         >
-          {items.map((item, itemIndex) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={itemIndex === activeIndex}
-                className={
-                  itemIndex === activeIndex ? "composer-menu-item active" : "composer-menu-item"
-                }
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => onPick(item.id)}
-              >
-                <span className="mono">{item.label}</span>
-                {item.detail ? <span className="muted">{item.detail}</span> : null}
-              </button>
-            </li>
-          ))}
+          {items.map((item, itemIndex) => {
+            const heading =
+              trigger.kind === "slash" &&
+              item.section === "prompts" &&
+              items[itemIndex - 1]?.section !== "prompts";
+            return (
+              <li key={item.id}>
+                {heading ? (
+                  <p className="composer-menu-heading" role="presentation">
+                    Prompts
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={itemIndex === activeIndex}
+                  className={
+                    itemIndex === activeIndex ? "composer-menu-item active" : "composer-menu-item"
+                  }
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => onPick(item.id)}
+                >
+                  <span className={item.section === "prompts" ? undefined : "mono"}>
+                    {item.label}
+                  </span>
+                  {item.detail ? <span className="muted">{item.detail}</span> : null}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
     </div>

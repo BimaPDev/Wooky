@@ -370,14 +370,26 @@ describe("hostile path names", () => {
 });
 
 describe("test hooks", () => {
-  it("honours WOOKY_SYNC_TEST_PEERS only under NODE_ENV=test or --test-hooks", async () => {
-    const { testPeerDirectory, testHooksEnabled } = await import("./stubs.ts");
-    expect(testHooksEnabled({ NODE_ENV: "test" }, [])).toBe(true);
-    expect(testHooksEnabled({}, ["node", "bin.ts", "--test-hooks"])).toBe(true);
-    expect(testHooksEnabled({ NODE_ENV: "production" }, ["node", "bin.ts"])).toBe(false);
-    const raw = JSON.stringify([{ deviceId: "x", name: "X", baseUrl: "http://h", token: "t" }]);
-    expect(testPeerDirectory(raw, true).list()).toHaveLength(1);
-    expect(testPeerDirectory(raw, false).list()).toEqual([]);
+  it("has no env or flag that injects peers into a real server", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { dirname, join: joinPath } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const { resolveConfig } = await import("../config.ts");
+    const src = joinPath(dirname(fileURLToPath(import.meta.url)), "..");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = joinPath(dir, name);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.ts$/.test(name) && !/\.test\.ts$/.test(name)) {
+          const text = readFileSync(full, "utf8");
+          if (/SYNC_TEST_PEERS|test-hooks|testHooksEnabled/.test(text)) offenders.push(full);
+        }
+      }
+    };
+    walk(src);
+    expect(offenders).toEqual([]);
+    expect(() => resolveConfig(["--test-hooks"], { NODE_ENV: "test" })).toThrow(/test-hooks/);
   });
 });
 

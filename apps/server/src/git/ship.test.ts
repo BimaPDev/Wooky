@@ -57,7 +57,7 @@ function seedThread(
         name: "demo",
         root,
         createdAt: "2026-01-01T00:00:00.000Z",
-        settings: { scripts: [] },
+        settings: { scripts: [], sharedPaths: [], prompts: [] },
       },
     },
     {

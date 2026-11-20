@@ -12,6 +12,7 @@ import { NO_DISABLED_PROVIDERS, useStore, type Dialog } from "../state/store.ts"
 import { isAvailable, runtimeModes } from "./labels.ts";
 import { Modal } from "./Modal.tsx";
 import { defaultModelFor, pickerModels } from "./providers/helpers.ts";
+import { ProjectSettingsDialog } from "./project-settings/ProjectSettingsDialog.tsx";
 import { ProviderMark } from "./ProviderMark.tsx";
 
 export function Dialogs() {
@@ -26,6 +27,8 @@ export function Dialogs() {
       return <ConfirmDialog dialog={dialog} />;
     case "revert":
       return <RevertDialog dialog={dialog} />;
+    case "projectSettings":
+      return <ProjectSettingsDialog projectId={dialog.projectId} />;
   }
 }
 
@@ -120,7 +123,7 @@ function ConfirmDialog({ dialog }: { dialog: Extract<Dialog, { kind: "confirm" }
           <button type="button" className="button" onClick={closeDialog}>
             Cancel
           </button>
-          {/* The destructive action is explicit, so focus starts on Cancel. */}
+          {/* Focus stays on the dialog; the destructive action is explicit. */}
           <button type="submit" className="button danger">
             {dialog.confirmLabel}
           </button>

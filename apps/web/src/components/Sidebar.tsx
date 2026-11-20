@@ -34,6 +34,9 @@ import {
   IconSidebar,
   IconTrash,
 } from "./Icons.tsx";
+import { EnvironmentSwitcher } from "./anywhere/EnvironmentSwitcher.tsx";
+import { ConflictBadge } from "./anywhere/conflicts/ConflictBadge.tsx";
+import { ReplicaSections } from "./anywhere/replicas/ReplicaSections.tsx";
 import { InlineRename } from "./InlineRename.tsx";
 import { providerLabels } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
@@ -121,6 +124,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
           </button>
         </Tooltip>
         <span className="brand">Wooky</span>
+        <EnvironmentSwitcher />
       </div>
       <div className="sidebar-tools">
         <label className="search-field">
@@ -165,6 +169,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
           </button>
         </Tooltip>
       </div>
+      <ConflictBadge />
       <div className="sidebar-scroll">
         {hasProjects &&
         needle &&
@@ -197,6 +202,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
             statusById={statusById}
           />
         )}
+        <ReplicaSections />
       </div>
       {working.length > 0 ? (
         <section className="sidebar-working" aria-label="Working">

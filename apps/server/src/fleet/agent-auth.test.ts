@@ -3,7 +3,8 @@ import { emptyReadModel } from "@wooky/domain";
 import type { Thread } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import { createAgentTokenService } from "./agent-token.ts";
-import { isLoopbackAddress, resolveAgentCaller } from "./agent-auth.ts";
+import { isLoopbackAddress } from "../remote/auth.ts";
+import { resolveAgentCaller } from "./agent-auth.ts";
 
 const at = "2026-01-01T00:00:00.000Z";
 

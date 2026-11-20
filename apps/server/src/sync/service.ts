@@ -1,10 +1,10 @@
 import { activeTurn } from "@wooky/domain";
 import type { DeviceSettings } from "@wooky/contracts";
 import type { EventStore } from "../store/event-store.ts";
-import { loadDeviceId } from "./device.ts";
 import { createSyncEngine, type SyncEngine } from "./engine.ts";
 import { createSyncRoutes } from "./http.ts";
-import type { AuthenticateRequest, PeerDirectory } from "./types.ts";
+import type { AuthenticateRequest } from "../remote/auth.ts";
+import type { PeerDirectory } from "../remote/peers.ts";
 
 /**
  * The sync engine bound to this server: reads projects and running turns from the read
@@ -12,6 +12,8 @@ import type { AuthenticateRequest, PeerDirectory } from "./types.ts";
  */
 export function createSyncService(options: {
   home: string;
+  /** This device's id: `remote.device.id()`, the single loader for device.json. */
+  deviceId: string;
   store: EventStore;
   settings: () => Pick<DeviceSettings, "sync">;
   authenticate: AuthenticateRequest;
@@ -22,7 +24,7 @@ export function createSyncService(options: {
   const { store } = options;
   const engine: SyncEngine = createSyncEngine({
     home: options.home,
-    deviceId: loadDeviceId(options.home),
+    deviceId: options.deviceId,
     settings: options.settings,
     peers: options.peers,
     ...(options.resumeQueued ? { onWritingEnd: options.resumeQueued } : {}),

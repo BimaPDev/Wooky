@@ -6,7 +6,8 @@ import { dirname, join } from "node:path";
 import { SyncSettings, type SyncPush } from "@wooky/contracts";
 import { createSyncEngine, type SyncEngine } from "./engine.ts";
 import { createSyncRoutes } from "./http.ts";
-import type { PeerEntry, SyncProject, SyncTimers } from "./types.ts";
+import type { PeerRecord as PeerEntry } from "../remote/peers.ts";
+import type { SyncProject, SyncTimers } from "./types.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 

@@ -66,7 +66,7 @@ function withLegacyDefaults(model: LegacyModel) {
   const projects = Object.fromEntries(
     Object.entries(model.projects as Record<string, object>).map(([id, project]) => [
       id,
-      { ...project, settings: { scripts: [] } },
+      { ...project, settings: { scripts: [], sharedPaths: [], prompts: [] } },
     ]),
   );
   return {

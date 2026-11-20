@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pipeline } from "node:stream";
 import type { SyncEngine } from "./engine.ts";
-import type { AuthenticateRequest } from "./types.ts";
+import type { AuthenticateRequest } from "../remote/auth.ts";
 
 function reply(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -16,8 +16,9 @@ export function createSyncRoutes(engine: SyncEngine, authenticate: AuthenticateR
   return (req: IncomingMessage, res: ServerResponse): boolean => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (!url.pathname.startsWith("/sync/")) return false;
+    // Loopback is `local`, not a device: peers must present a live device token.
     const caller = authenticate(req);
-    if (!caller) {
+    if (!caller || caller.deviceId === "local") {
       reply(res, 401, { error: "unauthorized" });
       return true;
     }

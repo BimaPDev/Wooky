@@ -54,7 +54,7 @@ function base(fields: Partial<Thread> = {}): ReadModel {
         name: "demo",
         root: "/work/demo",
         createdAt: at,
-        settings: { scripts: [] },
+        settings: { scripts: [], sharedPaths: [], prompts: [] },
       },
     },
     {

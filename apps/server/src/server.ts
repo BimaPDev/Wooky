@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import {
   FailoverSettings,
@@ -26,15 +25,35 @@ import { createAttachmentStore } from "./attachments.ts";
 import { createScratchService } from "./scratch.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
+import { setupWorktree, unwatchHeldNotices } from "./scripts/worktree-setup.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
 import { createSyncService } from "./sync/service.ts";
-import { loopbackOnly, testHooksEnabled, testPeerDirectory } from "./sync/stubs.ts";
+import { createRemoteRuntime, type RemoteRuntime } from "./remote/runtime.ts";
+import type { Tailscale } from "./remote/tailscale.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
 import { createLimitsService } from "./usage/limits.ts";
 import { setAgentTokenIssuer } from "./providers/agent-env.ts";
+
+const SERVE_OFF_TIMEOUT_MS = 3_000;
+
+async function stopServe(remote: RemoteRuntime): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      remote.disableServe(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SERVE_OFF_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.error("tailscale serve off failed", error);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export interface ServerOptions {
   home: string;
@@ -48,15 +67,26 @@ export interface ServerOptions {
   gh?: GhClient;
   /** Directory whose children `fs.pickable` suggests. Defaults to the OS home. */
   userHome?: string;
-  /** When set, a non-loopback client may open the folder chooser. */
-  allowRemotePicker?: boolean;
   /** Test seam. Production builds one from the operating system. */
   folderPicker?: FolderPicker;
+  /** `--host` was passed. Hosting settings do not add listeners. */
+  hostExplicit?: boolean;
+  /** `--port` or WOOKY_PORT was set. Hosting settings do not move the listen port. */
+  portExplicit?: boolean;
+  /** Test seam. Production shells out to the `tailscale` CLI. */
+  tailscale?: Tailscale;
+  /** Test seam for pairing expiry and the rate-limit window. Milliseconds. */
+  now?: () => number;
+  /** Test seam. Production uses the socket's remote address. */
+  remoteAddress?: (req: IncomingMessage) => string | undefined;
 }
 
 export interface RunningServer {
   url: string;
   port: number;
+  addresses(): string[];
+  /** Loopback port of the token-only listener behind Tailscale Serve, when open. */
+  servePort(): number | null;
   close(): Promise<void>;
 }
 
@@ -102,7 +132,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
+  const closeStore = () => {
+    unwatchHeldNotices();
+    store.close();
+  };
   const git = options.git ?? createGitService();
+  const terminals = createTerminalManager();
   let dispatchCommand: (command: Command) => void = () => {};
   const runner = createEffectRunner({
     store,
@@ -113,6 +148,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     deviceSettings: () => themes.getSettings(),
     limits,
     now: ctx.now,
+    onWorktreeCreated: (input) =>
+      setupWorktree({
+        ...input,
+        store,
+        terminals,
+        newId: ctx.newId,
+      }),
   });
   let syncWriting: (projectId: string) => boolean = () => false;
   const dispatcher = createDispatcher({
@@ -150,31 +192,35 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const ship = createShipService({ store, git, gh: options.gh ?? createGhClient() });
   const stopShipPolling = ship.startPolling();
   const scratch = createScratchService({ home: options.home, store, dispatcher });
-  const terminals = createTerminalManager();
   const history = createHistoryService({
     home: options.home,
     userHome: options.userHome ?? homedir(),
     enabled: () => themes.getSettings().importLocalHistory,
   });
 
+  const remote = createRemoteRuntime({
+    home: options.home,
+    themes,
+    host: options.host,
+    port: options.port,
+    hostExplicit: options.hostExplicit === true,
+    portExplicit: options.portExplicit === true,
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.remoteAddress ? { remoteAddress: options.remoteAddress } : {}),
+    ...(options.tailscale ? { tailscale: options.tailscale } : {}),
+  });
   const sync = createSyncService({
     home: options.home,
+    deviceId: remote.device.id(),
     store,
     settings: () => themes.getSettings(),
-    authenticate: loopbackOnly,
-    peers: testPeerDirectory(
-      process.env.WOOKY_SYNC_TEST_PEERS,
-      testHooksEnabled(process.env, process.argv),
-    ),
+    authenticate: remote.authenticateRequest,
+    peers: remote.peers,
     resumeQueued: (projectId) => resumeQueuedPrompts(projectId),
   });
   syncWriting = sync.engine.isWriting;
   const serveStatic = createHttpHandler(options.webDist ?? null);
-  const http = createServer((req, res) => {
-    if (!sync.routes(req, res)) serveStatic(req, res);
-  });
-  const closeSockets = attachWebSocket(
-    http,
+  const sockets = attachWebSocket(
     {
       store,
       dispatcher,
@@ -189,61 +235,61 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       scratch,
       sync,
       attachments: createAttachmentStore(options.home),
+      remote,
     },
     new Set(options.allowedHosts ?? []),
-    {
-      allowRemotePicker: options.allowRemotePicker === true,
-      ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
-    },
+    options.folderPicker ? { folderPicker: options.folderPicker } : {},
   );
+  let unpublish: () => void = () => {};
   try {
-    await new Promise<void>((resolve, reject) => {
-      http.once("error", reject);
-      http.listen(options.port, options.host, () => {
-        http.off("error", reject);
-        resolve();
-      });
+    await remote.listen({
+      handler: (req, res) => {
+        if (!sync.routes(req, res)) serveStatic(req, res);
+      },
+      onUpgrade: sockets.onUpgrade,
     });
-  } catch (error) {
     await sync.close();
-    store.close();
-    throw error;
-  }
-  const { port } = http.address() as AddressInfo;
-  const host = options.host.includes(":") ? `[${options.host}]` : options.host;
-  const url = `http://${host}:${port}`;
-  let unpublish: () => void;
-  try {
-    unpublish = publishServerPresence(options.home, url);
+    unpublish = publishServerPresence(options.home, remote.url());
     setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
-    closeSockets();
-    http.close();
-    void sync.close();
-    store.close();
+    stopShipPolling();
+    sockets.close();
+    remote.closeTunnels();
+    await remote.closeServers();
+    await sync.close();
+    closeStore();
     throw error;
   }
 
   let closing: Promise<void> | null = null;
   return {
-    url,
-    port,
+    get url() {
+      return remote.url();
+    },
+    get port() {
+      return remote.port();
+    },
+    addresses: () => remote.addresses(),
+    servePort: () => remote.servePort(),
     close() {
       // Stop new work first, then drain running turns while open sockets still get their
       // final events, and close the store last.
       closing ??= (async () => {
+        if (remote.servePort() !== null) await stopServe(remote);
         unpublish();
         stopShipPolling();
         dispatcher.close();
-        const stopped = new Promise<void>((resolve) => http.close(() => resolve()));
-        http.closeIdleConnections();
+        const httpServers = remote.servers();
+        const stopped = Promise.all(
+          httpServers.map((http) => new Promise<void>((resolve) => http.close(() => resolve()))),
+        );
+        for (const http of httpServers) http.closeIdleConnections();
         await runner.shutdown();
-        closeSockets();
-        http.closeAllConnections();
+        sockets.close();
+        remote.closeTunnels();
+        for (const http of httpServers) http.closeAllConnections();
         await stopped;
         await history.close();
-        await sync.close();
-        store.close();
       })();
       return closing;
     },

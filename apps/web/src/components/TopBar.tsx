@@ -11,6 +11,7 @@ import {
   toggleTerminal,
 } from "../state/actions.ts";
 import { draftProjectId, isDraftView, useStore } from "../state/store.ts";
+import { EnvironmentTag } from "./anywhere/EnvironmentSwitcher.tsx";
 import { Counts } from "./DiffView.tsx";
 import {
   IconBranch,
@@ -23,10 +24,15 @@ import {
   IconPanelBottom,
   IconPanelRight,
   IconSidebar,
+  IconSliders,
 } from "./Icons.tsx";
+import { usePhone, IconMenu } from "./anywhere/phone/phone.tsx";
+import { ReplicaCrumb } from "./anywhere/replicas/ReplicaThreadView.tsx";
+import { useAnywhereHistory } from "../state/anywhere-history.ts";
 import { InlineRename } from "./InlineRename.tsx";
 import { modelLabel, providerLabels, runtimeLabel } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
+import { ScriptsBar } from "./project-settings/ScriptsBar.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import { ProviderMark } from "./ProviderMark.tsx";
 
@@ -42,12 +48,15 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
     const id = draftProjectId(state);
     return id ? state.model.projects[id] : undefined;
   });
+  const settingsProject = project ?? draftProject;
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const changesOpen = useStore((state) => state.changes.open);
   const terminalOpen = useStore((state) => state.terminalOpen);
   const canBack = useStore((state) => state.nav.past.length > 0);
   const canForward = useStore((state) => state.nav.future.length > 0);
   const hasProjects = useStore((state) => Object.keys(state.model.projects).length > 0);
+  const phone = usePhone();
+  const peerThread = useAnywhereHistory((state) => state.replicaView !== null);
   const [editing, setEditing] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const leadClass = ["topbar-lead", !sidebarOpen && macDesktop ? "desktop-traffic-inset" : null]
@@ -65,7 +74,7 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
               aria-label="Show sidebar"
               onClick={toggleSidebar}
             >
-              <IconSidebar />
+              {phone ? <IconMenu /> : <IconSidebar />}
             </button>
           </Tooltip>
         ) : null}
@@ -91,6 +100,7 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
             <IconChevronRight />
           </button>
         </Tooltip>
+        {!sidebarOpen ? <EnvironmentTag /> : null}
       </div>
       <div className="topbar-title">
         {thread && project ? (
@@ -123,6 +133,8 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
               </button>
             )}
           </>
+        ) : peerThread ? (
+          <ReplicaCrumb />
         ) : draftView ? (
           <>
             {draftProject ? <ProjectMonogram name={draftProject.name} /> : <IconFolder />}
@@ -139,6 +151,23 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
         ) : null}
       </div>
       <div className="topbar-actions">
+        <ScriptsBar />
+        {settingsProject ? (
+          <Tooltip label="Project settings">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Project settings"
+              onClick={() =>
+                useStore.setState({
+                  dialog: { kind: "projectSettings", projectId: settingsProject.id },
+                })
+              }
+            >
+              <IconSliders />
+            </button>
+          </Tooltip>
+        ) : null}
         {thread ? (
           <div className="popover-anchor">
             <Tooltip label="Details">
