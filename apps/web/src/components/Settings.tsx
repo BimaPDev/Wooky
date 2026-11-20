@@ -37,6 +37,8 @@ import { AgentEditor, AgentPresets } from "./providers/AcpAgents.tsx";
 import { agentFromPreset, LIMITS, updateProviderSettings } from "./providers/helpers.ts";
 import { ProviderSettingsPanel } from "./providers/ProviderSettingsPanel.tsx";
 import { useSettingsDraft } from "./providers/useSettingsDraft.ts";
+import { AnywhereSettings } from "./anywhere/settings/AnywhereSettings.tsx";
+import { IconAnywhere } from "./anywhere/settings/controls.tsx";
 import { UsageDashboard } from "./UsageDashboard.tsx";
 import { ProviderMark } from "./ProviderMark.tsx";
 
@@ -46,6 +48,7 @@ const NAV: { id: SettingsPage; label: string; group: string | null; icon: () => 
   { id: "usage", label: "Usage", group: null, icon: IconChart },
   { id: "providers", label: "Providers", group: "Agents", icon: IconBot },
   { id: "failover", label: "Model fallback", group: "Agents", icon: IconCircleArrowUp },
+  { id: "anywhere", label: "Anywhere", group: "Agents", icon: IconAnywhere },
   { id: "projects", label: "Projects", group: "Code", icon: IconFolder },
   { id: "about", label: "About", group: "About", icon: IconInfo },
 ];
@@ -148,6 +151,7 @@ export function Settings() {
               {page === "appearance" ? <AppearanceSettings /> : null}
               {page === "providers" ? <ProvidersPage /> : null}
               {page === "failover" ? <FailoverSettings /> : null}
+              {page === "anywhere" ? <AnywhereSettings /> : null}
               {page === "projects" ? <ProjectsPage /> : null}
               {page === "about" ? <AboutPage /> : null}
             </div>

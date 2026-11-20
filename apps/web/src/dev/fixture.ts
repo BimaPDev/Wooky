@@ -30,6 +30,7 @@ import {
 } from "../components/theme-studio/helpers.ts";
 import type { Backend } from "../state/backend.ts";
 import { RpcCallError } from "../rpc/client.ts";
+import { FIXTURE_ENVIRONMENTS, respondAnywhere } from "./fixture-anywhere.ts";
 import {
   anywhereHistoryCommand,
   anywhereHistoryRespond,
@@ -1151,6 +1152,7 @@ let fixtureSettings: DeviceSettingsValue = DeviceSettings.parse({
   confirmDelete: true,
   confirmArchive: true,
   importLocalHistory: true,
+  environments: FIXTURE_ENVIRONMENTS,
   sync: { enabled: true, projectMap: fixtureProjectMap },
 });
 
@@ -1739,6 +1741,10 @@ export function createFixtureBackend(): Backend {
           new RpcCallError("unavailable", "File search is not available yet."),
         ) as Promise<RpcResult<M>>;
       }
+      const history = anywhereHistoryRespond(method, params);
+      if (history) return Promise.resolve(history.value as RpcResult<M>);
+      const anywhere = respondAnywhere(method, params);
+      if (anywhere !== undefined) return Promise.resolve(anywhere as RpcResult<M>);
       return Promise.resolve(respond(method, params) as RpcResult<M>);
     },
   };

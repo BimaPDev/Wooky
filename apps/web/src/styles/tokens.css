@@ -202,3 +202,8 @@
     --duration-slow: 0ms;
   }
 }
+
+:root {
+  --qr-bg: #ffffff;
+  --qr-ink: #000000;
+}
