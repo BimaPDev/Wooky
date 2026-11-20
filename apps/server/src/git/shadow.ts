@@ -9,9 +9,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, readdir, realpath, rm, rmdir, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { devNull } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import type { FileDiff } from "@wooky/contracts";
+import { gitChildEnv } from "./env.ts";
 
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const ZERO_SHA = "0".repeat(40);
@@ -53,24 +55,6 @@ export interface RunResult {
   code: number | null;
 }
 
-const INHERITED_GIT_VARS = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_PREFIX",
-  "GIT_COMMON_DIR",
-  "GIT_NAMESPACE",
-  "GIT_CONFIG",
-  "GIT_CONFIG_PARAMETERS",
-  "GIT_CONFIG_COUNT",
-  "GIT_EXTERNAL_DIFF",
-  "GIT_PAGER",
-  "GIT_AUTHOR_DATE",
-  "GIT_COMMITTER_DATE",
-];
-
 /** Byte-exact content: no end-of-line, filter or signing config may change what is snapshotted. */
 const CONFIG_OVERRIDES = [
   "core.quotePath=false",
@@ -81,8 +65,12 @@ const CONFIG_OVERRIDES = [
   "commit.gpgsign=false",
   "gc.auto=0",
   "transfer.fsckObjects=true",
+  "core.protectNTFS=true",
+  "core.protectHFS=true",
 ].flatMap((entry) => ["-c", entry]);
 
+const EMPTY_BASE_REF = "refs/wooky/empty-base";
+const MIN_COMMIT_SECONDS = 946_684_800;
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
 const ATTRIBUTES = "* -text -filter -ident -eol -working-tree-encoding\n";
@@ -91,8 +79,23 @@ export type ChangeStatus = "A" | "M" | "D" | "T";
 export interface TreeChange {
   status: ChangeStatus;
   path: string;
-  /** Blob mode in the target tree; empty for deletions. */
+  /** Blob mode and sha in the target tree; zeros for deletions. */
   mode: string;
+  sha: string;
+}
+
+/** An apply failed partway; the work tree was rolled back as far as possible. */
+export class ApplyFailed extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "ApplyFailed";
+  }
+}
+
+export interface ApplyReport {
+  written: string[];
+  deleted: string[];
+  skipped: Array<{ path: string; reason: "unsafe" | "local-only" | "too-large" }>;
 }
 
 export interface MergeOutcome {
@@ -114,6 +117,8 @@ export interface ScanOptions {
   /** Relative posix paths (files or folders) that are never snapshotted. */
   exclude: readonly string[];
   maxFileBytes: number;
+  /** An extra exclude file, e.g. the project's own .git/info/exclude. */
+  excludeFrom?: string;
 }
 
 export interface ScanResult {
@@ -123,6 +128,17 @@ export interface ScanResult {
   skipped: Array<{ path: string; bytes: number }>;
 }
 
+/** HFS+ ignores these code points when it compares names. */
+const HFS_IGNORABLE = /[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/g;
+
+/** True for `.git` and the spellings NTFS or HFS+ resolve to it: `git~1`, `.git.`, `.git `, `.g\u200cit`. */
+function isDotGitAlias(part: string): boolean {
+  const base = part.split(":")[0] ?? part;
+  const name = base.normalize("NFKC").replace(HFS_IGNORABLE, "").toLowerCase();
+  const trimmed = name.replace(/[. ]+$/, "");
+  return trimmed === ".git" || /^git~\d+$/.test(trimmed);
+}
+
 /** Rejects anything that could land outside the work tree or inside a .git folder. */
 export function safeRelativePath(path: string): string | null {
   if (path.length === 0 || path.includes("\0") || path.startsWith("/")) return null;
@@ -130,7 +146,7 @@ export function safeRelativePath(path: string): string | null {
   if (sep === "\\" && path.includes("\\")) return null;
   for (const part of path.split("/")) {
     if (part === "" || part === "." || part === "..") return null;
-    if (part.toLowerCase() === ".git") return null;
+    if (isDotGitAlias(part)) return null;
   }
   return path;
 }
@@ -139,18 +155,41 @@ function underExclusion(path: string, exclude: readonly string[]): boolean {
   return exclude.some((entry) => path === entry || path.startsWith(`${entry}/`));
 }
 
+/** Windows holds files open (AV, indexers); a short retry rides out EBUSY and EPERM. */
+async function retryBusy<T>(fn: () => Promise<T>): Promise<T> {
+  const attempts = process.platform === "win32" ? 3 : 1;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      const text =
+        error instanceof Error
+          ? `${error.message} ${(error as NodeJS.ErrnoException).code ?? ""}`
+          : "";
+      if (attempt >= attempts || !/EBUSY|EPERM|Permission denied|busy/i.test(text)) throw error;
+      await new Promise((done) => setTimeout(done, 50 * attempt * attempt));
+    }
+  }
+}
+
 export function createShadowGit(options: { gitBin?: string } = {}) {
   const gitBin = options.gitBin ?? "git";
 
   function environment(repo: ShadowRepo | null, extra?: Record<string, string>) {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const key of INHERITED_GIT_VARS) delete env[key];
-    for (const key of Object.keys(env)) {
-      if (key.startsWith("GIT_CONFIG_KEY_") || key.startsWith("GIT_CONFIG_VALUE_")) delete env[key];
+    const env = gitChildEnv();
+    // Nothing from the user's ambient git setup may reach the shadow repo: no dates, no
+    // global or system config, no hooks.
+    for (const key of [
+      "GIT_AUTHOR_DATE",
+      "GIT_COMMITTER_DATE",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_SYSTEM",
+    ]) {
+      delete env[key];
     }
-    env.LC_ALL = "C";
-    env.GIT_TERMINAL_PROMPT = "0";
+    env.GIT_CONFIG_NOSYSTEM = "1";
     env.GIT_ATTR_NOSYSTEM = "1";
+    env.GIT_CONFIG_GLOBAL = repo ? join(repo.gitDir, "wooky-empty.config") : devNull;
     if (repo) {
       env.GIT_DIR = repo.gitDir;
       env.GIT_WORK_TREE = repo.workTree;
@@ -159,7 +198,8 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
   }
 
   function identityEnv(identity: GitIdentity): Record<string, string> {
-    const date = `${Math.floor(identity.at)} +0000`;
+    // Git rejects dates near the epoch, so clamp to the year 2000.
+    const date = `${Math.max(Math.floor(identity.at), MIN_COMMIT_SECONDS)} +0000`;
     return {
       GIT_AUTHOR_NAME: identity.name,
       GIT_AUTHOR_EMAIL: "wooky@localhost",
@@ -171,7 +211,8 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
   }
 
   function launch(repo: ShadowRepo | null, args: string[], opts: RunOptions): ChildProcess {
-    return spawn(gitBin, [...CONFIG_OVERRIDES, ...args], {
+    const hooks = ["-c", `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : devNull}`];
+    return spawn(gitBin, [...CONFIG_OVERRIDES, ...hooks, ...args], {
       // The work tree, so git never computes a prefix when the shadow dir sits inside the project.
       cwd: repo?.workTree ?? process.cwd(),
       env: environment(repo, opts.env),
@@ -251,6 +292,8 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     await run(repo, ["config", "core.worktree", repo.workTree]);
     await run(repo, ["config", "core.logAllRefUpdates", "false"]);
     await mkdir(join(repo.gitDir, "info"), { recursive: true });
+    await mkdir(join(repo.gitDir, "wooky-no-hooks"), { recursive: true });
+    await writeFile(join(repo.gitDir, "wooky-empty.config"), "");
     await writeFile(join(repo.gitDir, "info", "attributes"), ATTRIBUTES);
     prepared.add(key);
   }
@@ -300,7 +343,10 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
   /** Lists what a snapshot would hold, applying the cap, the exclusions and the ignore rules. */
   async function scan(repo: ShadowRepo, opts: ScanOptions): Promise<ScanResult> {
     const args = ["ls-files", "-z", "-t", "-c", "-o"];
-    if (!opts.includeIgnored) args.push("--exclude-standard");
+    if (!opts.includeIgnored) {
+      args.push("--exclude-standard");
+      if (opts.excludeFrom) args.push(`--exclude-from=${opts.excludeFrom}`);
+    }
     const listed = await run(repo, args, { env: withIndex(indexOf(repo)) });
     const entries: Array<{ path: string; cached: boolean }> = [];
     for (const raw of listed.text.split("\0")) {
@@ -339,7 +385,7 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
             if (cached) removed.push(path);
             return;
           }
-          add.push({ path, stamp: `${info.mtimeNs}:${info.size}:${info.mode}` });
+          add.push({ path, stamp: `${info.mtimeNs}:${info.ctimeNs}:${info.size}:${info.mode}` });
         }),
       );
     }
@@ -441,10 +487,10 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
       const meta = tokens[i];
       const path = tokens[i + 1];
       if (!meta?.startsWith(":") || path === undefined) continue;
-      const [, newMode, , , status] = meta.split(/[ ]/);
+      const [, newMode, , newSha, status] = meta.split(/[ ]/);
       const letter = status?.[0];
       if (letter !== "A" && letter !== "M" && letter !== "D" && letter !== "T") continue;
-      out.push({ status: letter, path, mode: newMode ?? "" });
+      out.push({ status: letter, path, mode: newMode ?? "", sha: newSha ?? "" });
     }
     return out;
   }
@@ -489,7 +535,7 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     try {
       const info = await lstat(absolute);
       if (info.isDirectory()) return;
-      await unlink(absolute);
+      await retryBusy(() => unlink(absolute));
     } catch {
       return;
     }
@@ -505,37 +551,210 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     }
   }
 
+  /** `cat-file --batch-check` over `<tree>:<path>` lines: the blob size, or null when absent. */
+  async function blobSizes(
+    repo: ShadowRepo,
+    tree: string,
+    paths: readonly string[],
+  ): Promise<Map<string, number | null>> {
+    const sizes = new Map<string, number | null>();
+    if (paths.length === 0) return sizes;
+    const res = await run(repo, ["cat-file", "--batch-check=%(objecttype) %(objectsize)"], {
+      input: paths.map((path) => `${tree}:${path}`).join("\n") + "\n",
+    });
+    const lines = res.text.split("\n");
+    paths.forEach((path, i) => {
+      const [type, size] = (lines[i] ?? "").split(" ");
+      sizes.set(path, type === "blob" ? Number(size) : null);
+    });
+    return sizes;
+  }
+
+  async function existsOnDisk(repo: ShadowRepo, relative: string): Promise<boolean> {
+    try {
+      await lstat(join(repo.workTree, relative));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
-   * Writes the given changes into the work tree: deletions first, then the target blobs
-   * through a throwaway index. Paths that could escape the work tree are refused up front,
-   * so a hostile snapshot cannot write anywhere else.
+   * Writes the given changes into the work tree. Nothing outside the snapshot is touched:
+   *  - paths that could escape the work tree or reach a .git alias are refused;
+   *  - with `mineTree`, a path that exists on disk but is not in that tree (ignored, over the
+   *    cap, never snapshotted) is skipped, because no backup holds its bytes;
+   *  - incoming blobs over `maxFileBytes`, or a total over `maxTotalBytes`, are refused;
+   *  - target blobs are written first and deletions only after that succeeded, so a failed
+   *    write leaves every deletion undone.
    */
   async function applyChanges(
     repo: ShadowRepo,
     targetTree: string,
     list: readonly TreeChange[],
-    exclude: readonly string[],
-  ): Promise<{ written: number; deleted: number }> {
-    const usable = list.filter(
-      (change) => safeRelativePath(change.path) !== null && !underExclusion(change.path, exclude),
+    options: {
+      exclude: readonly string[];
+      mineTree: string | null;
+      maxFileBytes: number;
+      maxTotalBytes: number;
+      /** Rollback mode: carry on past a path that cannot be written. */
+      bestEffort?: boolean;
+    },
+  ): Promise<ApplyReport> {
+    const skipped: ApplyReport["skipped"] = [];
+    const usable: TreeChange[] = [];
+    for (const change of list) {
+      if (safeRelativePath(change.path) === null)
+        skipped.push({ path: change.path, reason: "unsafe" });
+      else if (!underExclusion(change.path, options.exclude)) usable.push(change);
+    }
+    const writes: TreeChange[] = [];
+    const removals: TreeChange[] = [];
+    const sizes = await blobSizes(
+      repo,
+      targetTree,
+      usable.filter((c) => c.status !== "D").map((c) => c.path),
     );
-    const removals = usable.filter((c) => c.status === "D" || c.status === "T");
-    const writes = usable.filter((c) => c.status !== "D");
-    for (const change of removals) await removeFile(repo, change.path);
-    if (writes.length > 0) {
-      const tmp = join(repo.gitDir, `apply-${process.pid}-${Date.now()}.index`);
-      try {
-        await run(repo, ["read-tree", targetTree], { env: withIndex(tmp) });
-        await run(repo, ["checkout-index", "-f", "-z", "--stdin"], {
-          env: withIndex(tmp),
-          input: writes.map((c) => c.path).join("\0") + "\0",
-        });
-      } finally {
-        await rm(tmp, { force: true });
+    const inMine = options.mineTree
+      ? await blobSizes(
+          repo,
+          options.mineTree,
+          usable.filter((c) => c.status === "A" || c.status === "T").map((c) => c.path),
+        )
+      : null;
+    let total = 0;
+    for (const change of usable) {
+      if (change.status === "D") {
+        removals.push(change);
+        continue;
       }
+      if (change.status === "T") removals.push(change);
+      if (inMine && (change.status === "A" || change.status === "T")) {
+        const known = inMine.get(change.path) !== null && inMine.get(change.path) !== undefined;
+        if (!known && (await existsOnDisk(repo, change.path))) {
+          skipped.push({ path: change.path, reason: "local-only" });
+          removals.splice(removals.indexOf(change), 1);
+          continue;
+        }
+      }
+      const size = sizes.get(change.path) ?? 0;
+      if (size > options.maxFileBytes) {
+        skipped.push({ path: change.path, reason: "too-large" });
+        continue;
+      }
+      total += size;
+      writes.push(change);
+    }
+    if (total > options.maxTotalBytes) {
+      throw new ApplyFailed("The incoming change is too large to apply.");
+    }
+    try {
+      if (writes.length > 0) {
+        // Only the entries being written go into the throwaway index, so a hostile entry
+        // elsewhere in the tree is never even parsed.
+        const tmp = join(repo.gitDir, `apply-${process.pid}-${Date.now()}.index`);
+        try {
+          await run(repo, ["update-index", "--add", "--index-info"], {
+            env: withIndex(tmp),
+            input: writes.map((c) => `${c.mode} ${c.sha} 0\t${c.path}\n`).join(""),
+          });
+          await retryBusy(() =>
+            run(repo, ["checkout-index", "-f", "-z", "--stdin"], {
+              env: withIndex(tmp),
+              input: writes.map((c) => c.path).join("\0") + "\0",
+              allowFail: options.bestEffort === true,
+            }),
+          );
+        } finally {
+          await rm(tmp, { force: true });
+          await dropIndex(repo);
+        }
+      }
+      for (const change of removals) await removeFile(repo, change.path);
+    } catch (error) {
+      const cause =
+        error instanceof ShadowGitError && error.stderr
+          ? error.stderr
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      if (!options.mineTree) throw error;
+      // Best effort: put back every path this apply could have touched. The caller checks
+      // whether the folder really matches the backup again.
+      try {
+        const touched = new Set([...writes, ...removals].map((c) => c.path));
+        const back = (await changes(repo, targetTree, options.mineTree)).filter((c) =>
+          touched.has(c.path),
+        );
+        await applyChanges(repo, options.mineTree, back, {
+          exclude: options.exclude,
+          mineTree: null,
+          maxFileBytes: Number.MAX_SAFE_INTEGER,
+          maxTotalBytes: Number.MAX_SAFE_INTEGER,
+          bestEffort: true,
+        });
+      } catch {
+        // Reported by the caller's verification.
+      }
+      throw new ApplyFailed(cause);
     }
     await dropIndex(repo);
-    return { written: writes.length, deleted: removals.length };
+    return { written: writes.map((c) => c.path), deleted: removals.map((c) => c.path), skipped };
+  }
+
+  /**
+   * Writes one file the engine builds itself (a `.theirs` copy). Same rules as an apply: a
+   * path that is on disk but not in `mineTree` is left alone. Returns false when skipped.
+   */
+  async function writeWorkFile(
+    repo: ShadowRepo,
+    relative: string,
+    data: Buffer,
+    mineTree: string,
+  ): Promise<boolean> {
+    if (safeRelativePath(relative) === null) return false;
+    if (await existsOnDisk(repo, relative)) {
+      const known = (await blobSizes(repo, mineTree, [relative])).get(relative);
+      if (known === null || known === undefined) return false;
+    }
+    const absolute = join(repo.workTree, relative);
+    await mkdir(dirname(absolute), { recursive: true });
+    const root = await realpath(repo.workTree);
+    const parent = await realpath(dirname(absolute));
+    if (parent !== root && !parent.startsWith(root + sep)) return false;
+    const target = process.platform === "win32" ? `\\\\?\\${resolve(absolute)}` : absolute;
+    await retryBusy(() => writeFile(target, data));
+    await dropIndex(repo);
+    return true;
+  }
+
+  /** Keeps a commit alive through gc (and a crash) with a ref of its own. */
+  async function holdRef(repo: ShadowRepo, sha: string, hold: boolean): Promise<void> {
+    const ref = `refs/wooky/hold/${sha}`;
+    if (hold) {
+      if (await rev(repo, sha)) await updateRef(repo, ref, sha);
+    } else {
+      await run(repo, ["update-ref", "-d", ref], { allowFail: true });
+    }
+  }
+
+  async function heldShas(repo: ShadowRepo): Promise<string[]> {
+    const refs = await listRefs(repo, "refs/wooky/hold/");
+    return refs.map((ref) => ref.slice("refs/wooky/hold/".length));
+  }
+
+  /** The empty-tree commit used as the merge base for a first sync. Anchored so gc keeps it. */
+  async function emptyBase(repo: ShadowRepo): Promise<string> {
+    const known = await rev(repo, EMPTY_BASE_REF);
+    if (known) return known;
+    const id = await commit(repo, {
+      tree: EMPTY_TREE,
+      parent: null,
+      message: "wooky: empty base\n",
+      identity: { name: "Wooky", at: MIN_COMMIT_SECONDS },
+    });
+    await updateRef(repo, EMPTY_BASE_REF, id);
+    return id;
   }
 
   async function blobAt(repo: ShadowRepo, from: string, path: string): Promise<Buffer | null> {
@@ -701,6 +920,11 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     changes,
     diff,
     applyChanges,
+    writeWorkFile,
+    blobSizes,
+    holdRef,
+    heldShas,
+    emptyBase,
     blobAt,
     mergeTree,
     pickSide,

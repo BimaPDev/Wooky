@@ -11,13 +11,24 @@ export const loopbackOnly: AuthenticateRequest = (req: IncomingMessage) => {
     : null;
 };
 
+/** Test hooks are live only under vitest (NODE_ENV=test) or an explicit `--test-hooks` flag. */
+export function testHooksEnabled(
+  env: Record<string, string | undefined>,
+  argv: readonly string[],
+): boolean {
+  return env.NODE_ENV === "test" || argv.includes("--test-hooks");
+}
+
 /**
  * Stand-in for A1's paired-device directory. TEST-ONLY HOOK: WOOKY_SYNC_TEST_PEERS is a JSON
- * array of {deviceId, name, baseUrl, token}. Delete this and the env read when A1 lands.
+ * array of {deviceId, name, baseUrl, token}, honoured only when `enabled`. Delete this and the
+ * env read when A1 lands.
  */
-export function testPeerDirectory(raw: string | undefined): PeerDirectory {
+export function testPeerDirectory(raw: string | undefined, enabled: boolean): PeerDirectory {
   let entries: PeerEntry[] = [];
-  if (raw) {
+  if (raw && !enabled) {
+    console.warn("WOOKY_SYNC_TEST_PEERS is ignored: test hooks are off (use --test-hooks).");
+  } else if (raw) {
     try {
       entries = JSON.parse(raw) as PeerEntry[];
     } catch {

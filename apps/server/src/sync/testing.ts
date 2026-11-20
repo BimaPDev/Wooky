@@ -78,7 +78,10 @@ export interface DeviceOptions {
   home?: string;
   sync?: Partial<SyncSettings>;
   maxFileBytes?: number;
+  maxApplyBytes?: number;
   gitBin?: string;
+  /** Replaces the default "is this project in the running set" check. */
+  turnRunning?: (projectId: string) => boolean;
   token?: string;
 }
 
@@ -100,12 +103,13 @@ export async function makeDevice(options: DeviceOptions): Promise<Device> {
     deviceId: options.deviceId,
     settings: () => settings,
     projects: () => projects,
-    turnRunning: (id) => running.has(id),
+    turnRunning: options.turnRunning ?? ((id) => running.has(id)),
     peers: { list: () => peers, get: (id) => peers.find((peer) => peer.deviceId === id) },
     now: () => new Date((clock.time += 1000)),
     timers: timers.timers,
     notice: (_project, message) => notices.push(message),
     ...(options.maxFileBytes === undefined ? {} : { maxFileBytes: options.maxFileBytes }),
+    ...(options.maxApplyBytes === undefined ? {} : { maxApplyBytes: options.maxApplyBytes }),
     ...(options.gitBin ? { gitBin: options.gitBin } : {}),
   });
   engine.onPush((push) => pushes.push(push));

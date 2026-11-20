@@ -42,8 +42,12 @@ export interface SyncDeps {
   timers?: SyncTimers;
   fetch?: typeof fetch;
   notice?: (projectId: string, message: string) => void;
-  /** Largest single file a snapshot takes. Tests lower it. */
+  /** Largest single file a snapshot takes or an apply writes. Tests lower it. */
   maxFileBytes?: number;
+  /** Largest total of incoming blobs one apply writes. Tests lower it. */
+  maxApplyBytes?: number;
+  /** Called when the last sync write into a project folder finishes. */
+  onWritingEnd?: (projectId: string) => void;
   /** Delay before the first retention pass after start. Defaults to 10 minutes. */
   retentionStartDelayMs?: number;
 }

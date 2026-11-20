@@ -16,6 +16,8 @@ export function createSyncService(options: {
   settings: () => Pick<DeviceSettings, "sync">;
   authenticate: AuthenticateRequest;
   peers: PeerDirectory;
+  /** Starts prompts that were refused while a sync write was running. */
+  resumeQueued?: (projectId: string) => void;
 }) {
   const { store } = options;
   const engine: SyncEngine = createSyncEngine({
@@ -23,6 +25,7 @@ export function createSyncService(options: {
     deviceId: loadDeviceId(options.home),
     settings: options.settings,
     peers: options.peers,
+    ...(options.resumeQueued ? { onWritingEnd: options.resumeQueued } : {}),
     projects: () =>
       Object.values(store.model.projects).map((p) => ({
         id: p.id,

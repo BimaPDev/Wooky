@@ -17,14 +17,21 @@ import {
 } from "@wooky/contracts";
 import { z } from "zod";
 import { ServiceError } from "../errors.ts";
-import { createShadowGit, EMPTY_TREE, safeRelativePath, type ShadowRepo } from "../git/shadow.ts";
+import {
+  ApplyFailed,
+  createShadowGit,
+  EMPTY_TREE,
+  safeRelativePath,
+  type ShadowRepo,
+} from "../git/shadow.ts";
 import { createConflictStore } from "./conflicts.ts";
 import { decodeMeta, encodeMeta, toSnapshot, type SnapshotMeta } from "./meta.ts";
 import { localProject, sharedProjectId } from "./project-map.ts";
 import type { PeerEntry, SyncDeps, SyncProject, SyncTimers } from "./types.ts";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
-const MAX_BUNDLE_BYTES = 4 * 1024 * 1024 * 1024;
+const MAX_BUNDLE_BYTES = 1024 * 1024 * 1024;
+const MAX_APPLY_BYTES = 1024 * 1024 * 1024;
 const RETENTION_START_MS = 10 * 60_000;
 const RETENTION_EVERY_MS = 24 * 60 * 60_000;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -77,9 +84,12 @@ export function createSyncEngine(deps: SyncDeps) {
   const fingerprints = new Map<string, string>();
   const reportedSkips = new Map<string, string>();
   const locks = new Map<string, Promise<unknown>>();
-  const emptyBases = new Map<string, string>();
+  const writing = new Map<string, number>();
+  const known = new Map<string, { peer: string | null; applied: string | null }>();
+  const activeBundles = new Map<string, number>();
   const shared = new AbortController();
   const maxFileBytes = deps.maxFileBytes ?? MAX_FILE_BYTES;
+  const maxApplyBytes = deps.maxApplyBytes ?? MAX_APPLY_BYTES;
   const myRef = `refs/wooky/snap/${deps.deviceId}`;
   let mergeSupported: Promise<boolean> | null = null;
   let scanTimer: unknown = null;
@@ -167,6 +177,42 @@ export function createSyncEngine(deps: SyncDeps) {
     }
   }
 
+  /**
+   * Raised synchronously, before the first await, by every operation that writes into a
+   * project folder. The dispatcher refuses `turn.start` while it is up.
+   */
+  function beginWrite(projectId: string) {
+    writing.set(projectId, (writing.get(projectId) ?? 0) + 1);
+  }
+
+  function endWrite(projectId: string) {
+    const left = (writing.get(projectId) ?? 1) - 1;
+    if (left > 0) return void writing.set(projectId, left);
+    writing.delete(projectId);
+    deps.onWritingEnd?.(projectId);
+  }
+
+  /** Held while a snapshot id is still being traced to its project (restore). */
+  let writingAny = 0;
+  const isWriting = (projectId: string) => writingAny > 0 || (writing.get(projectId) ?? 0) > 0;
+
+  function scanOptions(project: SyncProject) {
+    const own = join(resolve(project.root), ".git", "info", "exclude");
+    return {
+      includeIgnored: settings().categories.ignoredFiles,
+      exclude: exclusions(project),
+      maxFileBytes,
+      ...(existsSync(own) ? { excludeFrom: own } : {}),
+    };
+  }
+
+  /** Thrown when the project changed under an apply; the caller retries later. */
+  class AbortWrite extends Error {
+    constructor(readonly kind: "turn" | "drift") {
+      super(kind === "turn" ? "A turn started." : "Files changed while writing.");
+    }
+  }
+
   async function syncModeChanged(repo: ShadowRepo): Promise<void> {
     const file = join(repo.gitDir, "wooky-ignored");
     const wanted = settings().categories.ignoredFiles ? "1" : "0";
@@ -182,13 +228,15 @@ export function createSyncEngine(deps: SyncDeps) {
     snapshot: Snapshot | null;
     /** The tip after the call: the new commit, or the unchanged previous one. */
     tip: string | null;
+    /** Stat fingerprint of the folder as snapshotted. */
+    fingerprint: string;
   }
 
   async function takeSnapshot(
     project: SyncProject,
     reason: SnapshotReason,
     input: SnapshotMetaInput,
-    options: { gate?: boolean; ensureTip?: boolean } = {},
+    options: { gate?: boolean; ensureTip?: boolean; fresh?: boolean } = {},
   ): Promise<Taken> {
     const repo = repoFor(project);
     if (!existsSync(repo.workTree)) {
@@ -196,11 +244,9 @@ export function createSyncEngine(deps: SyncDeps) {
     }
     await git.ensure(repo);
     await syncModeChanged(repo);
-    const scan = await git.scan(repo, {
-      includeIgnored: settings().categories.ignoredFiles,
-      exclude: exclusions(project),
-      maxFileBytes,
-    });
+    // A backup must see the real bytes, so it never trusts the stat cache.
+    if (options.fresh) await git.dropIndex(repo);
+    const scan = await git.scan(repo, scanOptions(project));
     const skippedPaths = scan.skipped.map((item) => item.path);
     const skipKey = skippedPaths.join("\0");
     if (skipKey !== (reportedSkips.get(project.id) ?? "")) {
@@ -214,12 +260,16 @@ export function createSyncEngine(deps: SyncDeps) {
     }
     const tip = await git.rev(repo, myRef);
     if (options.gate && tip && fingerprints.get(project.id) === scan.fingerprint) {
-      return { snapshot: null, tip };
+      return { snapshot: null, tip, fingerprint: scan.fingerprint };
     }
     const tree = await git.stage(repo, scan);
     fingerprints.set(project.id, scan.fingerprint);
-    if (tip && tree === (await git.treeOf(repo, tip))) return { snapshot: null, tip };
-    if (!tip && tree === EMPTY_TREE && !options.ensureTip) return { snapshot: null, tip: null };
+    if (tip && tree === (await git.treeOf(repo, tip))) {
+      return { snapshot: null, tip, fingerprint: scan.fingerprint };
+    }
+    if (!tip && tree === EMPTY_TREE && !options.ensureTip) {
+      return { snapshot: null, tip: null, fingerprint: scan.fingerprint };
+    }
 
     const head = await git.projectHead(repo.workTree);
     const meta: SnapshotMeta = {
@@ -243,7 +293,7 @@ export function createSyncEngine(deps: SyncDeps) {
     const summary = await git.diffStat(repo, tip ?? EMPTY_TREE, id);
     const created = toSnapshot(project.id, { id, parentId: tip, summary }, meta);
     emit({ push: "sync", kind: "snapshot", snapshot: created });
-    return { snapshot: created, tip: id };
+    return { snapshot: created, tip: id, fingerprint: scan.fingerprint };
   }
 
   async function snapshotAt(project: SyncProject, sha: string): Promise<Snapshot | null> {
@@ -335,12 +385,7 @@ export function createSyncEngine(deps: SyncDeps) {
     let from: string;
     if (params.against === "working") {
       from = await lock(project.id, async () => {
-        const scan = await git.scan(repo, {
-          includeIgnored: settings().categories.ignoredFiles,
-          exclude: exclusions(project),
-          maxFileBytes,
-        });
-        return git.stage(repo, scan);
+        return git.stage(repo, await git.scan(repo, scanOptions(project)));
       });
     } else if (params.against) {
       const other = SHA.test(params.against) ? await git.rev(repo, params.against) : null;
@@ -357,34 +402,113 @@ export function createSyncEngine(deps: SyncDeps) {
     return wanted.some((item) => path === item || path.startsWith(`${item}/`));
   }
 
-  async function restore(params: RpcParams<"sync.snapshots.restore">) {
-    const { project, commit } = await locate(params.snapshotId);
-    assertNoTurn(project, "Restore");
-    const wanted = (params.paths ?? []).map((raw) => {
-      const clean = safeRelativePath(raw.replace(/\/+$/, ""));
-      if (clean === null) throw new ServiceError("bad_request", `Path "${raw}" is not valid.`);
-      return clean;
-    });
-    return lock(project.id, async () => {
-      const repo = repoFor(project);
-      const backup = await takeSnapshot(
-        project,
-        "before-apply",
-        { label: "Before restore" },
-        { ensureTip: true },
-      );
-      if (!backup.tip) throw new ServiceError("internal", "The backup snapshot is missing.");
-      const [from, to] = await Promise.all([
-        git.treeOf(repo, backup.tip),
-        git.treeOf(repo, commit),
-      ]);
-      let changes = await git.changes(repo, from, to);
-      if (params.paths) changes = changes.filter((change) => matchesPaths(change.path, wanted));
-      await git.applyChanges(repo, to, changes, exclusions(project));
+  /**
+   * The one place that writes a tree into a project folder. The caller has already taken the
+   * backup. Aborts, without writing, when a turn started or a file changed since the backup.
+   */
+  async function writeTree(
+    project: SyncProject,
+    repo: ShadowRepo,
+    input: { backup: Taken; mineTree: string; targetTree: string; paths?: readonly string[] },
+  ) {
+    let list = await git.changes(repo, input.mineTree, input.targetTree);
+    const only = input.paths;
+    if (only) list = list.filter((change) => matchesPaths(change.path, only));
+    if (deps.turnRunning(project.id)) throw new AbortWrite("turn");
+    const current = await git.scan(repo, scanOptions(project));
+    if (current.fingerprint !== input.backup.fingerprint) throw new AbortWrite("drift");
+    let report;
+    try {
+      report = await git.applyChanges(repo, input.targetTree, list, {
+        exclude: exclusions(project),
+        mineTree: input.mineTree,
+        maxFileBytes,
+        maxTotalBytes: maxApplyBytes,
+      });
+    } catch (error) {
+      if (!(error instanceof ApplyFailed)) throw error;
       fingerprints.delete(project.id);
-      await takeSnapshot(project, "revert", { label: `Restored ${commit.slice(0, 8)}` });
-      return { backupSnapshotId: backup.tip };
-    });
+      await git.dropIndex(repo);
+      const now = await git.stage(repo, await git.scan(repo, scanOptions(project)));
+      throw new ServiceError(
+        "unavailable",
+        now === input.mineTree
+          ? `${error.reason} Restored your previous files.`
+          : `${error.reason} Some files may be partly changed; the backup snapshot has your originals.`,
+      );
+    }
+    fingerprints.delete(project.id);
+    for (const item of report.skipped) {
+      notice(
+        project.id,
+        item.reason === "local-only"
+          ? `Kept your local ${item.path}: it is not in a snapshot, so the incoming copy was not written.`
+          : item.reason === "too-large"
+            ? `Skipped incoming ${item.path}: it is over the ${Math.round(maxFileBytes / 1024 / 1024)} MB sync limit.`
+            : `Skipped incoming ${item.path}: the path is not allowed.`,
+      );
+    }
+    return report;
+  }
+
+  function abortAsError(error: unknown, action: string): unknown {
+    if (!(error instanceof AbortWrite)) return error;
+    return new ServiceError(
+      "conflict",
+      error.kind === "turn"
+        ? `A turn started in this project. ${action} after it finishes.`
+        : "Files changed while writing. Nothing was changed; try again.",
+    );
+  }
+
+  async function restore(params: RpcParams<"sync.snapshots.restore">) {
+    // The project is unknown until the snapshot is found, so every project counts as busy
+    // from the first synchronous moment.
+    writingAny += 1;
+    let located: Awaited<ReturnType<typeof locate>>;
+    try {
+      located = await locate(params.snapshotId);
+      assertNoTurn(located.project, "Restore");
+      beginWrite(located.project.id);
+    } finally {
+      writingAny -= 1;
+    }
+    const { project, commit } = located;
+    try {
+      const wanted = (params.paths ?? []).map((raw) => {
+        const clean = safeRelativePath(raw.replace(/\/+$/, ""));
+        if (clean === null) throw new ServiceError("bad_request", `Path "${raw}" is not valid.`);
+        return clean;
+      });
+      return await lock(project.id, async () => {
+        const repo = repoFor(project);
+        const backup = await takeSnapshot(
+          project,
+          "before-apply",
+          { label: "Before restore" },
+          { ensureTip: true, fresh: true },
+        );
+        if (!backup.tip) throw new ServiceError("internal", "The backup snapshot is missing.");
+        const [from, to] = await Promise.all([
+          git.treeOf(repo, backup.tip),
+          git.treeOf(repo, commit),
+        ]);
+        try {
+          await writeTree(project, repo, {
+            backup,
+            mineTree: from,
+            targetTree: to,
+            ...(params.paths ? { paths: wanted } : {}),
+          });
+        } catch (error) {
+          throw abortAsError(error, "Restore");
+        }
+        await takeSnapshot(project, "revert", { label: `Restored ${commit.slice(0, 8)}` });
+        return { backupSnapshotId: backup.tip };
+      });
+    } finally {
+      endWrite(project.id);
+    }
   }
 
   // ── peers: pull and apply ───────────────────────────────────────────────────────────
@@ -419,98 +543,140 @@ export function createSyncEngine(deps: SyncDeps) {
     if (next.state !== current.state || next.error !== current.error) emitStatus();
   }
 
-  async function emptyBase(repo: ShadowRepo): Promise<string> {
-    const known = emptyBases.get(repo.gitDir);
-    if (known) return known;
-    const id = await git.commit(repo, {
-      tree: EMPTY_TREE,
-      parent: null,
-      message: "wooky: empty base\n",
-      identity: { name: "Wooky", at: 0 },
-    });
-    emptyBases.set(repo.gitDir, id);
-    return id;
-  }
-
   const appliedRef = (peer: string) => `refs/wooky/applied/${peer}`;
   const peerRef = (peer: string) => `refs/wooky/peer/${peer}`;
   const queueKey = (projectId: string, peer: string) => `${projectId}\0${peer}`;
 
-  async function applyFromPeer(project: SyncProject, peer: string): Promise<ApplyOutcome> {
-    if (!SAFE_ID.test(peer))
-      throw new ServiceError("bad_request", `Device id "${peer}" is not valid.`);
-    return lock(project.id, async () => {
-      const repo = repoFor(project);
-      await git.ensure(repo);
-      const theirs = await git.rev(repo, peerRef(peer));
-      if (!theirs) return "noop";
-      const applied = await git.rev(repo, appliedRef(peer));
-      if (theirs === applied) {
-        queued.delete(queueKey(project.id, peer));
-        return "noop";
-      }
-      if (conflicts.forPeer(project.id, peer)) return "conflict";
-      if (deps.turnRunning(project.id)) {
-        queued.add(queueKey(project.id, peer));
-        return "queued";
-      }
-      queued.delete(queueKey(project.id, peer));
+  interface ApplyResult {
+    outcome: ApplyOutcome | "retry";
+    skipped: Array<{ path: string; reason: string }>;
+  }
 
-      const backup = await takeSnapshot(
-        project,
-        "before-apply",
-        { label: `Before applying ${peer}` },
-        { ensureTip: true },
-      );
-      if (!backup.tip) throw new ServiceError("internal", "The backup snapshot is missing.");
-      const [mine, incoming] = await Promise.all([
-        git.treeOf(repo, backup.tip),
-        git.treeOf(repo, theirs),
-      ]);
-      if (mine === incoming) {
-        await git.updateRef(repo, appliedRef(peer), theirs);
-        return "noop";
-      }
-      const appliedTree = applied ? await git.treeOf(repo, applied) : null;
-      let target: string | null = null;
-      let clashing: string[] = [];
-      if (appliedTree !== null && appliedTree === mine) {
-        target = incoming;
-      } else if (await canMerge()) {
-        const merge = await git.mergeTree(repo, {
-          base: applied ?? (await emptyBase(repo)),
-          mine: backup.tip,
-          theirs,
-        });
-        if (merge.clean) target = merge.tree;
-        else clashing = merge.conflicts;
-      }
-      if (target === null) {
-        if (clashing.length === 0) {
-          clashing = (await git.changes(repo, mine, incoming)).map((change) => change.path);
-        }
-        const conflict: SyncConflict = {
-          id: `conflict_${randomUUID()}`,
-          projectId: project.id,
-          peerDeviceId: peer,
-          mine: backup.tip,
-          theirs,
-          base: applied,
-          paths: clashing.slice(0, 1000),
-          createdAt: now().toISOString(),
-        };
-        conflicts.add(conflict);
-        emit({ push: "sync", kind: "conflict", conflict });
-        emitStatus();
-        return "conflict";
-      }
-      const changes = await git.changes(repo, mine, target);
-      await git.applyChanges(repo, target, changes, exclusions(project));
-      fingerprints.delete(project.id);
-      await git.updateRef(repo, appliedRef(peer), theirs);
-      await takeSnapshot(project, "incoming", { label: `From ${peer}` });
-      return "applied";
+  async function holdConflict(repo: ShadowRepo, conflict: SyncConflict) {
+    for (const sha of [conflict.mine, conflict.theirs, conflict.base]) {
+      if (sha) await git.holdRef(repo, sha, true);
+    }
+  }
+
+  async function releaseConflict(repo: ShadowRepo, conflict: SyncConflict) {
+    const still = new Set(
+      conflicts
+        .list()
+        .filter((c) => c.id !== conflict.id)
+        .flatMap((c) => [c.mine, c.theirs, c.base]),
+    );
+    for (const sha of [conflict.mine, conflict.theirs, conflict.base]) {
+      if (sha && !still.has(sha)) await git.holdRef(repo, sha, false);
+    }
+  }
+
+  async function applyFromPeer(project: SyncProject, peer: string): Promise<ApplyResult> {
+    if (!SAFE_ID.test(peer)) {
+      throw new ServiceError("bad_request", `Device id "${peer}" is not valid.`);
+    }
+    const key = queueKey(project.id, peer);
+    const cached = known.get(key);
+    if (cached?.peer && cached.peer === cached.applied && !queued.has(key)) {
+      return { outcome: "noop", skipped: [] };
+    }
+    beginWrite(project.id);
+    try {
+      return await lock(project.id, () => applyLocked(project, peer, key));
+    } finally {
+      endWrite(project.id);
+    }
+  }
+
+  async function applyLocked(
+    project: SyncProject,
+    peer: string,
+    key: string,
+  ): Promise<ApplyResult> {
+    const result = (outcome: ApplyResult["outcome"], skipped: ApplyResult["skipped"] = []) => ({
+      outcome,
+      skipped,
     });
+    const repo = repoFor(project);
+    await git.ensure(repo);
+    const theirs = await git.rev(repo, peerRef(peer));
+    if (!theirs) return result("noop");
+    const applied = await git.rev(repo, appliedRef(peer));
+    known.set(key, { peer: theirs, applied });
+    if (theirs === applied) {
+      queued.delete(key);
+      return result("noop");
+    }
+    if (conflicts.forPeer(project.id, peer)) return result("conflict");
+    if (deps.turnRunning(project.id)) {
+      queued.add(key);
+      return result("queued");
+    }
+    queued.delete(key);
+
+    const backup = await takeSnapshot(
+      project,
+      "before-apply",
+      { label: `Before applying ${peer}` },
+      { ensureTip: true, fresh: true },
+    );
+    if (!backup.tip) throw new ServiceError("internal", "The backup snapshot is missing.");
+    const setApplied = async () => {
+      await git.updateRef(repo, appliedRef(peer), theirs);
+      known.set(key, { peer: theirs, applied: theirs });
+    };
+    const [mine, incoming] = await Promise.all([
+      git.treeOf(repo, backup.tip),
+      git.treeOf(repo, theirs),
+    ]);
+    if (mine === incoming) {
+      await setApplied();
+      return result("noop");
+    }
+    const appliedTree = applied ? await git.treeOf(repo, applied) : null;
+    let target: string | null = null;
+    let clashing: string[] = [];
+    if (appliedTree !== null && appliedTree === mine) {
+      target = incoming;
+    } else if (await canMerge()) {
+      const merge = await git.mergeTree(repo, {
+        base: applied ?? (await git.emptyBase(repo)),
+        mine: backup.tip,
+        theirs,
+      });
+      if (merge.clean) target = merge.tree;
+      else clashing = merge.conflicts;
+    }
+    if (target === null) {
+      if (clashing.length === 0) {
+        clashing = (await git.changes(repo, mine, incoming)).map((change) => change.path);
+      }
+      const conflict: SyncConflict = {
+        id: `conflict_${randomUUID()}`,
+        projectId: project.id,
+        peerDeviceId: peer,
+        mine: backup.tip,
+        theirs,
+        base: applied,
+        paths: clashing.slice(0, 1000),
+        createdAt: now().toISOString(),
+      };
+      await holdConflict(repo, conflict);
+      conflicts.add(conflict);
+      emit({ push: "sync", kind: "conflict", conflict });
+      emitStatus();
+      return result("conflict");
+    }
+    let report;
+    try {
+      report = await writeTree(project, repo, { backup, mineTree: mine, targetTree: target });
+    } catch (error) {
+      if (!(error instanceof AbortWrite)) throw error;
+      if (error.kind === "turn") queued.add(key);
+      return result(error.kind === "turn" ? "queued" : "retry");
+    }
+    await setApplied();
+    await takeSnapshot(project, "incoming", { label: `From ${peer}` });
+    return result("applied", report.skipped);
   }
 
   async function resolveConflict(
@@ -520,55 +686,66 @@ export function createSyncEngine(deps: SyncDeps) {
     if (!conflict) throw new ServiceError("not_found", "That conflict was already resolved.");
     const project = projectById(conflict.projectId);
     assertNoTurn(project, "Resolve the conflict");
-    await lock(project.id, async () => {
-      const repo = repoFor(project);
-      await git.ensure(repo);
-      const resolution: ConflictResolution = params.resolution;
-      const backup = await takeSnapshot(
-        project,
-        "before-apply",
-        { label: "Before resolving a conflict" },
-        { ensureTip: true },
-      );
-      if (!backup.tip) throw new ServiceError("internal", "The backup snapshot is missing.");
-      const [mine, incoming] = await Promise.all([
-        git.treeOf(repo, backup.tip),
-        git.treeOf(repo, conflict.theirs),
-      ]);
-      const side = resolution === "theirs" ? incoming : mine;
-      let resolved = side;
-      let clashing = conflict.paths;
-      if (await canMerge()) {
-        const merge = await git.mergeTree(repo, {
-          base: conflict.base ?? (await emptyBase(repo)),
-          mine: backup.tip,
-          theirs: conflict.theirs,
-        });
-        clashing = merge.conflicts;
-        resolved = merge.clean
-          ? merge.tree
-          : await git.pickSide(repo, { merged: merge.tree, side, paths: merge.conflicts });
-      }
-      const changes = await git.changes(repo, mine, resolved);
-      await git.applyChanges(repo, resolved, changes, exclusions(project));
-      if (resolution === "both") {
-        for (const path of clashing) {
-          const safe = safeRelativePath(path);
-          if (safe === null) continue;
-          const blob = await git.blobAt(repo, conflict.theirs, safe);
-          if (!blob) continue;
-          const ext = extname(safe);
-          const copy = `${safe.slice(0, safe.length - ext.length)}.theirs${ext}`;
-          const target = join(repo.workTree, copy);
-          await mkdir(dirname(target), { recursive: true });
-          await writeFile(target, blob);
+    beginWrite(project.id);
+    try {
+      await lock(project.id, async () => {
+        const repo = repoFor(project);
+        await git.ensure(repo);
+        const resolution: ConflictResolution = params.resolution;
+        const backup = await takeSnapshot(
+          project,
+          "before-apply",
+          { label: "Before resolving a conflict" },
+          { ensureTip: true, fresh: true },
+        );
+        if (!backup.tip) throw new ServiceError("internal", "The backup snapshot is missing.");
+        const [mine, incoming] = await Promise.all([
+          git.treeOf(repo, backup.tip),
+          git.treeOf(repo, conflict.theirs),
+        ]);
+        const side = resolution === "theirs" ? incoming : mine;
+        let resolved = side;
+        let clashing = conflict.paths;
+        if (await canMerge()) {
+          const merge = await git.mergeTree(repo, {
+            base: conflict.base ?? (await git.emptyBase(repo)),
+            mine: backup.tip,
+            theirs: conflict.theirs,
+          });
+          clashing = merge.conflicts;
+          resolved = merge.clean
+            ? merge.tree
+            : await git.pickSide(repo, { merged: merge.tree, side, paths: merge.conflicts });
         }
-      }
-      fingerprints.delete(project.id);
-      await git.updateRef(repo, appliedRef(conflict.peerDeviceId), conflict.theirs);
-      conflicts.remove(conflict.id);
-      await takeSnapshot(project, "incoming", { label: `Resolved: ${resolution}` });
-    });
+        try {
+          await writeTree(project, repo, { backup, mineTree: mine, targetTree: resolved });
+        } catch (error) {
+          throw abortAsError(error, "Resolve the conflict");
+        }
+        if (resolution === "both") {
+          for (const path of clashing) {
+            const safe = safeRelativePath(path);
+            if (safe === null) continue;
+            const blob = await git.blobAt(repo, conflict.theirs, safe);
+            if (!blob) continue;
+            const ext = extname(safe);
+            const copy = `${safe.slice(0, safe.length - ext.length)}.theirs${ext}`;
+            if (!(await git.writeWorkFile(repo, copy, blob, mine))) {
+              notice(project.id, `Kept your local ${copy}: it is not in a snapshot.`);
+            }
+          }
+        }
+        fingerprints.delete(project.id);
+        const key = queueKey(project.id, conflict.peerDeviceId);
+        await git.updateRef(repo, appliedRef(conflict.peerDeviceId), conflict.theirs);
+        known.set(key, { peer: conflict.theirs, applied: conflict.theirs });
+        conflicts.remove(conflict.id);
+        await releaseConflict(repo, conflict);
+        await takeSnapshot(project, "incoming", { label: `Resolved: ${resolution}` });
+      });
+    } finally {
+      endWrite(project.id);
+    }
     emitStatus();
     return { ok: true };
   }
@@ -622,8 +799,8 @@ export function createSyncEngine(deps: SyncDeps) {
     if (!SAFE_ID.test(peer.deviceId)) throw new Error(`Device id "${peer.deviceId}" is not valid.`);
     const repo = repoFor(project);
     await lock(project.id, () => git.ensure(repo));
-    const known = await git.rev(repo, peerRef(peer.deviceId));
-    if (known !== remoteTip) {
+    const localTip = await git.rev(repo, peerRef(peer.deviceId));
+    if (localTip !== remoteTip) {
       const file = join(repo.gitDir, `incoming-${peer.deviceId}.bundle`);
       const source = `refs/wooky/snap/${peer.deviceId}`;
       const attempt = async (have: string | null) => {
@@ -638,14 +815,19 @@ export function createSyncEngine(deps: SyncDeps) {
         });
       };
       try {
-        await attempt(known);
+        await attempt(localTip);
       } catch (error) {
-        if (!known || error instanceof NetworkError) throw error;
+        if (!localTip || error instanceof NetworkError) throw error;
         await attempt(null);
       } finally {
         await rm(file, { force: true });
       }
     }
+    const key = queueKey(project.id, peer.deviceId);
+    known.set(key, {
+      peer: await git.rev(repo, peerRef(peer.deviceId)),
+      applied: known.get(key)?.applied ?? null,
+    });
     await applyFromPeer(project, peer.deviceId);
   }
 
@@ -731,11 +913,30 @@ export function createSyncEngine(deps: SyncDeps) {
     const project = localProject(sharedId, syncProjects(), deps.deviceId, settings().projectMap);
     if (!project) return null;
     const repo = repoFor(project);
-    const tip = await git.rev(repo, myRef);
-    if (!tip) return null;
-    const base = have && SHA.test(have) ? await git.rev(repo, have) : null;
-    if (base === tip) return { empty: true as const };
-    return { empty: false as const, ...git.bundleStream(repo, myRef, base) };
+    // Registering under the lock waits out a running gc, and a registered bundle makes the
+    // next gc skip itself, so history is never pruned under a peer's download.
+    await lock(project.id, async () => {
+      activeBundles.set(project.id, (activeBundles.get(project.id) ?? 0) + 1);
+    });
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      activeBundles.set(project.id, (activeBundles.get(project.id) ?? 1) - 1);
+    };
+    try {
+      const tip = await git.rev(repo, myRef);
+      if (!tip) return (release(), null);
+      const base = have && SHA.test(have) ? await git.rev(repo, have) : null;
+      if (base === tip) return (release(), { empty: true as const });
+      const stream = git.bundleStream(repo, myRef, base);
+      // Git reads the repo until it exits; after that the bytes are in the pipe, safe from gc.
+      void stream.done.then(release, release);
+      return { empty: false as const, ...stream };
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
 
   // ── triggers ─────────────────────────────────────────────────────────────────────────
@@ -786,6 +987,13 @@ export function createSyncEngine(deps: SyncDeps) {
   async function squash(project: SyncProject): Promise<void> {
     const repo = repoFor(project);
     await git.ensure(repo);
+    // Holds left by a crash are dropped once no open conflict needs them.
+    const needed = new Set(
+      conflicts.list().flatMap((c) => [c.mine, c.theirs, c.base].filter((v): v is string => !!v)),
+    );
+    for (const sha of await git.heldShas(repo)) {
+      if (!needed.has(sha)) await git.holdRef(repo, sha, false);
+    }
     const chain = await git.log(repo, myRef, 100_000);
     if (chain.length === 0) return;
     const { keepDays, keepMin } = settings().retention;
@@ -831,7 +1039,21 @@ export function createSyncEngine(deps: SyncDeps) {
     }
     const tip = chain[0]?.id ?? null;
     await git.updateRef(repo, myRef, parent, tip);
+    // Hold every open conflict's commits before gc, and release the old ids only once the
+    // conflicts point at the rewritten ones.
+    const before = conflicts.list().filter((c) => c.projectId === project.id);
     conflicts.remap(remap);
+    for (const conflict of conflicts.list().filter((c) => c.projectId === project.id)) {
+      await holdConflict(repo, conflict);
+    }
+    for (const old of before) {
+      const moved = remap.get(old.mine);
+      if (moved && moved !== old.mine) await git.holdRef(repo, old.mine, false);
+    }
+    if ((activeBundles.get(project.id) ?? 0) > 0) {
+      notice(project.id, "Skipped history cleanup: a peer is downloading from this device.");
+      return;
+    }
     await git.gc(repo);
   }
 
@@ -893,6 +1115,8 @@ export function createSyncEngine(deps: SyncDeps) {
     restore,
     resolve: resolveConflict,
     turnFinished,
+    isWriting,
+    apply: (projectId: string, peer: string) => applyFromPeer(projectById(projectId), peer),
     tick,
     retain,
     tips,

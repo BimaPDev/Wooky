@@ -29,7 +29,7 @@ import { openEventStore } from "./store/event-store.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
 import { createSyncService } from "./sync/service.ts";
-import { loopbackOnly, testPeerDirectory } from "./sync/stubs.ts";
+import { loopbackOnly, testHooksEnabled, testPeerDirectory } from "./sync/stubs.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
@@ -114,12 +114,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits,
     now: ctx.now,
   });
+  let syncWriting: (projectId: string) => boolean = () => false;
   const dispatcher = createDispatcher({
     store,
     runner,
     ctx,
     deviceSettings: () => themes.getSettings(),
+    projectBusy: (projectId) => syncWriting(projectId),
   });
+  /** A prompt whose start was refused during a sync write is started when the write ends. */
+  const resumeQueuedPrompts = (projectId: string) => {
+    for (const thread of Object.values(store.model.threads)) {
+      const head =
+        thread.projectId === projectId && thread.status === "idle" ? thread.queue[0] : undefined;
+      if (!head) continue;
+      try {
+        dispatcher.dispatch({
+          commandId: `queue:${head.id}`,
+          type: "queue.promote",
+          threadId: thread.id,
+          queueId: head.id,
+        });
+      } catch (error) {
+        console.error(`Could not start queued prompt ${head.id}`, error);
+      }
+    }
+  };
   dispatchCommand = (command) => {
     dispatcher.dispatch(command);
   };
@@ -142,8 +162,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     store,
     settings: () => themes.getSettings(),
     authenticate: loopbackOnly,
-    peers: testPeerDirectory(process.env.WOOKY_SYNC_TEST_PEERS),
+    peers: testPeerDirectory(
+      process.env.WOOKY_SYNC_TEST_PEERS,
+      testHooksEnabled(process.env, process.argv),
+    ),
+    resumeQueued: (projectId) => resumeQueuedPrompts(projectId),
   });
+  syncWriting = sync.engine.isWriting;
   const serveStatic = createHttpHandler(options.webDist ?? null);
   const http = createServer((req, res) => {
     if (!sync.routes(req, res)) serveStatic(req, res);

@@ -42,6 +42,8 @@ export function resolveConfig(
       "web-dist": { type: "string" },
       "allow-host": { type: "string", multiple: true },
       "allow-remote-picker": { type: "boolean" },
+      // Read from process.argv by the test-only sync hook; accepted here so parsing stays strict.
+      "test-hooks": { type: "boolean" },
       help: { type: "boolean" },
     },
   });
