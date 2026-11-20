@@ -28,6 +28,7 @@ import { openEventStore } from "./store/event-store.ts";
 import { setupWorktree, unwatchHeldNotices } from "./scripts/worktree-setup.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
+import { createSyncService } from "./sync/service.ts";
 import { createRemoteRuntime, type RemoteRuntime } from "./remote/runtime.ts";
 import type { Tailscale } from "./remote/tailscale.ts";
 import { createHttpHandler } from "./transport/static.ts";
@@ -155,12 +156,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         newId: ctx.newId,
       }),
   });
+  let syncWriting: (projectId: string) => boolean = () => false;
   const dispatcher = createDispatcher({
     store,
     runner,
     ctx,
     deviceSettings: () => themes.getSettings(),
+    projectBusy: (projectId) => syncWriting(projectId),
   });
+  /** A prompt whose start was refused during a sync write is started when the write ends. */
+  const resumeQueuedPrompts = (projectId: string) => {
+    for (const thread of Object.values(store.model.threads)) {
+      const head =
+        thread.projectId === projectId && thread.status === "idle" ? thread.queue[0] : undefined;
+      if (!head) continue;
+      try {
+        dispatcher.dispatch({
+          commandId: `queue:${head.id}`,
+          type: "queue.promote",
+          threadId: thread.id,
+          queueId: head.id,
+        });
+      } catch (error) {
+        console.error(`Could not start queued prompt ${head.id}`, error);
+      }
+    }
+  };
   dispatchCommand = (command) => {
     dispatcher.dispatch(command);
   };
@@ -188,6 +209,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     ...(options.remoteAddress ? { remoteAddress: options.remoteAddress } : {}),
     ...(options.tailscale ? { tailscale: options.tailscale } : {}),
   });
+  const sync = createSyncService({
+    home: options.home,
+    deviceId: remote.device.id(),
+    store,
+    settings: () => themes.getSettings(),
+    authenticate: remote.authenticateRequest,
+    peers: remote.peers,
+    resumeQueued: (projectId) => resumeQueuedPrompts(projectId),
+  });
+  syncWriting = sync.engine.isWriting;
+  const serveStatic = createHttpHandler(options.webDist ?? null);
   const sockets = attachWebSocket(
     {
       store,
@@ -201,6 +233,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       fleet,
       ship,
       scratch,
+      sync,
       attachments: createAttachmentStore(options.home),
       remote,
     },
@@ -210,7 +243,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let unpublish: () => void = () => {};
   try {
     await remote.listen({
-      handler: createHttpHandler(options.webDist ?? null),
+      handler: (req, res) => {
+        if (!sync.routes(req, res)) serveStatic(req, res);
+      },
       onUpgrade: sockets.onUpgrade,
     });
     unpublish = publishServerPresence(options.home, remote.url());
@@ -220,6 +255,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     sockets.close();
     remote.closeTunnels();
     await remote.closeServers();
+    await sync.close();
     closeStore();
     throw error;
   }
@@ -253,6 +289,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         for (const http of httpServers) http.closeAllConnections();
         await stopped;
         await history.close();
+        await sync.close();
         closeStore();
       })();
       return closing;

@@ -31,6 +31,7 @@ import type { TerminalManager, TerminalSubscriber } from "../terminal/session.ts
 import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
 import type { ShipService } from "../git/ship.ts";
+import type { SyncService } from "../sync/service.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
 
@@ -49,6 +50,7 @@ interface Services {
   fleet: FleetService;
   ship: ShipService;
   scratch: ScratchService;
+  sync: SyncService;
   attachments: AttachmentStore;
   remote: RemoteRuntime;
 }
@@ -110,6 +112,7 @@ function createHandlers(
     fleet,
     ship,
     scratch,
+    sync,
     attachments,
     remote,
   }: Services,
@@ -165,6 +168,7 @@ function createHandlers(
         providers.invalidate();
       }
       if (settings.activeThemeId !== undefined) notifyThemes([]);
+      if (settings.sync !== undefined) sync.engine.refresh();
       await remote.onSettings(before, next, settings);
       return next;
     },
@@ -257,13 +261,13 @@ function createHandlers(
       requireLocal(conn, "Connection details are only available on this machine.");
       return remote.peers.connectInfo(environmentId);
     },
-    "sync.status": notImplemented,
-    "sync.now": notImplemented,
-    "sync.snapshots.list": notImplemented,
-    "sync.snapshots.diff": notImplemented,
-    "sync.snapshots.restore": notImplemented,
-    "sync.snapshots.create": notImplemented,
-    "sync.conflicts.resolve": notImplemented,
+    "sync.status": () => sync.engine.status(),
+    "sync.now": ({ projectId }) => sync.engine.now(projectId),
+    "sync.snapshots.list": (params) => sync.engine.list(params),
+    "sync.snapshots.diff": (params) => sync.engine.diff(params),
+    "sync.snapshots.restore": (params) => sync.engine.restore(params),
+    "sync.snapshots.create": ({ projectId, label }) => sync.engine.createSnapshot(projectId, label),
+    "sync.conflicts.resolve": (params) => sync.engine.resolve(params),
     "terminal.list": () => terminals.list(),
     "terminal.attach": ({ sessionId }, conn) => {
       const attached = terminals.attach(sessionId, conn.terminalSink);
@@ -296,10 +300,6 @@ function createHandlers(
   };
 }
 
-function notImplemented(): never {
-  throw new ServiceError("unavailable", "not implemented");
-}
-
 /** Attaches the RPC WebSocket at WOOKY_WS_PATH. `onUpgrade` is shared by every listener. */
 export function attachWebSocket(
   services: Services,
@@ -323,6 +323,9 @@ export function attachWebSocket(
   const folderPicker = options.folderPicker ?? createFolderPicker();
   const handlers = createHandlers(services, notifyThemes, folderPicker);
   const closeThemeWatch = watchThemeFiles(services.themes, broadcastThemes);
+  const closeSyncPush = services.sync.engine.onPush((push) => {
+    for (const conn of connections) conn.send(push);
+  });
   // Theme files may carry an inline background image (capped at 6 MB in the contract).
   const wss = new WebSocketServer({
     noServer: true,
@@ -437,6 +440,7 @@ export function attachWebSocket(
     onUpgrade,
     close() {
       closeThemeWatch();
+      closeSyncPush();
       folderPicker.close();
       for (const client of wss.clients) client.close(1001, "Server is shutting down");
       wss.close();
