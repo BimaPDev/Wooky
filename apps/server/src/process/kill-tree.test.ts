@@ -1,5 +1,4 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { PassThrough } from "node:stream";
 import { once } from "node:events";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
@@ -7,7 +6,6 @@ import { isTreeAlive, killTree, killTreeSync } from "./kill-tree.ts";
 
 function mockTaskkillChild(): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
-  child.stderr = new PassThrough();
   queueMicrotask(() => child.emit("exit", 0));
   return child;
 }
@@ -87,8 +85,9 @@ describe("killTree", () => {
       expect(isTreeAlive(pid)).toBe(true);
       expect(() => process.kill(grandchildPid, 0)).not.toThrow();
 
+      const exited = once(child, "exit");
       await killTree(pid, "SIGKILL");
-      await once(child, "exit");
+      await exited;
       await new Promise<void>((resolve) => {
         const waitGc = () => {
           try {
@@ -125,8 +124,9 @@ describe("killTree", () => {
       const grandchildPid = Number(chunk.toString("utf8").trim());
       expect(grandchildPid).toBeGreaterThan(0);
 
+      const exited = once(child, "exit");
       await killTree(pid, "SIGKILL");
-      await once(child, "exit");
+      await exited;
       await new Promise<void>((resolve) => {
         const waitGc = () => {
           try {

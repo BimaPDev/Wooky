@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { pnpmCommand } from "./pnpm-spawn.mjs";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const devHome = join(repo, ".wooky-dev");
@@ -95,7 +96,8 @@ function shutdown(code, reason) {
 }
 
 function start(name, args, env, onLine) {
-  const child = spawn("pnpm", args, {
+  const { file, args: argv } = pnpmCommand(args, env);
+  const child = spawn(file, argv, {
     cwd: repo,
     env,
     detached: !win32,

@@ -132,6 +132,7 @@ export class JsonRpcClient {
   });
   private interruptPromise: Promise<void> | null = null;
   private teardownPromise: Promise<ProcessExitInfo> | null = null;
+  private win32KillRequested = false;
 
   // Last resort if the Wooky server dies without closing the client: the child
   // is detached, so nothing else would stop its group. Must stay synchronous.
@@ -417,18 +418,29 @@ export class JsonRpcClient {
   }
 
   private async win32TeardownKill(): Promise<void> {
-    await Promise.race([
-      new Promise<void>((resolve) => {
-        if (!this.processAlive) resolve();
-        else this.child.once("close", () => resolve());
-      }),
-      new Promise<void>((resolve) =>
-        setTimeout(resolve, Math.min(WIN32_STDIO_KILL_MS, this.stdioGraceMs)),
-      ),
-    ]);
-    this.signalGroup("SIGKILL");
-    while (this.refreshGroup()) {
+    this.win32KillRequested = true;
+    const waitMs = Math.min(WIN32_STDIO_KILL_MS, this.stdioGraceMs);
+    let stdioTimer: ReturnType<typeof setTimeout> | undefined;
+    const stdioTimeout = new Promise<void>((resolve) => {
+      stdioTimer = setTimeout(resolve, waitMs);
+    });
+    const stdioClosed = new Promise<void>((resolve) => {
+      if (!this.processAlive) resolve();
+      else this.child.once("close", () => resolve());
+    });
+    await Promise.race([stdioClosed, stdioTimeout]);
+    if (stdioTimer !== undefined) clearTimeout(stdioTimer);
+    void killTree(this.pid as number, "SIGKILL", { mode: "group" });
+    let polls = 0;
+    while (!this.groupGone && polls < GROUP_POLL_ATTEMPTS) {
+      polls += 1;
+      if (!this.refreshGroup()) break;
       await new Promise<void>((resolve) => setTimeout(resolve, GROUP_POLL_MS));
+    }
+    const pid = this.pid;
+    if (!this.groupGone && typeof pid === "number") {
+      killTreeSync(pid, "SIGKILL", { mode: "group" });
+      this.markGroupGone();
     }
   }
 
@@ -442,8 +454,10 @@ export class JsonRpcClient {
     }
     if (process.platform === "win32") {
       if (this.processAlive) return true;
-      killTreeSync(pid, "SIGKILL", { mode: "group" });
-      this.markGroupGone();
+      if (!this.win32KillRequested) {
+        this.markGroupGone();
+        return false;
+      }
       return false;
     }
     if (isTreeAlive(pid)) return true;
@@ -463,6 +477,7 @@ export class JsonRpcClient {
   private signalGroup(signal: NodeJS.Signals): void {
     const pid = this.pid;
     if (typeof pid !== "number" || !this.refreshGroup()) return;
+    this.win32KillRequested = true;
     const treeSignal: KillTreeSignal = signal === "SIGKILL" ? "SIGKILL" : "SIGTERM";
     void killTree(pid, treeSignal, { mode: "group" });
   }
