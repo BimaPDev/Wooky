@@ -156,6 +156,32 @@ describe("turns cannot start mid-write", () => {
     expect(a.engine.isWriting(a.projectId)).toBe(false);
   });
 
+  it("raises the writing flag synchronously for apply and resolve", async () => {
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj" });
+    const b = await makeDevice({ deviceId: "devB", projectId: "proj-b" });
+    pair(a, b);
+    for (const d of [a, b]) await put(d.root, "f.txt", BASE);
+    await a.engine.now();
+    await b.engine.now();
+    await a.engine.now();
+    await put(a.root, "f.txt", "line1\nA\nline3\n");
+    await put(b.root, "f.txt", "line1\nB\nline3\n");
+    await a.engine.snapshot(a.projectId, "manual");
+    await b.engine.now();
+    const conflict = must(b.engine.status().conflicts[0]);
+
+    expect(b.engine.isWriting(b.projectId)).toBe(false);
+    const applying = b.engine.apply(b.projectId, "devA");
+    expect(b.engine.isWriting(b.projectId)).toBe(true);
+    await applying;
+    expect(b.engine.isWriting(b.projectId)).toBe(false);
+
+    const resolving = b.engine.resolve({ conflictId: conflict.id, resolution: "mine" });
+    expect(b.engine.isWriting(b.projectId)).toBe(true);
+    await resolving;
+    expect(b.engine.isWriting(b.projectId)).toBe(false);
+  });
+
   it("aborts an apply when a turn starts after the backup but before the write", async () => {
     let calls = 0;
     const b = await makeDevice({
@@ -171,6 +197,24 @@ describe("turns cannot start mid-write", () => {
     await b.engine.now();
     expect(existsSync(join(b.root, "f.txt"))).toBe(false);
     calls = -100;
+    await b.engine.turnFinished({ projectId: b.projectId, threadId: "t", turnId: "u" });
+    expect(await read(b.root, "f.txt")).toBe("from a\n");
+  });
+
+  it("aborts when a turn starts during the scan just before the write", async () => {
+    let calls = 0;
+    const b = await makeDevice({
+      deviceId: "devB",
+      projectId: "proj-b",
+      // Call 1 is the top-of-apply check, 2 the pre-scan check, 3 the re-check before writing.
+      turnRunning: () => (calls += 1) === 3,
+    });
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj" });
+    pair(a, b);
+    await put(a.root, "f.txt", "from a\n");
+    await a.engine.snapshot(a.projectId, "manual");
+    await b.engine.now();
+    expect(existsSync(join(b.root, "f.txt"))).toBe(false);
     await b.engine.turnFinished({ projectId: b.projectId, threadId: "t", turnId: "u" });
     expect(await read(b.root, "f.txt")).toBe("from a\n");
   });
@@ -218,11 +262,13 @@ describe(".git aliases", () => {
       "GIT~1",
       "git~2",
       ".g‌it",
+      ".g​it",
+      ".git⁠",
       ".git::$INDEX_ALLOCATION",
       "﻿.git",
     ]) {
-      expect(safeRelativePath(`${name}/hooks/post-checkout`), name).toBeNull();
-      expect(safeRelativePath(`sub/${name}`), name).toBeNull();
+      expect(safeRelativePath(`${name}/hooks/post-checkout`)).toBeNull();
+      expect(safeRelativePath(`sub/${name}`)).toBeNull();
     }
     expect(safeRelativePath("src/git-notes.md")).toBe("src/git-notes.md");
     expect(safeRelativePath(".github/workflows/ci.yml")).toBe(".github/workflows/ci.yml");
@@ -257,6 +303,69 @@ describe(".git aliases", () => {
     expect(existsSync(join(root, "GIT~1"))).toBe(false);
     expect(await readFile(join(root, "ok.txt"), "utf8")).toContain("touch pwned");
     expect(result.skipped.map((s) => s.reason)).toEqual(["unsafe"]);
+  });
+});
+
+describe("hostile path names", () => {
+  it("refuses control characters so a newline cannot poison the blob size lookup", async () => {
+    const root = await tempDir("wooky-hostile-");
+    const home = await tempDir("wooky-hostile-home-");
+    const shadow = createShadowGit();
+    const repo = { gitDir: join(home, "evil.git"), workTree: root };
+    await shadow.ensure(repo);
+    const big = (
+      await shadow.run(repo, ["hash-object", "-w", "--stdin"], { input: "x".repeat(500) })
+    ).text.trim();
+    const small = (
+      await shadow.run(repo, ["hash-object", "-w", "--stdin"], { input: "ok\n" })
+    ).text.trim();
+    const entries = [`100644 blob ${big}\tbig.bin`, `100644 blob ${small}\ta\nb`];
+    const tree = (
+      await shadow.run(repo, ["mktree", "-z"], { input: entries.join("\0") + "\0" })
+    ).text.trim();
+    expect(tree).toMatch(/^[0-9a-f]{40}$/);
+    const empty = (
+      await shadow.run(repo, ["hash-object", "-t", "tree", "-w", "--stdin"], { input: "" })
+    ).text.trim();
+    const result = await shadow.applyChanges(repo, tree, await shadow.changes(repo, empty, tree), {
+      exclude: [],
+      mineTree: empty,
+      maxFileBytes: 100,
+      maxTotalBytes: 1e9,
+    });
+    expect(existsSync(join(root, "big.bin"))).toBe(false);
+    expect(result.written).toEqual([]);
+    expect(result.skipped).toEqual(
+      expect.arrayContaining([
+        { path: "a\nb", reason: "unsafe" },
+        { path: "big.bin", reason: "too-large" },
+      ]),
+    );
+  });
+
+  it("never lets a hostile conflict path inject an extra index entry", async () => {
+    const root = await tempDir("wooky-hostile-");
+    const home = await tempDir("wooky-hostile-home-");
+    const shadow = createShadowGit();
+    const repo = { gitDir: join(home, "evil.git"), workTree: root };
+    await shadow.ensure(repo);
+    const blob = (
+      await shadow.run(repo, ["hash-object", "-w", "--stdin"], { input: "attacker\n" })
+    ).text.trim();
+    const empty = (
+      await shadow.run(repo, ["hash-object", "-t", "tree", "-w", "--stdin"], { input: "" })
+    ).text.trim();
+    const hostile = `x\n100644 ${blob} 0\tREADME.md`;
+    const side = (
+      await shadow.run(repo, ["mktree", "-z"], { input: `100644 blob ${blob}\t${hostile}\0` })
+    ).text.trim();
+    const merged = await shadow.pickSide(repo, {
+      merged: empty,
+      side,
+      paths: [hostile],
+    });
+    const listed = await shadow.run(repo, ["ls-tree", "-r", "--name-only", merged]);
+    expect(listed.text.split("\n").filter(Boolean)).not.toContain("README.md");
   });
 });
 

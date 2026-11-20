@@ -53,6 +53,26 @@ describe("dispatcher projectBusy", () => {
     expect(
       dispatcher.dispatch({ type: "turn.start", commandId: "c3", threadId, prompt: "hi" }),
     ).toMatchObject({ accepted: true });
+
+    // A second prompt queues behind the running turn, then a queued promote is refused too.
+    dispatcher.dispatch({
+      type: "turn.start",
+      commandId: "c4",
+      threadId,
+      prompt: "queued",
+      whenBusy: "queue",
+    });
+    const queuedId = store.model.threads[threadId]?.queue?.[0]?.id as string;
+    expect(queuedId).toBeTruthy();
+    busy = true;
+    expect(() =>
+      dispatcher.dispatch({
+        type: "queue.promote",
+        commandId: "c5",
+        threadId,
+        queueId: queuedId,
+      }),
+    ).toThrow(/applying a sync/);
     store.close();
   });
 });
