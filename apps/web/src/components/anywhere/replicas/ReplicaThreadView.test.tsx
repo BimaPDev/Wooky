@@ -9,6 +9,7 @@ import { refreshSync, useAnywhereHistory } from "../../../state/anywhere-history
 import { useStore } from "../../../state/store.ts";
 import { App } from "../../App.tsx";
 import { installFixtureBackend, resetAnywhereHistory } from "../testing.ts";
+import { ComposerGate } from "./MovedBanners.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,5 +73,19 @@ describe("peer threads", () => {
     useStore.setState({ selectedThreadId: "t-continued" });
     await act(async () => root?.render(<App />));
     expect(document.querySelector(".continued-from")?.textContent).toBe("Continued from Work Mac");
+  });
+});
+
+describe("composer gate", () => {
+  it("leaves the composer enabled when the thread is missing from the model", async () => {
+    await act(async () =>
+      root?.render(
+        <ComposerGate threadId="missing">
+          <p className="probe">composer</p>
+        </ComposerGate>,
+      ),
+    );
+    expect(document.querySelector("fieldset.composer-locked")).toBeNull();
+    expect(document.querySelector(".probe")?.textContent).toBe("composer");
   });
 });

@@ -24,7 +24,7 @@ export function resolveLocalProject(
 
 /** The server's refusal says the agent there is busy; only then is a forced move offered. */
 export function isBusyReason(reason: string): boolean {
-  return /\b(busy|running|working|in progress|mid-turn)\b/i.test(reason);
+  return /\b(?:busy|turn is (?:already )?running)\b/i.test(reason);
 }
 
 export type ClaimView =

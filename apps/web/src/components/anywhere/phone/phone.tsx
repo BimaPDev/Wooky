@@ -28,6 +28,16 @@ export function applyPhoneDefaults(): void {
   if (isPhone()) useStore.setState({ sidebarOpen: false, terminalOpen: false });
 }
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+const drawerEl = () => document.querySelector<HTMLElement>(".sidebar");
+
+const focusables = () => {
+  const drawer = drawerEl();
+  return drawer ? [...drawer.querySelectorAll<HTMLElement>(FOCUSABLE)] : [];
+};
+
 /** Three bars: the phone's menu button, in place of the desktop sidebar icon. */
 export function IconMenu() {
   return (
@@ -78,6 +88,50 @@ export function PhoneDrawer() {
       offPeer();
     };
   }, [phone]);
+
+  // sync: document keyboard
+  useEffect(() => {
+    if (!phone || !open) return;
+    const drawer = drawerEl();
+    const first = drawer?.querySelector<HTMLElement>(FOCUSABLE) ?? drawer;
+    first?.focus({ preventScroll: true });
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        toggleSidebar();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      const firstItem = items[0];
+      const lastItem = items[items.length - 1];
+      if (!firstItem || !lastItem) {
+        event.preventDefault();
+        drawer?.focus();
+        return;
+      }
+      const active = document.activeElement;
+      if (!drawer?.contains(active)) {
+        event.preventDefault();
+        firstItem.focus();
+      } else if (event.shiftKey && active === firstItem) {
+        event.preventDefault();
+        lastItem.focus();
+      } else if (!event.shiftKey && active === lastItem) {
+        event.preventDefault();
+        firstItem.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (useStore.getState().sidebarOpen) return;
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Show sidebar"]')
+        ?.focus({ preventScroll: true });
+    };
+  }, [phone, open]);
 
   if (!phone || !open) return null;
   return (

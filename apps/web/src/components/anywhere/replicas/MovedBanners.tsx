@@ -25,7 +25,7 @@ export function MovedToBanner({ threadId }: { threadId: string }) {
 
 /** Wraps the composer. A moved thread gets the banner and a disabled composer. */
 export function ComposerGate({ threadId, children }: { threadId: string; children: ReactNode }) {
-  const moved = useStore((state) => state.model.threads[threadId]?.movedTo !== null);
+  const moved = useStore((state) => Boolean(state.model.threads[threadId]?.movedTo));
   if (!moved) return children;
   return (
     <>

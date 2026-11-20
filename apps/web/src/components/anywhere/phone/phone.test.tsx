@@ -91,4 +91,36 @@ describe("phone layout", () => {
     expect(document.querySelector(".sidebar")).not.toBeNull();
     expect(document.querySelector(".drawer-scrim")).toBeNull();
   });
+
+  it("moves focus into the drawer on open and back to the menu on Escape", async () => {
+    await act(async () => root?.render(<App />));
+    await act(async () => menu()?.click());
+    const sidebar = document.querySelector(".sidebar");
+    expect(sidebar?.contains(document.activeElement)).toBe(true);
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.querySelector(".sidebar")).toBeNull();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Show sidebar");
+  });
+
+  it("wraps Tab from the last drawer element to the first", async () => {
+    await act(async () => root?.render(<App />));
+    await act(async () => menu()?.click());
+    const items = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        ".sidebar button, .sidebar a, .sidebar input, .sidebar textarea",
+      ),
+    ];
+    expect(items.length).toBeGreaterThan(1);
+    const last = items[items.length - 1];
+    expect(last).toBeDefined();
+    if (!last) return;
+    await act(async () => {
+      last.focus();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    });
+    expect(document.activeElement).toBe(items[0]);
+  });
 });
