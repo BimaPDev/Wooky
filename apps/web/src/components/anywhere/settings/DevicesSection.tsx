@@ -2,11 +2,14 @@ import { useState } from "react";
 import { confirm } from "../../../state/actions.ts";
 import { renamePaired, revokePaired, usePairedDevices } from "../../../state/environments.ts";
 import { useStore } from "../../../state/store.ts";
-import { formatWhen, platformLabel } from "../format.ts";
+import { disambiguateNames, formatWhen, platformLabel } from "../format.ts";
 import { SettingsBlock } from "./controls.tsx";
 
 export function DevicesSection() {
   const devices = usePairedDevices().filter((device) => !device.revoked);
+  const shown = disambiguateNames(
+    devices.map((device) => ({ id: device.deviceId, name: device.name })),
+  );
   return (
     <SettingsBlock title="Paired devices">
       {devices.length === 0 ? (
@@ -14,7 +17,11 @@ export function DevicesSection() {
       ) : (
         <ul className="anywhere-list">
           {devices.map((device) => (
-            <DeviceRow key={device.deviceId} device={device} />
+            <DeviceRow
+              key={device.deviceId}
+              device={device}
+              shownName={shown.get(device.deviceId) ?? device.name}
+            />
           ))}
         </ul>
       )}
@@ -24,7 +31,9 @@ export function DevicesSection() {
 
 function DeviceRow({
   device,
+  shownName,
 }: {
+  shownName: string;
   device: {
     deviceId: string;
     name: string;
@@ -69,7 +78,7 @@ function DeviceRow({
             }}
           />
         ) : (
-          <p className="setting-title">{device.name}</p>
+          <p className="setting-title">{shownName}</p>
         )}
         <p className="setting-desc">
           {platformLabel(device.platform)} · Paired {formatWhen(device.pairedAt)} · Last seen{" "}
@@ -83,10 +92,10 @@ function DeviceRow({
         <button
           type="button"
           className="ghost-button danger"
-          aria-label={`Revoke ${device.name}`}
+          aria-label={`Revoke ${shownName}`}
           onClick={() =>
             confirm({
-              title: `Revoke ${device.name}`,
+              title: `Revoke ${shownName}`,
               body: "This device is disconnected immediately. It will need a new pairing code to connect again.",
               confirmLabel: "Revoke",
               onConfirm: () => {

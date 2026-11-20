@@ -1,5 +1,5 @@
 import type { DeviceSettings, SyncCategories } from "@wooky/contracts";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { backend } from "../../../state/backend.ts";
 import {
   putSettings,
@@ -8,7 +8,7 @@ import {
   useSyncStatus,
 } from "../../../state/environments.ts";
 import { useStore } from "../../../state/store.ts";
-import { formatWhen } from "../format.ts";
+import { disambiguateNames, formatWhen } from "../format.ts";
 import { Row, SettingsBlock, Toggle } from "./controls.tsx";
 
 const CATEGORIES: { key: keyof SyncCategories; title: string; description: string }[] = [
@@ -41,11 +41,17 @@ export function SyncSection({ settings }: { settings: DeviceSettings }) {
   const device = useDeviceInfo();
   const paired = usePairedDevices();
   const sync = settings.sync;
+  const statusNames = disambiguateNames(
+    (status?.peers ?? []).map((peer) => ({ id: peer.deviceId, name: peer.name })),
+  );
   const [syncing, setSyncing] = useState(false);
 
   const peers = peerChoices(settings, device?.deviceId ?? null, paired);
-  const liveProjects = useStore((state) =>
-    Object.values(state.model.projects).filter((project) => project.scratch !== true),
+  // Select the stable map and derive in render: a fresh array from the selector loops forever.
+  const projects = useStore((state) => state.model.projects);
+  const liveProjects = useMemo(
+    () => Object.values(projects).filter((project) => project.scratch !== true),
+    [projects],
   );
 
   const syncNow = async () => {
@@ -218,7 +224,7 @@ export function SyncSection({ settings }: { settings: DeviceSettings }) {
               <li key={peer.deviceId} className="anywhere-status">
                 <span className={`env-dot env-${dotFor(peer.state)}`} />
                 <span>
-                  <strong>{peer.name}</strong>
+                  <strong>{statusNames.get(peer.deviceId) ?? peer.name}</strong>
                   <span className="muted">
                     {" "}
                     · {peer.state}
@@ -250,7 +256,8 @@ function peerChoices(
     }
   }
   if (selfId) map.delete(selfId);
-  return [...map].map(([id, name]) => ({ id, name }));
+  const shown = disambiguateNames([...map].map(([id, name]) => ({ id, name })));
+  return [...map].map(([id, name]) => ({ id, name: shown.get(id) ?? name }));
 }
 
 function withPath(

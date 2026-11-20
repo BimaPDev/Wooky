@@ -6,9 +6,12 @@ import { SettingsBlock } from "./controls.tsx";
 import { QrCode } from "./QrCode.tsx";
 
 export function PairingSection() {
-  const [pairing, setPairing] = useState<{ code: string; expiresAt: string; url: string } | null>(
-    null,
-  );
+  const [pairing, setPairing] = useState<{
+    code: string;
+    expiresAt: string;
+    url: string | null;
+    reason: string | null;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const show = async () => {
@@ -44,8 +47,12 @@ export function PairingSection() {
         )
       }
     >
-      {pairing ? (
+      {pairing?.url ? (
         <PairingCodeView code={pairing.code} expiresAt={pairing.expiresAt} url={pairing.url} />
+      ) : pairing ? (
+        <p className="settings-help" role="status">
+          {pairing.reason ?? "Hosting must be enabled before another device can pair."}
+        </p>
       ) : (
         <p className="settings-help">
           A code works once, for 10 minutes. On the other machine, enter it under Add machine, or

@@ -222,8 +222,12 @@ export function ProjectSettingsDialog({ projectId }: { projectId: string }) {
         </button>
 
         <h3 className="settings-section-title">Worktree setup</h3>
+        <p className="settings-help">
+          Runs in a terminal in each new worktree, for example to install dependencies. The agent
+          starts at the same time and does not wait for it to finish.
+        </p>
         <label className="field">
-          <span>Command</span>
+          <span>Setup command</span>
           <input
             className="mono"
             value={worktreeSetup}
@@ -300,7 +304,10 @@ export function ProjectSettingsDialog({ projectId }: { projectId: string }) {
         {suggested ? (
           <ul className="suggestions" aria-label="Suggested shared paths">
             {suggested.length === 0 ? (
-              <li className="muted">No gitignored top-level entries</li>
+              <li className="muted">
+                Nothing to suggest. This project has no gitignored files or folders at its top level
+                (such as .env or node_modules). You can still add a path by hand.
+              </li>
             ) : (
               suggested.map((path) => (
                 <li key={path}>

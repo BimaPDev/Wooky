@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { dismissNotice, setPaletteOpen } from "../state/actions.ts";
 import { useAnywhereHistory } from "../state/anywhere-history.ts";
 import { titleWithBadge, useWaitingCount } from "../state/notifications.ts";
@@ -24,12 +24,19 @@ import { splitLayout } from "./panes/layout.ts";
 import { usePaneShortcuts } from "./panes/shortcuts.ts";
 import { Palette } from "./Palette.tsx";
 import { projectMonogramIconDataUrl } from "./ProjectMonogram.tsx";
-import { Settings } from "./Settings.tsx";
 import { Sidebar } from "./Sidebar.tsx";
-import { TerminalPane } from "./TerminalPane.tsx";
 import { ThreadView } from "./ThreadView.tsx";
 import { TopBar } from "./TopBar.tsx";
 import { Wallpaper } from "./Wallpaper.tsx";
+
+// Settings (with Anywhere and the theme studio) and the terminal (xterm) are opened on demand,
+// so they stay out of the first-load bundle.
+const Settings = lazy(() =>
+  import("./Settings.tsx").then((module) => ({ default: module.Settings })),
+);
+const TerminalPane = lazy(() =>
+  import("./TerminalPane.tsx").then((module) => ({ default: module.TerminalPane })),
+);
 
 export function App() {
   const theme = useStore((state) => state.theme);
@@ -170,13 +177,19 @@ export function App() {
             </div>
             {terminalOpen ? (
               <aside className="terminal-dock" aria-label="Terminal">
-                <TerminalPane />
+                <Suspense fallback={null}>
+                  <TerminalPane />
+                </Suspense>
               </aside>
             ) : null}
           </div>
         </div>
       </div>
-      {settingsOpen ? <Settings /> : null}
+      {settingsOpen ? (
+        <Suspense fallback={null}>
+          <Settings />
+        </Suspense>
+      ) : null}
       <Palette />
       <AnywhereHistoryRoot />
       <JumpSwitcher />

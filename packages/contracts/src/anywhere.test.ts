@@ -165,6 +165,14 @@ describe("remote contracts", () => {
       url: "http://100.64.0.1:4317",
     });
     expect(code.code).toBe("23456789");
+    expect(code.reason).toBeNull();
+    const unreachable = PairingCode.parse({
+      code: "23456789",
+      expiresAt: at,
+      url: null,
+      reason: "Hosting is off.",
+    });
+    expect(unreachable.url).toBeNull();
     expect(
       PairingCode.parse({ code: "abcdefgh", expiresAt: at, url: "http://localhost" }).code,
     ).toBe("ABCDEFGH");

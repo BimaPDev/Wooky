@@ -86,6 +86,7 @@ export function respondAnywhere(method: string, params: unknown): unknown {
         code: pairingCode(),
         expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
         url: "http://100.101.102.103:4317",
+        reason: null,
       };
     case "remote.devices.list":
       return paired;

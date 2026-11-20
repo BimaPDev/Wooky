@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAgentsCli } from "./cli/agents.ts";
 import { runMcpCli } from "./cli/mcp.ts";
@@ -9,12 +8,12 @@ import { resolveConfig, USAGE } from "./config.ts";
 import { hydrateLoginShellPath } from "./process/shell-env.ts";
 import { runThemeCli } from "./settings/theme-cli.ts";
 import { startServer } from "./server.ts";
+import { findWebDist } from "./web-dist.ts";
 
 function envWithBundledWebDist(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (env.WOOKY_WEB_DIST) return env;
-  const candidate = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
-  if (!existsSync(join(candidate, "index.html"))) return env;
-  return { ...env, WOOKY_WEB_DIST: candidate };
+  const found = findWebDist(dirname(fileURLToPath(import.meta.url)));
+  return found ? { ...env, WOOKY_WEB_DIST: found } : env;
 }
 
 async function main() {
