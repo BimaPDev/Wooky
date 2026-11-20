@@ -26,6 +26,7 @@ import { openSignInTerminal } from "../terminal/login.ts";
 import type { TerminalManager } from "../terminal/session.ts";
 import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
+import type { SyncService } from "../sync/service.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
 
@@ -44,6 +45,7 @@ interface Services {
   history: HistoryService;
   fleet: FleetService;
   scratch: ScratchService;
+  sync: SyncService;
   attachments: AttachmentStore;
 }
 
@@ -80,6 +82,7 @@ function createHandlers(
     history,
     fleet,
     scratch,
+    sync,
     attachments,
   }: Services,
   notifyThemes: (changedIds: string[]) => void,
@@ -127,6 +130,7 @@ function createHandlers(
         providers.invalidate();
       }
       if (settings.activeThemeId !== undefined) notifyThemes([]);
+      if (settings.sync !== undefined) sync.engine.refresh();
       return next;
     },
     "themes.list": () => themes.list(),
@@ -207,13 +211,13 @@ function createHandlers(
     "remote.devices.list": notImplemented,
     "remote.devices.revoke": notImplemented,
     "remote.devices.rename": notImplemented,
-    "sync.status": notImplemented,
-    "sync.now": notImplemented,
-    "sync.snapshots.list": notImplemented,
-    "sync.snapshots.diff": notImplemented,
-    "sync.snapshots.restore": notImplemented,
-    "sync.snapshots.create": notImplemented,
-    "sync.conflicts.resolve": notImplemented,
+    "sync.status": () => sync.engine.status(),
+    "sync.now": ({ projectId }) => sync.engine.now(projectId),
+    "sync.snapshots.list": (params) => sync.engine.list(params),
+    "sync.snapshots.diff": (params) => sync.engine.diff(params),
+    "sync.snapshots.restore": (params) => sync.engine.restore(params),
+    "sync.snapshots.create": ({ projectId, label }) => sync.engine.createSnapshot(projectId, label),
+    "sync.conflicts.resolve": (params) => sync.engine.resolve(params),
     "terminal.list": notImplemented,
     "terminal.attach": notImplemented,
     "scripts.run": notImplemented,
@@ -258,6 +262,9 @@ export function attachWebSocket(
     options.allowRemotePicker === true,
   );
   const closeThemeWatch = watchThemeFiles(services.themes, broadcastThemes);
+  const closeSyncPush = services.sync.engine.onPush((push) => {
+    for (const conn of connections) conn.send(push);
+  });
   // Theme files may carry an inline background image (capped at 6 MB in the contract).
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
 
@@ -347,6 +354,7 @@ export function attachWebSocket(
 
   return () => {
     closeThemeWatch();
+    closeSyncPush();
     folderPicker.close();
     for (const client of wss.clients) client.close(1001, "Server is shutting down");
     wss.close();

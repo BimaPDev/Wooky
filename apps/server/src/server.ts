@@ -26,6 +26,8 @@ import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
+import { createSyncService } from "./sync/service.ts";
+import { loopbackOnly, testPeerDirectory } from "./sync/stubs.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
@@ -129,7 +131,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     enabled: () => themes.getSettings().importLocalHistory,
   });
 
-  const http = createServer(createHttpHandler(options.webDist ?? null));
+  const sync = createSyncService({
+    home: options.home,
+    store,
+    settings: () => themes.getSettings(),
+    authenticate: loopbackOnly,
+    peers: testPeerDirectory(process.env.WOOKY_SYNC_TEST_PEERS),
+  });
+  const serveStatic = createHttpHandler(options.webDist ?? null);
+  const http = createServer((req, res) => {
+    if (!sync.routes(req, res)) serveStatic(req, res);
+  });
   const closeSockets = attachWebSocket(
     http,
     {
@@ -143,6 +155,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       history,
       fleet,
       scratch,
+      sync,
       attachments: createAttachmentStore(options.home),
     },
     new Set(options.allowedHosts ?? []),
@@ -160,6 +173,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     });
   } catch (error) {
+    await sync.close();
     store.close();
     throw error;
   }
@@ -173,6 +187,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   } catch (error) {
     closeSockets();
     http.close();
+    void sync.close();
     store.close();
     throw error;
   }
@@ -194,6 +209,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         http.closeAllConnections();
         await stopped;
         await history.close();
+        await sync.close();
         store.close();
       })();
       return closing;
