@@ -43,7 +43,8 @@ export async function executeClaimStep(params: {
   store: EventStore;
   peers: PeerDirectory;
   localDeviceId: string;
-  replicas: ReplicaModel;
+  getReplicas: () => ReplicaModel;
+  pullReplicas?: () => Promise<void>;
   claimId: string;
   ownerDeviceId: string;
   ownerThreadId: string;
@@ -57,19 +58,26 @@ export async function executeClaimStep(params: {
   defaultProvider: { provider: string; model: string };
   importThread(event: import("@wooky/contracts").PendingEvent): void;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const peer = params.peers.get(params.ownerDeviceId);
-  if (!peer) return { ok: false, reason: "The owner device is not paired." };
-
   const localProjectId = params.settingsProjectMap(params.projectId) ?? params.projectId;
   if (!params.store.model.projects[localProjectId])
     return { ok: false, reason: "This project is not mapped on this device." };
 
-  const ownerThread = params.replicas.replicas[params.ownerDeviceId]?.threads[params.ownerThreadId];
-  if (ownerThread?.movedTo) return { ok: false, reason: "The owner already released this thread." };
+  const releasedCheckpoint = params.store.isClaimReleased(params.claimId);
+  const ownerThread =
+    params.getReplicas().replicas[params.ownerDeviceId]?.threads[params.ownerThreadId];
+  if (ownerThread?.movedTo && ownerThread.movedTo.deviceId !== params.localDeviceId) {
+    return { ok: false, reason: "The owner already released this thread to another device." };
+  }
 
-  await params.syncNow(params.projectId);
+  const alreadyReleasedToUs =
+    releasedCheckpoint || ownerThread?.movedTo?.deviceId === params.localDeviceId;
 
-  if (!ownerThread?.movedTo) {
+  if (!alreadyReleasedToUs) {
+    const peer = params.peers.get(params.ownerDeviceId);
+    if (!peer) return { ok: false, reason: "The owner device is not paired." };
+
+    await params.syncNow(params.projectId);
+
     try {
       await remoteDispatch(peer.baseUrl, peer.token, {
         commandId: `release:${params.claimId}`,
@@ -88,10 +96,19 @@ export async function executeClaimStep(params: {
         reason: message === "Connection closed" ? "The owner is offline." : message,
       };
     }
+    params.store.markClaimReleased(params.claimId);
+    try {
+      await params.pullReplicas?.();
+    } catch {
+      // Best-effort refresh after release; we can still import from the replica we already have.
+    }
+  } else if (!releasedCheckpoint) {
+    params.store.markClaimReleased(params.claimId);
   }
 
+  const replicas = params.getReplicas();
   const { turns, thread } = historyFromReplica(
-    params.replicas,
+    replicas,
     params.ownerDeviceId,
     params.ownerThreadId,
   );
@@ -105,11 +122,7 @@ export async function executeClaimStep(params: {
     model = params.defaultProvider.model;
   }
 
-  const transcript = transcriptForImport(
-    params.replicas,
-    params.ownerDeviceId,
-    params.ownerThreadId,
-  );
+  const transcript = transcriptForImport(replicas, params.ownerDeviceId, params.ownerThreadId);
 
   const threadId = params.newId("thread");
   const at = params.now();
@@ -145,13 +158,6 @@ export async function executeClaimStep(params: {
     const message = error instanceof Error ? error.message : "Import failed";
     return { ok: false, reason: message };
   }
+  params.store.clearClaimReleased(params.claimId);
   return { ok: true };
-}
-
-export function claimAlreadyReleased(
-  replicas: ReplicaModel,
-  ownerDeviceId: string,
-  ownerThreadId: string,
-): boolean {
-  return Boolean(replicas.replicas[ownerDeviceId]?.threads[ownerThreadId]?.movedTo);
 }

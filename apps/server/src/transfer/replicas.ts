@@ -11,6 +11,7 @@ function replicaEventTypes(type: string): boolean {
 
 export interface ReplicaService {
   readonly model: ReplicaModel;
+  foldOwner(ownerDeviceId: string): void;
   pullNow(projectId?: string): Promise<void>;
   pullAll(): Promise<void>;
   ownerBatch(
@@ -75,6 +76,7 @@ export function createReplicaService(deps: {
     get model() {
       return model;
     },
+    foldOwner,
     syncStatus() {
       const settings = deps.settings();
       return {

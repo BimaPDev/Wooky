@@ -26,6 +26,10 @@ export interface EventStore {
   appendReplicaEvents(ownerDeviceId: string, events: readonly AgeEvent[]): number;
   replicaEventsAfter(ownerDeviceId: string, since: number): AgeEvent[];
   replicaHighWater(ownerDeviceId: string): number;
+  /** Durable checkpoint recording that the owner already released a claim's thread. */
+  markClaimReleased(claimId: string): void;
+  isClaimReleased(claimId: string): boolean;
+  clearClaimReleased(claimId: string): void;
   subscribe(listener: Listener): () => void;
   close(): void;
 }
@@ -68,6 +72,10 @@ export function openEventStore(home: string, clock: () => string): EventStore {
       event_json TEXT NOT NULL,
       PRIMARY KEY (owner_device_id, seq)
     );
+    CREATE TABLE IF NOT EXISTS claim_checkpoints (
+      claim_id TEXT PRIMARY KEY,
+      released_at TEXT NOT NULL
+    );
   `);
 
   const insertEvent = db.prepare(
@@ -94,6 +102,11 @@ export function openEventStore(home: string, clock: () => string): EventStore {
   const selectReplicaHighWater = db.prepare(
     "SELECT MAX(seq) AS maxSeq FROM replica_events WHERE owner_device_id = ?",
   );
+  const insertClaimReleased = db.prepare(
+    "INSERT OR IGNORE INTO claim_checkpoints (claim_id, released_at) VALUES (?, ?)",
+  );
+  const selectClaimReleased = db.prepare("SELECT 1 FROM claim_checkpoints WHERE claim_id = ?");
+  const deleteClaimReleased = db.prepare("DELETE FROM claim_checkpoints WHERE claim_id = ?");
 
   const decode = (row: EventRow): AgeEvent => {
     const parsed = AgeEvent.safeParse({ ...JSON.parse(row.payload), seq: row.seq, at: row.at });
@@ -217,6 +230,15 @@ export function openEventStore(home: string, clock: () => string): EventStore {
       const row = selectReplicaHighWater.get(ownerDeviceId) as
         { maxSeq: number | null } | undefined;
       return row?.maxSeq ?? 0;
+    },
+    markClaimReleased(claimId) {
+      insertClaimReleased.run(claimId, clock());
+    },
+    isClaimReleased(claimId) {
+      return selectClaimReleased.get(claimId) !== undefined;
+    },
+    clearClaimReleased(claimId) {
+      deleteClaimReleased.run(claimId);
     },
     subscribe(listener) {
       listeners.add(listener);

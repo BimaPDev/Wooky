@@ -3,7 +3,7 @@ import type { Effect } from "../orchestrator/effects.ts";
 import type { EventStore } from "../store/event-store.ts";
 import type { ThemeStore } from "../settings/themes.ts";
 import type { ProviderKind } from "@wooky/contracts";
-import { claimAlreadyReleased, executeClaimStep } from "./claim.ts";
+import { executeClaimStep } from "./claim.ts";
 import { createReplicaService, type ReplicaService } from "./replicas.ts";
 import type { AuthenticateRequest } from "../remote/auth.ts";
 import type { PeerDirectory } from "../remote/peers.ts";
@@ -34,6 +34,8 @@ export function createTransferService(deps: {
   broadcastSync(push: SyncPush): void;
 }): TransferService {
   const failClaim = (claimId: string, reason: string) => {
+    deps.store.clearClaimReleased(claimId);
+    if (!deps.store.model.pendingClaims?.[claimId]) return;
     const event: PendingEvent = {
       type: "thread.claimFailed",
       commandId: null,
@@ -108,7 +110,19 @@ export function createTransferService(deps: {
   }
 
   async function runClaimThread(effect: Extract<Effect, { kind: "claimThread" }>): Promise<void> {
-    await replicas.pullNow(effect.projectId);
+    if (!deps.store.model.pendingClaims?.[effect.claimId]) return;
+    replicas.foldOwner(effect.ownerDeviceId);
+    try {
+      await replicas.pullNow(effect.projectId);
+    } catch (error) {
+      if (!deps.store.isClaimReleased(effect.claimId)) {
+        failClaim(
+          effect.claimId,
+          error instanceof Error ? error.message : "Could not reach the owner device.",
+        );
+        return;
+      }
+    }
     const settings = deps.themes.getSettings();
     const map = settings.sync.projectMap[effect.projectId];
     const localProjectId = map?.[deps.deviceId] ?? effect.projectId;
@@ -117,7 +131,8 @@ export function createTransferService(deps: {
       store: deps.store,
       peers: deps.peers,
       localDeviceId: deps.deviceId,
-      replicas: replicas.model,
+      getReplicas: () => replicas.model,
+      pullReplicas: () => replicas.pullAll(),
       claimId: effect.claimId,
       ownerDeviceId: effect.ownerDeviceId,
       ownerThreadId: effect.ownerThreadId,
@@ -140,11 +155,7 @@ export function createTransferService(deps: {
   function recoverClaims(): void {
     const pending = deps.store.model.pendingClaims ?? {};
     for (const claim of Object.values(pending)) {
-      const released = claimAlreadyReleased(
-        replicas.model,
-        claim.ownerDeviceId,
-        claim.ownerThreadId,
-      );
+      replicas.foldOwner(claim.ownerDeviceId);
       void runClaimThread({
         kind: "claimThread",
         threadId: claim.claimId,
@@ -152,7 +163,6 @@ export function createTransferService(deps: {
         ownerDeviceId: claim.ownerDeviceId,
         ownerThreadId: claim.ownerThreadId,
         projectId: claim.projectId,
-        ...(released ? {} : {}),
       }).catch((error) => {
         failClaim(claim.claimId, error instanceof Error ? error.message : "Claim recovery failed");
       });
