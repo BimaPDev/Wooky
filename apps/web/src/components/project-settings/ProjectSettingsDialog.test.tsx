@@ -76,7 +76,7 @@ async function flush() {
 }
 
 function field(rootEl: HTMLElement, label: string): HTMLInputElement | null {
-  for (const fieldEl of rootEl.querySelectorAll("label.field, label.toggle")) {
+  for (const fieldEl of rootEl.querySelectorAll("label.field, label.checkbox-row")) {
     const text = fieldEl.querySelector("span")?.textContent ?? fieldEl.textContent ?? "";
     if (text.trim().startsWith(label)) return fieldEl.querySelector("input");
   }

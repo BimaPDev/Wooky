@@ -178,6 +178,19 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
         groups.every((g) => g.threads.length === 0) ? (
           <p className="sidebar-empty">No matching threads.</p>
         ) : null}
+        {!hasProjects ? (
+          <div className="sidebar-empty">
+            <p>No projects yet.</p>
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={pickingFolder}
+              onClick={() => void pickProjectFolder()}
+            >
+              Add a project
+            </button>
+          </div>
+        ) : null}
         {groupByProject ? (
           groups.map(({ project, threads: list }) => (
             <ProjectGroup
@@ -324,7 +337,9 @@ function ProjectGroup({
   grouped: boolean;
   statusById: Readonly<Record<string, FleetStatus>>;
 }) {
-  if (threads.length === 0) return null;
+  // A project with no threads yet still shows, so adding one visibly works. The scratch folder
+  // only shows once it has threads. Threads in the Working and Settled sections are not repeated.
+  if (threads.length === 0 && project.scratch) return null;
   return (
     <section className="project">
       <div className="project-row" title={project.root}>
@@ -364,6 +379,13 @@ function ProjectGroup({
         projectName={() => project.name}
         statusById={statusById}
       />
+      {allThreads.length === 0 ? (
+        <div className="sidebar-empty indent">
+          <button type="button" className="ghost-button" onClick={() => openNewThread(project.id)}>
+            New thread
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

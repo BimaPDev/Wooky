@@ -10,6 +10,7 @@ import {
   useProbe,
   type ProbeState,
 } from "../../state/environments.ts";
+import { useStore } from "../../state/store.ts";
 import { IconChevron } from "../Icons.tsx";
 import { PopoverChip, usePopoverClose } from "../Popover.tsx";
 import { disambiguateNames, unreachableCopy } from "./format.ts";
@@ -134,6 +135,20 @@ function EnvRow({
 /** A thin bar over the workspace while a remote machine cannot be reached. */
 export function EnvironmentBanner() {
   const session = useEnvironmentSession();
+  const status = useStore((state) => state.status);
+  const fixture = useStore((state) => state.fixture);
+  // This machine's own server: say so when the socket is down, instead of a silently dead composer.
+  if (!session.remote && !fixture && (status === "reconnecting" || status === "offline")) {
+    return (
+      <div className="env-banner" role="status">
+        <span>
+          {status === "offline"
+            ? "Cannot reach the Wooky server. Still trying."
+            : "Lost the connection to the Wooky server. Reconnecting."}
+        </span>
+      </div>
+    );
+  }
   if (!session.remote || !session.unreachable) return null;
   return (
     <div className="env-banner" role="status">

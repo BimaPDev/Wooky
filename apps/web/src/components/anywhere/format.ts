@@ -9,6 +9,17 @@ export function pairingQrText(url: string, code: string): string {
   return `${base}/#/pair?code=${encodeURIComponent(code)}`;
 }
 
+/**
+ * A pasted pairing link (`<url>/#/pair?code=<code>`, what the Copy button gives) split into the
+ * address to store and the one-time code. Anything without a fragment passes through unchanged.
+ */
+export function splitPairingLink(raw: string): { url: string; code: string | null } {
+  const at = raw.indexOf("#");
+  if (at < 0) return { url: raw, code: null };
+  const route = pairRoute(raw.slice(at));
+  return { url: raw.slice(0, at), code: route?.code ?? null };
+}
+
 /** `#/pair` and `#/pair?code=XXXX`. Anything else is the main app. */
 export function pairRoute(hash: string): { code: string | null } | null {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;

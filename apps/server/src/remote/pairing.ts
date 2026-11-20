@@ -116,8 +116,8 @@ export function createPairing(options: {
       return {
         url: null,
         reason: hosting.enabled
-          ? "Hosting is limited to this machine. Allow your tailnet or your network under Settings → Anywhere → Host, then show a code again."
-          : "Hosting is off. Turn on hosting under Settings → Anywhere → Host before pairing another device.",
+          ? "Hosting is limited to this machine. Allow your tailnet or your network under Settings → Anywhere → Hosting, then show a code again."
+          : "Hosting is off. Turn on Accept remote clients under Settings → Anywhere → Hosting before pairing another device.",
       };
     }
     if (hosting.bind === "tailscale") {

@@ -133,7 +133,7 @@ export function ProjectSettingsDialog({ projectId }: { projectId: string }) {
                   ))}
                 </div>
               </fieldset>
-              <label className="toggle">
+              <label className="checkbox-row">
                 <input
                   type="checkbox"
                   checked={script.runOnWorktreeCreate}

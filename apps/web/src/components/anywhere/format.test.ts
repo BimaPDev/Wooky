@@ -5,6 +5,7 @@ import {
   groupPairingCode,
   pairRoute,
   pairingQrText,
+  splitPairingLink,
 } from "./format.ts";
 import { browserDeviceName, browserPlatform } from "./pair/device.ts";
 
@@ -106,5 +107,19 @@ describe("disambiguateNames", () => {
     ]);
     expect(names.get("abcd1")).toBe("Mac (abcd1)");
     expect(names.get("abcd2")).toBe("Mac (abcd2)");
+  });
+});
+
+describe("splitPairingLink", () => {
+  it("splits the copied pairing link into the address and the code", () => {
+    const link = pairingQrText("http://10.0.0.241:4402", "X86CSHZW");
+    expect(splitPairingLink(link)).toEqual({ url: "http://10.0.0.241:4402/", code: "X86CSHZW" });
+  });
+
+  it("leaves a plain address alone", () => {
+    expect(splitPairingLink("http://10.0.0.241:4402")).toEqual({
+      url: "http://10.0.0.241:4402",
+      code: null,
+    });
   });
 });

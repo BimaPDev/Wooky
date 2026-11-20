@@ -936,7 +936,11 @@ button.chip:active {
 
 .sidebar-section-toggle > span:first-child {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-section-toggle:hover {
@@ -1335,8 +1339,20 @@ select,
   background: var(--bg-1);
 }
 
+.field textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  line-height: var(--leading);
+  resize: vertical;
+}
+
 select:hover,
-.field input:hover {
+.field input:hover,
+.field textarea:hover {
   border-color: var(--text-4);
 }
 
@@ -1885,6 +1901,20 @@ button.tool-line:active {
 
 .question-option.other {
   flex-direction: column;
+  align-items: stretch;
+}
+
+.question-option.other input[type="text"] {
+  width: 100%;
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+}
+
+.question-option.other input[type="text"]:hover {
+  border-color: var(--text-4);
 }
 
 .question-option-copy {
@@ -2539,6 +2569,20 @@ button.tool-line:active {
 }
 
 .toggle input {
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+/* A labelled checkbox in a form. Not the pill switch (.toggle). */
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  flex: none;
   margin: 3px 0 0;
   accent-color: var(--accent);
 }
@@ -3598,6 +3642,11 @@ button.tool-line:active {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+.usage-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .usage-table {
@@ -7241,12 +7290,19 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 /* Project scripts bar and settings */
+/* Both bars share one cell, so the wrap is as wide as every chip (the measuring copy) up to the
+   max width, whatever the visible bar currently shows. */
 .scripts-bar-wrap {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 0 1 auto;
   min-width: 0;
   max-width: 45vw;
+}
+
+.scripts-bar-wrap > * {
+  grid-area: 1 / 1;
 }
 
 .scripts-bar {
@@ -7257,7 +7313,6 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .scripts-bar.measure {
-  position: absolute;
   visibility: hidden;
   pointer-events: none;
   height: 0;
@@ -7275,6 +7330,7 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .script-run,
+.script-stop,
 .script-preview,
 .script-overflow {
   display: inline-flex;
@@ -7290,7 +7346,13 @@ html[data-wallpaper] .popover.popover-picker {
   cursor: pointer;
 }
 
+.script-stop {
+  padding: 0 var(--space-1);
+  border-left: 1px solid var(--line);
+}
+
 .script-run:hover,
+.script-stop:hover,
 .script-preview:hover:not(:disabled),
 .script-overflow:hover {
   background: var(--bg-hover);
@@ -7298,6 +7360,7 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .script-run:active,
+.script-stop:active,
 .script-preview:active:not(:disabled),
 .script-overflow:active {
   background: var(--bg-active);
@@ -7315,6 +7378,7 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .script-run:focus-visible,
+.script-stop:focus-visible,
 .script-preview:focus-visible,
 .script-overflow:focus-visible {
   outline: 2px solid var(--accent);
