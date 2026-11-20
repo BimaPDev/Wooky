@@ -120,10 +120,11 @@ describe("pixel scenes", () => {
       expect(parsed.background?.panelBlur).toBe(scene.tuning?.panelBlur);
       expect(parsed.background?.surfaceOpacity).toBe(scene.tuning?.surfaceOpacity);
       expect(parsed.background?.dim).toBe(scene.tuning?.dim);
+      expect(parsed.background?.panelBlur).toBeLessThanOrEqual(8);
     }
     const day = themes.find((t) => t.id === "wall-daydream");
     expect(day?.appearance).toBe("light");
-    expect(day?.background?.surfaceOpacity).toBeGreaterThanOrEqual(75);
+    expect(day?.background?.surfaceOpacity).toBeGreaterThanOrEqual(60);
   });
 
   it("gives glyphscape its own palette, a light variant and safe css", () => {

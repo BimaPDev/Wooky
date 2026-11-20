@@ -127,7 +127,7 @@ function dusk(): WallpaperScene {
     tone: "dark",
     canvas: "#17100e",
     accent: "#ee8a4c",
-    tuning: { dim: 14, panelBlur: 22, surfaceOpacity: 60 },
+    tuning: { dim: 8, panelBlur: 6, surfaceOpacity: 50 },
     svg: build({
       kit,
       canvas: "#17100e",
@@ -195,7 +195,7 @@ function daydream(): WallpaperScene {
     tone: "light",
     canvas: "#cfe6f7",
     accent: "#2c78c6",
-    tuning: { dim: 8, panelBlur: 22, surfaceOpacity: 78 },
+    tuning: { dim: 6, panelBlur: 5, surfaceOpacity: 66 },
     svg: build({
       kit,
       canvas: "#cfe6f7",
@@ -314,7 +314,7 @@ function reef(): WallpaperScene {
     tone: "dark",
     canvas: "#0b3b46",
     accent: "#4fd6d2",
-    tuning: { dim: 14, panelBlur: 22, surfaceOpacity: 62 },
+    tuning: { dim: 10, panelBlur: 6, surfaceOpacity: 52 },
     svg: build({
       kit,
       canvas: "#0b3b46",
@@ -415,7 +415,7 @@ function koi(): WallpaperScene {
     tone: "dark",
     canvas: "#10291f",
     accent: "#f08cba",
-    tuning: { dim: 16, panelBlur: 20, surfaceOpacity: 62 },
+    tuning: { dim: 10, panelBlur: 5, surfaceOpacity: 52 },
     svg: build({
       kit,
       canvas: "#10291f",
@@ -473,7 +473,7 @@ function abyss(): WallpaperScene {
     tone: "dark",
     canvas: bg,
     accent: "#a98bf0",
-    tuning: { dim: 12, panelBlur: 22, surfaceOpacity: 58 },
+    tuning: { dim: 8, panelBlur: 6, surfaceOpacity: 48 },
     svg: build({
       kit,
       canvas: bg,
@@ -552,7 +552,7 @@ function shallows(): WallpaperScene {
     tone: "dark",
     canvas: "#1d4a52",
     accent: "#f0a46a",
-    tuning: { dim: 16, panelBlur: 22, surfaceOpacity: 62 },
+    tuning: { dim: 10, panelBlur: 6, surfaceOpacity: 54 },
     svg: build({
       kit,
       canvas: "#1d4a52",
@@ -686,7 +686,7 @@ function fireflies(): WallpaperScene {
     tone: "dark",
     canvas: "#08150f",
     accent: "#c9e84a",
-    tuning: { dim: 10, panelBlur: 20, surfaceOpacity: 56 },
+    tuning: { dim: 6, panelBlur: 5, surfaceOpacity: 46 },
     svg: build({
       kit,
       canvas: "#08150f",
@@ -766,7 +766,7 @@ function moonlit(): WallpaperScene {
     tone: "dark",
     canvas: "#0b1230",
     accent: "#e8d9a0",
-    tuning: { dim: 10, panelBlur: 22, surfaceOpacity: 58 },
+    tuning: { dim: 8, panelBlur: 6, surfaceOpacity: 50 },
     svg: build({
       kit,
       canvas: "#0b1230",
