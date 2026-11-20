@@ -1,5 +1,6 @@
 import { runAgentsCli } from "./cli/agents.ts";
 import { runMcpCli } from "./cli/mcp.ts";
+import { runPairCli } from "./cli/pair.ts";
 import { resolveConfig, USAGE } from "./config.ts";
 import { hydrateLoginShellPath } from "./process/shell-env.ts";
 import { runThemeCli } from "./settings/theme-cli.ts";
@@ -19,6 +20,15 @@ async function main() {
   if (argv[0] === "agents") {
     try {
       const code = await runAgentsCli(argv.slice(1), process.env);
+      process.exit(code);
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  }
+  if (argv[0] === "pair") {
+    try {
+      const code = await runPairCli(argv.slice(1), process.env);
       process.exit(code);
     } catch (error: unknown) {
       console.error(error instanceof Error ? error.message : error);

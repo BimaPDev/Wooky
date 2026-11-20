@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join as pathJoin } from "node:path";
 import {
   Environment,
   PairResponse,
@@ -65,11 +65,14 @@ function wsUrl(base: string): string {
   return url.toString();
 }
 
-function sshSpec(connection: Extract<RemoteConnectionRecord, { kind: "ssh" }>, localPort?: number): SshTunnelSpec {
+function sshSpec(
+  connection: Extract<RemoteConnectionRecord, { kind: "ssh" }>,
+  localPort?: number,
+): SshTunnelSpec {
   return {
     target: connection.target,
     remotePort: connection.remotePort,
-    ...(localPort ?? connection.localPort
+    ...((localPort ?? connection.localPort)
       ? { localPort: localPort ?? connection.localPort }
       : {}),
     ...(connection.identityFile ? { identityFile: connection.identityFile } : {}),
@@ -93,7 +96,7 @@ export function createPeers(options: {
   retain(environmentIds: readonly string[]): void;
   close(): void;
 } {
-  const path = join(options.home, "peers.json");
+  const path = pathJoin(options.home, "peers.json");
   const now = options.now ?? Date.now;
   const tunnels = options.tunnels ?? createSshTunnels();
   let peers = read();
@@ -165,7 +168,10 @@ export function createPeers(options: {
       try {
         raw = JSON.parse(text);
       } catch {
-        throw new ServiceError("unavailable", "The remote returned an unreadable pairing response.");
+        throw new ServiceError(
+          "unavailable",
+          "The remote returned an unreadable pairing response.",
+        );
       }
       const body = PairResponse.parse(raw);
       const environment = Environment.parse({

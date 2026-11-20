@@ -61,7 +61,8 @@ export function resolveConfig(
     allowRemotePicker:
       values["allow-remote-picker"] === true || env.WOOKY_ALLOW_REMOTE_PICKER === "1",
     hostExplicit: values.host !== undefined,
-    portExplicit: values.port !== undefined || (env.WOOKY_PORT !== undefined && env.WOOKY_PORT !== ""),
+    portExplicit:
+      values.port !== undefined || (env.WOOKY_PORT !== undefined && env.WOOKY_PORT !== ""),
   };
 }
 

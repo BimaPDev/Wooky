@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import {
   FailoverSettings,
@@ -28,6 +27,7 @@ import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
+import { createRemoteRuntime } from "./remote/runtime.ts";
 import { createHttpHandler } from "./transport/static.ts";
 import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
@@ -50,11 +50,20 @@ export interface ServerOptions {
   allowRemotePicker?: boolean;
   /** Test seam. Production builds one from the operating system. */
   folderPicker?: FolderPicker;
+  /** `--host` was passed. Hosting settings do not add listeners. */
+  hostExplicit?: boolean;
+  /** `--port` or WOOKY_PORT was set. Hosting settings do not move the listen port. */
+  portExplicit?: boolean;
+  /** Test seam for pairing expiry and the rate-limit window. Milliseconds. */
+  now?: () => number;
+  /** Test seam. Production uses the socket's remote address. */
+  remoteAddress?: (req: IncomingMessage) => string | undefined;
 }
 
 export interface RunningServer {
   url: string;
   port: number;
+  addresses(): string[];
   close(): Promise<void>;
 }
 
@@ -135,9 +144,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     enabled: () => themes.getSettings().importLocalHistory,
   });
 
-  const http = createServer(createHttpHandler(options.webDist ?? null));
-  const closeSockets = attachWebSocket(
-    http,
+  const remote = createRemoteRuntime({
+    home: options.home,
+    themes,
+    host: options.host,
+    port: options.port,
+    hostExplicit: options.hostExplicit === true,
+    portExplicit: options.portExplicit === true,
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.remoteAddress ? { remoteAddress: options.remoteAddress } : {}),
+  });
+  const sockets = attachWebSocket(
     {
       store,
       dispatcher,
@@ -151,6 +168,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ship,
       scratch,
       attachments: createAttachmentStore(options.home),
+      remote,
     },
     new Set(options.allowedHosts ?? []),
     {
@@ -158,36 +176,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
     },
   );
+  let unpublish: () => void = () => {};
   try {
-    await new Promise<void>((resolve, reject) => {
-      http.once("error", reject);
-      http.listen(options.port, options.host, () => {
-        http.off("error", reject);
-        resolve();
-      });
+    await remote.listen({
+      handler: createHttpHandler(options.webDist ?? null),
+      onUpgrade: sockets.onUpgrade,
     });
-  } catch (error) {
-    store.close();
-    throw error;
-  }
-  const { port } = http.address() as AddressInfo;
-  const host = options.host.includes(":") ? `[${options.host}]` : options.host;
-  const url = `http://${host}:${port}`;
-  let unpublish: () => void;
-  try {
-    unpublish = publishServerPresence(options.home, url);
+    unpublish = publishServerPresence(options.home, remote.url());
     setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
-    closeSockets();
-    http.close();
+    stopShipPolling();
+    sockets.close();
+    remote.closeTunnels();
+    await remote.closeServers();
     store.close();
     throw error;
   }
 
   let closing: Promise<void> | null = null;
   return {
-    url,
-    port,
+    get url() {
+      return remote.url();
+    },
+    get port() {
+      return remote.port();
+    },
+    addresses: () => remote.addresses(),
     close() {
       // Stop new work first, then drain running turns while open sockets still get their
       // final events, and close the store last.
@@ -195,11 +209,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         unpublish();
         stopShipPolling();
         dispatcher.close();
-        const stopped = new Promise<void>((resolve) => http.close(() => resolve()));
-        http.closeIdleConnections();
+        const httpServers = remote.servers();
+        const stopped = Promise.all(
+          httpServers.map((http) => new Promise<void>((resolve) => http.close(() => resolve()))),
+        );
+        for (const http of httpServers) http.closeIdleConnections();
         await runner.shutdown();
-        closeSockets();
-        http.closeAllConnections();
+        sockets.close();
+        remote.closeTunnels();
+        for (const http of httpServers) http.closeAllConnections();
         await stopped;
         await history.close();
         store.close();

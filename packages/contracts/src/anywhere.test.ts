@@ -456,9 +456,12 @@ describe("terminal, commands, events, and rpc", () => {
       host: device,
     });
     expect(joined.host.deviceId).toBe(device.deviceId);
-    expect(RpcMethods["remote.join"].params.parse({ code: "abcdefgh", connection: joined.environment.connection }).code).toBe(
-      "ABCDEFGH",
-    );
+    expect(
+      RpcMethods["remote.join"].params.parse({
+        code: "abcdefgh",
+        connection: joined.environment.connection,
+      }).code,
+    ).toBe("ABCDEFGH");
     expect(
       RpcMethods["remote.connectInfo"].result.parse({
         wsUrl: "ws://127.0.0.1:4317/ws",

@@ -117,7 +117,12 @@ function cookie(token: string, secure: boolean): string {
   return parts.join("; ");
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}) {
+function sendJson(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  extra: Record<string, string> = {},
+) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -152,7 +157,10 @@ export function createGuardedHandler(options: {
       return;
     }
     if (!options.authenticateRequest(req)) {
-      res.writeHead(401, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+      res.writeHead(401, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
       res.end("Unauthorized");
       return;
     }

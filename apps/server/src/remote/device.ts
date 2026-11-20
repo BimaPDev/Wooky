@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { hostname, platform as osPlatform } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,7 +9,6 @@ import {
   type DeviceSettingsPatch,
 } from "@wooky/contracts";
 import { z } from "zod";
-import { writePrivateJson } from "./files.ts";
 
 const DeviceFile = z.object({
   deviceId: z.string().min(1),
@@ -37,8 +36,9 @@ function serverVersion(): string {
   return "0.0.0";
 }
 
-function isEnoent(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+function errorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
 }
 
 export function createDevice(options: {
@@ -52,25 +52,33 @@ export function createDevice(options: {
   const version = serverVersion();
   const record = loadOrCreate();
 
-  function loadOrCreate(): z.infer<typeof DeviceFile> {
-    let text: string;
-    try {
-      text = readFileSync(path, "utf8");
-    } catch (error) {
-      if (!isEnoent(error)) throw error;
-      const created = { deviceId: randomUUID(), createdAt: now() };
-      writePrivateJson(path, created);
-      return created;
-    }
+  function readExisting(): z.infer<typeof DeviceFile> {
     let raw: unknown;
     try {
-      raw = JSON.parse(text);
-    } catch {
-      throw new Error(`Could not read ${path}.`);
+      raw = JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") throw error;
+      throw new Error(`Could not read ${path}.`, { cause: error });
     }
     const parsed = DeviceFile.safeParse(raw);
     if (!parsed.success) throw new Error(`Could not read ${path}.`);
     return parsed.data;
+  }
+
+  function loadOrCreate(): z.infer<typeof DeviceFile> {
+    try {
+      return readExisting();
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") throw error;
+    }
+    const created = { deviceId: randomUUID(), createdAt: now() };
+    try {
+      writeFileSync(path, JSON.stringify(created, null, 2), { flag: "wx", mode: 0o600 });
+      return created;
+    } catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+    }
+    return readExisting();
   }
 
   function displayName(): string {

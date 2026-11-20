@@ -9,7 +9,8 @@ export function parseTailscaleStatus(raw: unknown): TailscaleStatus | null {
     BackendState?: unknown;
     Self?: { DNSName?: unknown; TailscaleIPs?: unknown };
   };
-  const dns = typeof record.Self?.DNSName === "string" ? record.Self.DNSName.replace(/\.$/, "") : "";
+  const dns =
+    typeof record.Self?.DNSName === "string" ? record.Self.DNSName.replace(/\.$/, "") : "";
   const ips = Array.isArray(record.Self?.TailscaleIPs)
     ? record.Self.TailscaleIPs.filter((ip): ip is string => typeof ip === "string")
     : [];
@@ -29,8 +30,8 @@ export function createTailscale(options: { timeoutMs?: number } = {}) {
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
   let serveError: string | undefined;
 
-  function withServeError(status: TailscaleStatus): TailscaleReport {
-    return serveError ? { ...status, serveError } : status;
+  function withServeError(report: TailscaleStatus): TailscaleReport {
+    return serveError ? { ...report, serveError } : report;
   }
 
   async function status(): Promise<TailscaleReport> {
@@ -42,7 +43,8 @@ export function createTailscale(options: { timeoutMs?: number } = {}) {
     }
     try {
       const parsed = parseTailscaleStatus(JSON.parse(result.stdout));
-      if (!parsed) return withServeError({ installed: true, running: false, hostName: null, ips: [] });
+      if (!parsed)
+        return withServeError({ installed: true, running: false, hostName: null, ips: [] });
       return withServeError(parsed);
     } catch {
       return withServeError({ installed: true, running: false, hostName: null, ips: [] });

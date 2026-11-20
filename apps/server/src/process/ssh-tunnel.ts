@@ -66,7 +66,13 @@ function startTunnel(args: readonly string[], localPort: number, spawnProcess = 
     stop() {
       stopped = true;
       if (timer) clearTimeout(timer);
-      if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      if (child && child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // The process already exited.
+        }
+      }
     },
   };
 
