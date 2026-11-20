@@ -1,10 +1,26 @@
-import { chmod, lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupTestRepos, makeRepo } from "../git/test-repo.ts";
 import { applySharedPaths, suggestSharedPaths } from "./shared-paths.ts";
+
+const mkdirHook = vi.hoisted(() => ({
+  afterMkdir: null as ((path: string) => void | Promise<void>) | null,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    mkdir: async (...args: unknown[]) => {
+      const result = await (actual.mkdir as (...input: unknown[]) => unknown)(...args);
+      await mkdirHook.afterMkdir?.(String(args[0]));
+      return result;
+    },
+  } as unknown as typeof actual;
+});
 
 const posix = process.platform !== "win32";
 
@@ -18,6 +34,7 @@ async function twin() {
 }
 
 afterEach(async () => {
+  mkdirHook.afterMkdir = null;
   await cleanupTestRepos();
 });
 
@@ -105,6 +122,43 @@ describe("applySharedPaths", () => {
     const result = await applySharedPaths(source, dest, [{ path: "../outside", mode: "link" }]);
     expect(result.results[0]?.action).toBe("refused");
   });
+
+  it.skipIf(!posix)(
+    "refuses to write when a parent directory becomes a symlink after the checks",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "wooky-swap-"));
+      try {
+        for (const mode of ["link", "copy"] as const) {
+          const source = join(root, `src-${mode}`);
+          const dest = join(root, `dst-${mode}`);
+          const outside = join(root, `outside-${mode}`);
+          await mkdir(join(source, "sub"), { recursive: true });
+          await mkdir(dest);
+          await mkdir(outside);
+          await writeFile(join(source, "sub", ".env"), "SECRET=1\n");
+
+          // The path handed to mkdir is already realpath'd, so match on the tail.
+          const swapped = join(`dst-${mode}`, "sub");
+          mkdirHook.afterMkdir = async (path) => {
+            mkdirHook.afterMkdir = null;
+            if (!path.endsWith(swapped)) return;
+            await rm(path, { recursive: true, force: true });
+            await symlink(outside, path);
+          };
+
+          const result = await applySharedPaths(source, dest, [{ path: "sub/.env", mode }]);
+          expect(result.results[0]?.action).toBe("refused");
+          expect(result.results[0]?.reason).toMatch(/destination resolves outside the worktree/);
+          expect(result.linked).toEqual([]);
+          expect(result.copied).toEqual([]);
+          await expect(lstat(join(outside, ".env"))).rejects.toThrow(/ENOENT/);
+        }
+      } finally {
+        mkdirHook.afterMkdir = null;
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.skipIf(!posix)("refuses a symlink that points outside the project", async () => {
     const { source, dest } = await twin();

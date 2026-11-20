@@ -120,17 +120,39 @@ async function applyOne(
     // dest is free
   }
 
+  // Between the checks above and the write, a path component can be swapped for a symlink,
+  // so both ends are resolved again immediately before anything is written.
+  const recheck = async (): Promise<SharedPathResult | null> => {
+    const sourceNow = await realOrResolve(source);
+    if (!inside(sourceRoot, sourceNow)) {
+      return { path: rel, action: "refused", reason: "source resolves outside the project" };
+    }
+    const parentNow = await destParentReal(destRoot, dest);
+    if (parentNow && !inside(destRoot, parentNow)) {
+      return { path: rel, action: "refused", reason: "destination resolves outside the worktree" };
+    }
+    return null;
+  };
+
+  const beforeMkdir = await recheck();
+  if (beforeMkdir) return beforeMkdir;
   await mkdir(dirname(dest), { recursive: true });
 
   if (entry.mode === "copy") {
+    const beforeCopy = await recheck();
+    if (beforeCopy) return beforeCopy;
     await copyPreserveMode(source, dest, sourceStat.isDirectory());
     return { path: rel, action: "copied" };
   }
 
+  const beforeLink = await recheck();
+  if (beforeLink) return beforeLink;
   try {
     await linkEntry(source, dest, sourceStat.isDirectory(), platform);
     return { path: rel, action: "linked" };
   } catch {
+    const beforeFallback = await recheck();
+    if (beforeFallback) return beforeFallback;
     await copyPreserveMode(source, dest, sourceStat.isDirectory());
     return { path: rel, action: "copied", reason: "link failed, copied instead" };
   }
