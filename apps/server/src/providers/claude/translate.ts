@@ -251,6 +251,11 @@ export function createTranslator(options: TranslatorOptions = {}): Translator {
       settleRunningTools("done", out);
       return done("completed", null, out);
     }
+    // Proposing a plan interrupts the CLI on purpose; it then reports error_during_execution.
+    if (planProposed?.value && message.subtype === "error_during_execution") {
+      settleRunningTools("done", out);
+      return done("completed", null, out);
+    }
     settleRunningTools("failed", out);
     const error = resultError(message, authFailed);
     return done("failed", error, out, classifyFailed(error, message.subtype));

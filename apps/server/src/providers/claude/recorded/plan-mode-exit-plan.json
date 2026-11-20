@@ -1,0 +1,522 @@
+[
+  {
+    "type": "system",
+    "subtype": "init",
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "cb2da29c-ad33-4ac5-b787-c6ea1603bd3e",
+    "model": "claude-haiku-5-5",
+    "cwd": "/tmp/recplan-rKKKqk",
+    "permissionMode": "plan"
+  },
+  {
+    "type": "system",
+    "subtype": "thinking_tokens",
+    "estimated_tokens": 50,
+    "estimated_tokens_delta": 50,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "41fddf33-e9b7-404f-9251-654511c24326"
+  },
+  {
+    "type": "system",
+    "subtype": "thinking_tokens",
+    "estimated_tokens": 202,
+    "estimated_tokens_delta": 152,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "ee0bd7cd-4ef3-40cd-a377-698a8e4bd846"
+  },
+  {
+    "type": "assistant",
+    "message": {
+      "model": "claude-sonnet-5-5",
+      "id": "msg_011ChEjP6xHoRicZwfMXgRLP",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": "redacted"
+        }
+      ],
+      "container": null,
+      "stop_reason": null,
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 14596,
+        "cache_read_input_tokens": 23914,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 14596
+        },
+        "output_tokens": 2,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "input_transformations": [],
+      "diagnostics": null,
+      "context_management": null
+    },
+    "parent_tool_use_id": null,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "65c10514-561e-4583-98e2-4909ec65b9f1",
+    "timestamp": "2026-11-20T19:27:51.292Z",
+    "request_id": "req_011ChEjP6j9njZsejx8Nm74W",
+    "thinking_duration_ms": 519,
+    "thinking_display": "updates"
+  },
+  {
+    "type": "rate_limit_event",
+    "rate_limit_info": {
+      "status": "allowed",
+      "resetsAt": 1795219800,
+      "rateLimitType": "five_hour",
+      "overageStatus": "rejected",
+      "overageDisabledReason": "org_level_disabled",
+      "isUsingOverage": false,
+      "unifiedWindows": {
+        "five_hour": {
+          "utilization": 0.14,
+          "resetsAt": 1795219800,
+          "status": "allowed"
+        },
+        "seven_day": {
+          "utilization": 0.29,
+          "resetsAt": 1795521600,
+          "status": "allowed"
+        }
+      }
+    },
+    "uuid": "3c1d9be9-37d5-4156-8167-a1c2a0f5f003",
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b"
+  },
+  {
+    "type": "assistant",
+    "message": {
+      "model": "claude-sonnet-5-5",
+      "id": "msg_011ChEjP6xHoRicZwfMXgRLP",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_017LAeyAr7HMxit3dW2NU31Z",
+          "name": "Write",
+          "input": {
+            "file_path": "/Users/me/.claude/plans/plan-how-to-create-melodic-creek.md",
+            "content": "1. Write `plan.txt` in the working directory (/tmp/recplan-rKKKqk) with content exactly `p` (no trailing newline).\n2. Verify with `cat plan.txt` / `wc -c` (expect 1 byte).\n"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ],
+      "container": null,
+      "stop_reason": null,
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 14596,
+        "cache_read_input_tokens": 23914,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 14596
+        },
+        "output_tokens": 2,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "input_transformations": [],
+      "diagnostics": null,
+      "context_management": null
+    },
+    "parent_tool_use_id": null,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "1d86187d-3eb0-45b0-88bd-d2b023955699",
+    "timestamp": "2026-11-20T19:27:52.534Z",
+    "request_id": "req_011ChEjP6j9njZsejx8Nm74W",
+    "wire_tool_inputs": {
+      "toolu_017LAeyAr7HMxit3dW2NU31Z": {
+        "file_path": "/Users/me/.claude/plans/plan-how-to-create-melodic-creek.md",
+        "content": "1. Write `plan.txt` in the working directory (/tmp/recplan-rKKKqk) with content exactly `p` (no trailing newline).\n2. Verify with `cat plan.txt` / `wc -c` (expect 1 byte).\n"
+      }
+    }
+  },
+  {
+    "type": "user",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "tool_use_id": "toolu_017LAeyAr7HMxit3dW2NU31Z",
+          "type": "tool_result",
+          "content": "File created successfully at: /Users/me/.claude/plans/plan-how-to-create-melodic-creek.md (file state is current in your context \u2014 no need to Read it back)"
+        }
+      ]
+    },
+    "parent_tool_use_id": null,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "a20fe47a-9a49-45ee-b832-4d9d733e4570",
+    "timestamp": "2026-11-20T19:27:52.560Z",
+    "tool_use_result": {
+      "type": "create",
+      "filePath": "/Users/me/.claude/plans/plan-how-to-create-melodic-creek.md",
+      "content": "1. Write `plan.txt` in the working directory (/tmp/recplan-rKKKqk) with content exactly `p` (no trailing newline).\n2. Verify with `cat plan.txt` / `wc -c` (expect 1 byte).\n",
+      "structuredPatch": [],
+      "originalFile": null,
+      "userModified": false
+    },
+    "tool_result_meta": [
+      {
+        "id": "toolu_017LAeyAr7HMxit3dW2NU31Z",
+        "permission_decision": {
+          "decision": "accept",
+          "source": "config",
+          "reason_type": "other"
+        }
+      }
+    ]
+  },
+  {
+    "type": "assistant",
+    "message": {
+      "model": "claude-sonnet-5-5",
+      "id": "msg_011ChEjP6xHoRicZwfMXgRLP",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01NJexpmWZ7cuHSb27F4GLGw",
+          "name": "ToolSearch",
+          "input": {
+            "query": "select:ExitPlanMode",
+            "max_results": 1
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ],
+      "container": null,
+      "stop_reason": null,
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 14596,
+        "cache_read_input_tokens": 23914,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 14596
+        },
+        "output_tokens": 2,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "input_transformations": [],
+      "diagnostics": null,
+      "context_management": null
+    },
+    "parent_tool_use_id": null,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "5f3a13a6-c256-4652-9284-bc83ef977597",
+    "timestamp": "2026-11-20T19:27:52.816Z",
+    "request_id": "req_011ChEjP6j9njZsejx8Nm74W",
+    "wire_tool_inputs": {
+      "toolu_01NJexpmWZ7cuHSb27F4GLGw": {
+        "query": "select:ExitPlanMode",
+        "max_results": 1
+      }
+    }
+  },
+  {
+    "type": "user",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01NJexpmWZ7cuHSb27F4GLGw",
+          "content": [
+            {
+              "type": "tool_reference",
+              "tool_name": "ExitPlanMode"
+            }
+          ]
+        }
+      ]
+    },
+    "parent_tool_use_id": null,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "4b966c74-8ba0-4249-895c-349a3bf28a88",
+    "timestamp": "2026-11-20T19:27:52.822Z",
+    "tool_use_result": {
+      "matches": ["ExitPlanMode"],
+      "query": "select:ExitPlanMode",
+      "total_deferred_tools": 33
+    },
+    "tool_result_meta": [
+      {
+        "id": "toolu_01NJexpmWZ7cuHSb27F4GLGw",
+        "permission_decision": {
+          "decision": "accept",
+          "source": "config"
+        }
+      }
+    ]
+  },
+  {
+    "type": "assistant",
+    "message": {
+      "model": "claude-sonnet-5-5",
+      "id": "msg_011ChEjPHt8HUgRQyeTEKwKb",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01WDL9khNENsZrkJEJwggKVU",
+          "name": "ExitPlanMode",
+          "input": {
+            "plan": "1. Write `plan.txt` in the working directory (/tmp/recplan-rKKKqk) with content exactly `p` (no trailing newline).\n2. Verify with `cat plan.txt` / `wc -c` (expect 1 byte).\n",
+            "planFilePath": "/Users/me/.claude/plans/plan-how-to-create-melodic-creek.md"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ],
+      "container": null,
+      "stop_reason": null,
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 4061,
+        "cache_read_input_tokens": 38510,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 4061
+        },
+        "output_tokens": 24,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "input_transformations": [],
+      "diagnostics": null,
+      "context_management": null
+    },
+    "parent_tool_use_id": null,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "f7e6a896-17f7-4984-b7d9-50c5af440ff8",
+    "timestamp": "2026-11-20T19:27:53.424Z",
+    "request_id": "req_011ChEjPHVZSMeYsJRUaE1v3",
+    "wire_tool_inputs": {
+      "toolu_01WDL9khNENsZrkJEJwggKVU": {}
+    }
+  },
+  {
+    "type": "user",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.\n\nNote: The user's next message may contain a correction or preference. Pay close attention \u2014 if they explain what went wrong or how they'd prefer you to work, consider saving that to memory for future sessions.",
+          "is_error": true,
+          "tool_use_id": "toolu_01WDL9khNENsZrkJEJwggKVU"
+        }
+      ]
+    },
+    "parent_tool_use_id": null,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "ecf1cde1-33d2-4faf-8c7d-addf8079d4e0",
+    "timestamp": "2026-11-20T19:27:53.439Z",
+    "tool_use_result": "User rejected tool use",
+    "tool_result_meta": [
+      {
+        "id": "toolu_01WDL9khNENsZrkJEJwggKVU",
+        "non_execution_kind": "user-rejected"
+      }
+    ]
+  },
+  {
+    "type": "user",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "[Request interrupted by user]"
+        }
+      ]
+    },
+    "parent_tool_use_id": null,
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "uuid": "7bdbbc52-e4f1-43d4-9e9d-69731188863a",
+    "timestamp": "2026-11-20T19:27:53.439Z"
+  },
+  {
+    "duration_api_ms": 3704,
+    "stop_reason": "tool_use",
+    "session_id": "b9048377-8d57-417f-abd0-085b6116d74b",
+    "total_cost_usd": 0.08483940000000001,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 14596,
+      "cache_read_input_tokens": 23914,
+      "output_tokens": 359,
+      "output_tokens_details": {
+        "thinking_tokens": 64
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 14596,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 359,
+          "cache_read_input_tokens": 23914,
+          "cache_creation_input_tokens": 14596,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 14596
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-haiku-5-5": {
+        "inputTokens": 1210,
+        "outputTokens": 20,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.000131,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 0,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 0,
+        "canonicalModel": "claude-haiku-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-5-5": {
+        "inputTokens": 4,
+        "outputTokens": 383,
+        "cacheReadInputTokens": 62424,
+        "cacheCreationInputTokens": 18657,
+        "webSearchRequests": 0,
+        "costUSD": 0.08470839999999999,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 64,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 18657,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [
+      {
+        "tool_name": "ExitPlanMode",
+        "tool_use_id": "toolu_01WDL9khNENsZrkJEJwggKVU",
+        "tool_input": {
+          "plan": "1. Write `plan.txt` in the working directory (/tmp/recplan-rKKKqk) with content exactly `p` (no trailing newline).\n2. Verify with `cat plan.txt` / `wc -c` (expect 1 byte).\n",
+          "planFilePath": "/Users/me/.claude/plans/plan-how-to-create-melodic-creek.md"
+        }
+      }
+    ],
+    "terminal_reason": "aborted_streaming",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "safety_stops": 0,
+    "is_error": true,
+    "num_turns": 5,
+    "subtype": "error_during_execution",
+    "errors": ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"],
+    "type": "result",
+    "duration_ms": 3268,
+    "uuid": "2f11252b-ffe3-44c4-95d3-64d5f38d6ce0",
+    "queued_turn_count": 0,
+    "result_index": 0,
+    "model_usage_since_last_result": {
+      "claude-haiku-5-5": {
+        "inputTokens": 1210,
+        "outputTokens": 20,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.000131,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 0,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 0,
+        "canonicalModel": "claude-haiku-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-5-5": {
+        "inputTokens": 4,
+        "outputTokens": 383,
+        "cacheReadInputTokens": 62424,
+        "cacheCreationInputTokens": 18657,
+        "webSearchRequests": 0,
+        "costUSD": 0.08470839999999999,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 64,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 18657,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "credential_expires_at": "2026-12-11T05:47:44.573Z"
+  }
+]

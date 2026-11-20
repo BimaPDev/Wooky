@@ -390,7 +390,8 @@ async function proposePlan(
   if (!resolved.ok) {
     return { behavior: "deny", message: planDenyMessage(resolved.reason) };
   }
-  emit({ type: "plan", itemId: requestId, markdown: resolved.markdown });
+  // Its own id: the ExitPlanMode tool item already uses the request id and would replace the plan.
+  emit({ type: "plan", itemId: `${requestId}:plan`, markdown: resolved.markdown });
   return {
     behavior: "deny",
     message: "The user will review the plan.",
