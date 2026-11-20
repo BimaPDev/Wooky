@@ -445,5 +445,25 @@ describe("terminal, commands, events, and rpc", () => {
       RpcMethods["scripts.run"].params.parse({ projectId: "p1", scriptId: "dev" }).scriptId,
     ).toBe("dev");
     expect(RpcMethods["remote.devices.revoke"].result.parse({ ok: true })).toEqual({ ok: true });
+    const joined = RpcMethods["remote.join"].result.parse({
+      environment: {
+        id: "env-1",
+        label: "Home",
+        deviceId: device.deviceId,
+        connection: { kind: "direct", url: "http://127.0.0.1:4317" },
+        addedAt: at,
+      },
+      host: device,
+    });
+    expect(joined.host.deviceId).toBe(device.deviceId);
+    expect(RpcMethods["remote.join"].params.parse({ code: "abcdefgh", connection: joined.environment.connection }).code).toBe(
+      "ABCDEFGH",
+    );
+    expect(
+      RpcMethods["remote.connectInfo"].result.parse({
+        wsUrl: "ws://127.0.0.1:4317/ws",
+        token: "tok",
+      }).wsUrl,
+    ).toBe("ws://127.0.0.1:4317/ws");
   });
 });

@@ -13,6 +13,8 @@ describe("resolveConfig", () => {
       webDist: null,
       allowedHosts: [],
       allowRemotePicker: false,
+      hostExplicit: false,
+      portExplicit: false,
     });
   });
 
@@ -32,6 +34,8 @@ describe("resolveConfig", () => {
       webDist: "/w",
       allowedHosts: [],
       allowRemotePicker: false,
+      hostExplicit: true,
+      portExplicit: true,
     });
   });
 

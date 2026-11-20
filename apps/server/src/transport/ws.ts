@@ -13,7 +13,9 @@ import {
   type ThemesPush,
 } from "@wooky/contracts";
 import { WebSocket, WebSocketServer } from "ws";
-import { ServiceError } from "../errors.ts";
+import { ServiceError, type ServiceErrorCode } from "../errors.ts";
+import { assertLoopback, isLoopbackAddress, selectWebSocketProtocol } from "../remote/auth.ts";
+import type { RemoteRuntime } from "../remote/runtime.ts";
 import type { AttachmentStore } from "../attachments.ts";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
 import { createFolderPicker, type FolderPicker } from "../process/folder-picker.ts";

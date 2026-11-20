@@ -12,6 +12,10 @@ export interface ServerConfig {
   allowedHosts: string[];
   /** When set, a non-loopback client may open the folder chooser on this machine. */
   allowRemotePicker: boolean;
+  /** `--host` was passed. Hosting settings do not add listeners. */
+  hostExplicit: boolean;
+  /** `--port` or WOOKY_PORT was set. Hosting settings do not move the listen port. */
+  portExplicit: boolean;
 }
 
 export const USAGE = `Usage: wooky [options]
@@ -56,6 +60,8 @@ export function resolveConfig(
       .filter(Boolean),
     allowRemotePicker:
       values["allow-remote-picker"] === true || env.WOOKY_ALLOW_REMOTE_PICKER === "1",
+    hostExplicit: values.host !== undefined,
+    portExplicit: values.port !== undefined || (env.WOOKY_PORT !== undefined && env.WOOKY_PORT !== ""),
   };
 }
 
