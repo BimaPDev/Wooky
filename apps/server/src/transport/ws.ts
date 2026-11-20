@@ -29,6 +29,8 @@ import type { FleetService } from "../fleet/service.ts";
 import type { ShipService } from "../git/ship.ts";
 import type { HistoryService } from "../usage/history.ts";
 import type { LimitsService } from "../usage/limits.ts";
+import type { TransferService } from "../transfer/service.ts";
+import type { SyncPush } from "@wooky/contracts";
 
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -47,6 +49,7 @@ interface Services {
   ship: ShipService;
   scratch: ScratchService;
   attachments: AttachmentStore;
+  transfer: TransferService;
 }
 
 const MAX_AGENT_WAITS_PER_CONNECTION = 8;
@@ -85,6 +88,7 @@ function createHandlers(
     ship,
     scratch,
     attachments,
+    transfer,
   }: Services,
   notifyThemes: (changedIds: string[]) => void,
   folderPicker: FolderPicker,
@@ -226,8 +230,13 @@ function createHandlers(
     "remote.devices.list": notImplemented,
     "remote.devices.revoke": notImplemented,
     "remote.devices.rename": notImplemented,
-    "sync.status": notImplemented,
-    "sync.now": notImplemented,
+    "sync.status": () => transfer.replicas.syncStatus(),
+    "sync.now": async ({ projectId }) => {
+      await transfer.replicas.pullNow(projectId);
+      await transfer.pullSettingsAndThemes();
+      return { ok: true as const };
+    },
+    "sync.replicas": () => transfer.replicas.model,
     "sync.snapshots.list": notImplemented,
     "sync.snapshots.diff": notImplemented,
     "sync.snapshots.restore": notImplemented,
@@ -257,13 +266,22 @@ export function attachWebSocket(
   server: Server,
   services: Services,
   allowedHosts: ReadonlySet<string> = new Set(),
-  options: { allowRemotePicker?: boolean; folderPicker?: FolderPicker } = {},
+  options: {
+    allowRemotePicker?: boolean;
+    folderPicker?: FolderPicker;
+    onSyncBroadcast?: (send: (message: SyncPush) => void) => void;
+  } = {},
 ): () => void {
   const connections = new Set<Connection>();
 
   const broadcastThemes = (message: ThemesPush) => {
     for (const conn of connections) conn.send(message);
   };
+
+  const broadcastSync = (message: SyncPush) => {
+    for (const conn of connections) conn.send(message);
+  };
+  options.onSyncBroadcast?.(broadcastSync);
 
   const notifyThemes = (changedIds: string[]) => {
     broadcastThemes({

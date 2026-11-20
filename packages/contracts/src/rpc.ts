@@ -384,6 +384,7 @@ export const RpcMethods = {
     params: z.object({ conflictId: z.string().min(1), resolution: ConflictResolution }),
     result: z.object({ ok: z.literal(true) }),
   },
+  "sync.replicas": { params: z.object({}), result: ReplicaModel },
   "scripts.run": {
     params: z.object({ projectId: Id, scriptId: Id, threadId: Id.optional() }),
     result: TerminalInfo,

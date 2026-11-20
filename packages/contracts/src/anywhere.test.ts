@@ -423,6 +423,7 @@ describe("terminal, commands, events, and rpc", () => {
     ).toBe(4);
     expect(RpcMethods["git.pr.status"].result.parse(null)).toBeNull();
     expect(RpcMethods["sync.now"].result.parse({ ok: true })).toEqual({ ok: true });
+    expect(RpcMethods["sync.replicas"].result.parse({ replicas: {} }).replicas).toEqual({});
     expect(
       RpcMethods["sync.conflicts.resolve"].params.parse({ conflictId: "c1", resolution: "mine" })
         .resolution,

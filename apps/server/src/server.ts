@@ -16,7 +16,7 @@ import { createShipService } from "./git/ship.ts";
 import { createGitService } from "./git/service.ts";
 import type { GitService } from "./git/types.ts";
 import type { DecideContext } from "./orchestrator/decide.ts";
-import { createDispatcher } from "./orchestrator/dispatcher.ts";
+import { createDispatcher, type Dispatcher } from "./orchestrator/dispatcher.ts";
 import { builtinAdapters } from "./providers/index.ts";
 import { createProviderRegistry } from "./providers/registry.ts";
 import type { ProviderAdapter } from "./providers/types.ts";
@@ -33,6 +33,10 @@ import { attachWebSocket } from "./transport/ws.ts";
 import { createHistoryService } from "./usage/history.ts";
 import { createLimitsService } from "./usage/limits.ts";
 import { setAgentTokenIssuer } from "./providers/agent-env.ts";
+import { ensureDeviceId } from "./transfer/device.ts";
+import { createTransferHttpHandler } from "./transfer/http.ts";
+import { createTransferService } from "./transfer/service.ts";
+import { emptyPeerDirectory, loopbackAuth, noopSyncNow } from "./transfer/types.ts";
 
 export interface ServerOptions {
   home: string;
@@ -50,6 +54,12 @@ export interface ServerOptions {
   allowRemotePicker?: boolean;
   /** Test seam. Production builds one from the operating system. */
   folderPicker?: FolderPicker;
+  /** Test seams for Anywhere transfer (A1/A2 stubs in production). */
+  transfer?: {
+    peers?: import("./transfer/types.ts").PeerDirectory;
+    authenticate?: import("./transfer/types.ts").AuthenticateRequest;
+    syncNow?: import("./transfer/types.ts").SyncNow;
+  };
 }
 
 export interface RunningServer {
@@ -101,7 +111,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const store = openEventStore(options.home, ctx.now);
   const git = options.git ?? createGitService();
-  let dispatchCommand: (command: Command) => void = () => {};
+  const deviceId = ensureDeviceId(options.home, ctx.now);
+  let dispatchCommand: (command: Command) => ReturnType<Dispatcher["dispatch"]> = () => {
+    throw new Error("dispatcher not ready");
+  };
+  let broadcastSync = (_message: import("@wooky/contracts").SyncPush) => {};
+  const transfer = createTransferService({
+    home: options.home,
+    store,
+    themes,
+    deviceId,
+    peers: options.transfer?.peers ?? emptyPeerDirectory(),
+    authenticate: options.transfer?.authenticate ?? loopbackAuth,
+    syncNow: options.transfer?.syncNow ?? noopSyncNow,
+    dispatch: (command) => dispatchCommand(command),
+    newId: ctx.newId,
+    now: ctx.now,
+    hasProvider: (kind) => knownProviders.has(kind),
+    broadcastSync: (message) => broadcastSync(message),
+  });
   const runner = createEffectRunner({
     store,
     providers,
@@ -111,6 +139,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     deviceSettings: () => themes.getSettings(),
     limits,
     now: ctx.now,
+    runClaimThread: (effect) => transfer.runClaimThread(effect),
+    recoverClaims: () => transfer.recoverClaims(),
   });
   const dispatcher = createDispatcher({
     store,
@@ -118,10 +148,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     ctx,
     deviceSettings: () => themes.getSettings(),
   });
-  dispatchCommand = (command) => {
-    dispatcher.dispatch(command);
-  };
+  dispatchCommand = (command) => dispatcher.dispatch(command);
   runner.recover();
+  transfer.replicas.start();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
   const agentTokens = createAgentTokenService();
   const fleet = createFleetService({ store, dispatcher, git, tokens: agentTokens });
@@ -135,7 +164,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     enabled: () => themes.getSettings().importLocalHistory,
   });
 
-  const http = createServer(createHttpHandler(options.webDist ?? null));
+  const staticHandler = createHttpHandler(options.webDist ?? null);
+  const transferHttp = createTransferHttpHandler({
+    authenticate: options.transfer?.authenticate ?? loopbackAuth,
+    replicas: transfer.replicas,
+    themes,
+    deviceId,
+    settings: () => themes.getSettings(),
+    now: ctx.now,
+  });
+  const http = createServer((req, res) => {
+    if (transferHttp(req, res)) return;
+    staticHandler(req, res);
+  });
   const closeSockets = attachWebSocket(
     http,
     {
@@ -151,11 +192,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ship,
       scratch,
       attachments: createAttachmentStore(options.home),
+      transfer,
     },
     new Set(options.allowedHosts ?? []),
     {
       allowRemotePicker: options.allowRemotePicker === true,
       ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
+      onSyncBroadcast: (send) => {
+        broadcastSync = send;
+      },
     },
   );
   try {
@@ -202,6 +247,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         http.closeAllConnections();
         await stopped;
         await history.close();
+        transfer.replicas.stop();
         store.close();
       })();
       return closing;
