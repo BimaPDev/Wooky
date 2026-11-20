@@ -6,9 +6,20 @@
  * spawns; sync/ code never spawns anything itself.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { lstat, mkdir, readdir, realpath, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, constants as fsConstants } from "node:fs";
+import {
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { devNull } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
@@ -183,7 +194,14 @@ async function retryBusy<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export function createShadowGit(options: { gitBin?: string } = {}) {
+export function createShadowGit(
+  options: {
+    gitBin?: string;
+    /** Test seam: runs after the temporary file is written and before the final checks. */
+    beforeCommit?: (finalPath: string) => Promise<void>;
+  } = {},
+) {
+  const beforeCommit = options.beforeCommit;
   const gitBin = options.gitBin ?? "git";
 
   function environment(repo: ShadowRepo | null, extra?: Record<string, string>) {
@@ -713,30 +731,104 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     return { written: writes.map((c) => c.path), deleted: removals.map((c) => c.path), skipped };
   }
 
+  /** Lowercased on Windows, where paths compare without case. */
+  const foldCase = (path: string) => (process.platform === "win32" ? path.toLowerCase() : path);
+
+  /**
+   * Walks `relative` under the work tree one component at a time with lstat. Every existing
+   * directory component must be a real directory (no symlink, junction or file). With `create`,
+   * missing directories are made one level at a time, so nothing is ever created through a link.
+   * Returns the verified parent directory, or null when the path is unsafe.
+   */
+  async function verifiedParent(
+    repo: ShadowRepo,
+    relative: string,
+    create: boolean,
+  ): Promise<string | null> {
+    let root: string;
+    try {
+      root = await realpath(repo.workTree);
+    } catch {
+      return null;
+    }
+    const dirs = relative.split("/").slice(0, -1);
+    let current = root;
+    for (const part of dirs) {
+      current = join(current, part);
+      let info = await lstat(current).catch(() => null);
+      if (info === null) {
+        if (!create) return null;
+        try {
+          await mkdir(current);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        }
+        info = await lstat(current).catch(() => null);
+      }
+      if (info === null || info.isSymbolicLink() || !info.isDirectory()) return null;
+    }
+    const real = await realpath(current).catch(() => null);
+    if (real === null) return null;
+    // Catches what lstat cannot see, such as a reparse point that is not a symlink.
+    if (foldCase(real) !== foldCase(current)) return null;
+    if (real !== root && !real.startsWith(root + sep)) return null;
+    return current;
+  }
+
   /**
    * Writes one file the engine builds itself (a `.theirs` copy). Same rules as an apply: a
-   * path that is on disk but not in `mineTree` is left alone. Returns false when skipped.
+   * path that is on disk but not in `mineTree` is left alone. Nothing is ever written through
+   * a link: every component under the work tree is checked with lstat before anything is
+   * created, a final symlink or non-regular file is refused, and the bytes go to a temporary
+   * file in the verified folder that is renamed into place (rename replaces a link, it never
+   * follows it). The folder is checked again right before the rename.
    */
   async function writeWorkFile(
     repo: ShadowRepo,
     relative: string,
     data: Buffer,
     mineTree: string,
-  ): Promise<boolean> {
-    if (safeRelativePath(relative) === null) return false;
-    if (await existsOnDisk(repo, relative)) {
-      const known = (await blobSizes(repo, mineTree, [relative])).get(relative);
-      if (known === null || known === undefined) return false;
-    }
+  ): Promise<"written" | "not-in-snapshot" | "unsafe"> {
+    if (safeRelativePath(relative) === null) return "unsafe";
     const absolute = join(repo.workTree, relative);
-    await mkdir(dirname(absolute), { recursive: true });
-    const root = await realpath(repo.workTree);
-    const parent = await realpath(dirname(absolute));
-    if (parent !== root && !parent.startsWith(root + sep)) return false;
-    const target = process.platform === "win32" ? `\\\\?\\${resolve(absolute)}` : absolute;
-    await retryBusy(() => writeFile(target, data));
-    await dropIndex(repo);
-    return true;
+    const existing = await lstat(absolute).catch(() => null);
+    if (existing !== null) {
+      if (!existing.isFile()) return "unsafe";
+      const known = (await blobSizes(repo, mineTree, [relative])).get(relative);
+      if (known === null || known === undefined) return "not-in-snapshot";
+    }
+    const parent = await verifiedParent(repo, relative, true);
+    if (parent === null) return "unsafe";
+    const name = relative.slice(relative.lastIndexOf("/") + 1);
+    const final = join(parent, name);
+    const temp = join(parent, `.wooky-${randomBytes(8).toString("hex")}.tmp`);
+    const long = (path: string) =>
+      process.platform === "win32" ? `\\\\?\\${resolve(path)}` : path;
+    // O_EXCL refuses an existing path, links included; O_NOFOLLOW is the second guard.
+    const flags =
+      fsConstants.O_WRONLY |
+      fsConstants.O_CREAT |
+      fsConstants.O_EXCL |
+      (fsConstants.O_NOFOLLOW ?? 0);
+    const mode = existing !== null ? existing.mode & 0o777 : 0o666;
+    try {
+      const handle = await open(long(temp), flags, mode);
+      try {
+        await handle.writeFile(data);
+      } finally {
+        await handle.close();
+      }
+      await beforeCommit?.(final);
+      const again = await verifiedParent(repo, relative, false);
+      if (again !== parent) return "unsafe";
+      const last = await lstat(final).catch(() => null);
+      if (last !== null && !last.isFile()) return "unsafe";
+      await retryBusy(() => rename(long(temp), long(final)));
+      await dropIndex(repo);
+      return "written";
+    } finally {
+      await rm(long(temp), { force: true }).catch(() => {});
+    }
   }
 
   /** Keeps a commit alive through gc (and a crash) with a ref of its own. */
@@ -771,6 +863,15 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
   async function blobAt(repo: ShadowRepo, from: string, path: string): Promise<Buffer | null> {
     const res = await run(repo, ["cat-file", "blob", `${from}:${path}`], { allowFail: true });
     return res.code === 0 ? res.stdout : null;
+  }
+
+  /** The mode of one entry in a tree, or null when it is absent. */
+  async function modeAt(repo: ShadowRepo, from: string, path: string): Promise<string | null> {
+    const res = await run(repo, ["ls-tree", "-z", from, "--", path], { allowFail: true });
+    if (res.code !== 0) return null;
+    const entry = res.text.split("\0")[0] ?? "";
+    const mode = /^(\d+) /.exec(entry)?.[1];
+    return entry.endsWith(`\t${path}`) && mode ? mode : null;
   }
 
   /** `git merge-tree --write-tree` (Git 2.40+ for --merge-base). Conflicts are not applied anywhere. */
@@ -938,6 +1039,7 @@ export function createShadowGit(options: { gitBin?: string } = {}) {
     diff,
     applyChanges,
     writeWorkFile,
+    modeAt,
     blobSizes,
     holdRef,
     heldShas,

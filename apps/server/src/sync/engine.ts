@@ -729,12 +729,24 @@ export function createSyncEngine(deps: SyncDeps) {
           for (const path of clashing) {
             const safe = safeRelativePath(path);
             if (safe === null) continue;
-            const blob = await git.blobAt(repo, conflict.theirs, safe);
-            if (!blob) continue;
             const ext = extname(safe);
             const copy = `${safe.slice(0, safe.length - ext.length)}.theirs${ext}`;
-            if (!(await git.writeWorkFile(repo, copy, blob, mine))) {
+            const mode = await git.modeAt(repo, conflict.theirs, safe);
+            if (mode === null) continue;
+            if (mode !== "100644" && mode !== "100755") {
+              notice(
+                project.id,
+                `Skipped ${copy}: ${safe} is a link or special file on the other device.`,
+              );
+              continue;
+            }
+            const blob = await git.blobAt(repo, conflict.theirs, safe);
+            if (!blob) continue;
+            const written = await git.writeWorkFile(repo, copy, blob, mine);
+            if (written === "not-in-snapshot") {
               notice(project.id, `Kept your local ${copy}: it is not in a snapshot.`);
+            } else if (written === "unsafe") {
+              notice(project.id, `Skipped ${copy}: a link or special file is in the way.`);
             }
           }
         }
