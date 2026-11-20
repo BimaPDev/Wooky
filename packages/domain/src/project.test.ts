@@ -22,7 +22,7 @@ function seed(): AgeEvent[] {
         name: "demo",
         root: "/tmp/demo",
         createdAt: at,
-        settings: { scripts: [] },
+        settings: { scripts: [], sharedPaths: [], prompts: [] },
       },
     }),
     ev({
@@ -696,7 +696,7 @@ describe("effort and scratch", () => {
           root: "/wooky/scratch",
           createdAt: at,
           scratch: true,
-          settings: { scripts: [] },
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
         },
       }),
     ]);

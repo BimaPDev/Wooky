@@ -168,7 +168,7 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
     case "review.send":
       return wrapFleet(command, decideReviewSend(model, command, ctx));
     case "project.configure":
-      throw new Error("not implemented");
+      return configureProject(model, command);
     case "thread.release":
       throw new Error("not implemented");
     case "thread.import":
@@ -225,10 +225,18 @@ function addProject(
         name,
         root,
         createdAt: ctx.now(),
-        settings: { scripts: [] },
+        settings: { scripts: [], sharedPaths: [], prompts: [] },
         ...(command.scratch ? { scratch: true } : {}),
       },
     },
+  ]);
+}
+
+function configureProject(model: ReadModel, command: CommandOf<"project.configure">): Decision {
+  const project = model.projects[command.projectId];
+  if (!project) return notFound("project", command.projectId);
+  return accept(command, [
+    { type: "project.configured", projectId: project.id, settings: command.settings },
   ]);
 }
 

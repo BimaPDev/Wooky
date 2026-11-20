@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
@@ -307,6 +307,14 @@ describe("transport", () => {
     const local = new WebSocket(url, { origin: "http://localhost:5173" });
     sockets.push(local);
     await new Promise((resolve, reject) => local.once("open", resolve).once("error", reject));
+  });
+
+  it("documents the trust model for paired devices", async () => {
+    const doc = await readFile(new URL("../../../../docs/anywhere.md", import.meta.url), "utf8");
+    expect(doc).toMatch(/^## Trust model$/m);
+    expect(doc.replace(/\s+/g, " ")).toContain(
+      "Project settings (scripts, worktree setup, shared files) are editable from paired devices, like running commands in the terminal.",
+    );
   });
 
   it("decides origins by host", () => {

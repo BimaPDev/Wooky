@@ -414,8 +414,19 @@ export const RpcMethods = {
     result: z.object({ ok: z.literal(true) }),
   },
   "scripts.run": {
-    params: z.object({ projectId: Id, scriptId: Id, threadId: Id.optional() }),
+    params: z.object({
+      projectId: Id,
+      scriptId: Id,
+      threadId: Id.optional(),
+      /** Close a live session for this script and start a fresh one. */
+      restart: z.boolean().optional(),
+    }),
     result: TerminalInfo,
+  },
+  /** Gitignored top-level entries in the project root, for the shared-files picker. */
+  "scripts.suggestSharedPaths": {
+    params: z.object({ projectId: Id }),
+    result: z.array(z.string()),
   },
   "git.status": {
     params: z.object({ threadId: Id }),

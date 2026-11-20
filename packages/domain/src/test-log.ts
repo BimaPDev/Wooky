@@ -31,7 +31,7 @@ export function testLog() {
           name: id,
           root,
           createdAt: "2026-01-01T00:00:00.000Z",
-          settings: { scripts: [] },
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
         },
       });
     },

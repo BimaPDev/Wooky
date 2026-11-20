@@ -25,6 +25,7 @@ import { createAttachmentStore } from "./attachments.ts";
 import { createScratchService } from "./scratch.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
+import { setupWorktree, unwatchHeldNotices } from "./scripts/worktree-setup.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
 import { createRemoteRuntime, type RemoteRuntime } from "./remote/runtime.ts";
@@ -130,7 +131,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
+  const closeStore = () => {
+    unwatchHeldNotices();
+    store.close();
+  };
   const git = options.git ?? createGitService();
+  const terminals = createTerminalManager();
   let dispatchCommand: (command: Command) => void = () => {};
   const runner = createEffectRunner({
     store,
@@ -141,6 +147,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     deviceSettings: () => themes.getSettings(),
     limits,
     now: ctx.now,
+    onWorktreeCreated: (input) =>
+      setupWorktree({
+        ...input,
+        store,
+        terminals,
+        newId: ctx.newId,
+      }),
   });
   const dispatcher = createDispatcher({
     store,
@@ -158,7 +171,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const ship = createShipService({ store, git, gh: options.gh ?? createGhClient() });
   const stopShipPolling = ship.startPolling();
   const scratch = createScratchService({ home: options.home, store, dispatcher });
-  const terminals = createTerminalManager();
   const history = createHistoryService({
     home: options.home,
     userHome: options.userHome ?? homedir(),
@@ -208,7 +220,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     sockets.close();
     remote.closeTunnels();
     await remote.closeServers();
-    store.close();
+    closeStore();
     throw error;
   }
 
@@ -241,7 +253,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         for (const http of httpServers) http.closeAllConnections();
         await stopped;
         await history.close();
-        store.close();
+        closeStore();
       })();
       return closing;
     },

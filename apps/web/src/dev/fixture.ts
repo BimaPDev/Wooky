@@ -142,14 +142,14 @@ export const fixtureModel: ReadModel = {
       name: "orders-api",
       root: "/Users/demo/code/orders-api",
       createdAt: ago(900),
-      settings: { scripts: [] },
+      settings: { scripts: [], sharedPaths: [], prompts: [] },
     },
     p2: {
       id: "p2",
       name: "marketing-site",
       root: "/Users/demo/code/site",
       createdAt: ago(800),
-      settings: { scripts: [] },
+      settings: { scripts: [], sharedPaths: [], prompts: [] },
     },
   },
   threads: {
@@ -1457,7 +1457,7 @@ function respond(method: RpcMethod, params: unknown): unknown {
             root: "/Users/demo/.wooky/scratch",
             createdAt: new Date().toISOString(),
             scratch: true,
-            settings: { scripts: [] },
+            settings: { scripts: [], sharedPaths: [], prompts: [] },
           },
         },
       ]);

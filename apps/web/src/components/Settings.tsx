@@ -695,6 +695,17 @@ function ProjectsPage() {
             <li key={project.id}>
               <strong>{project.name}</strong>
               <span className="mono muted">{project.root}</span>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() =>
+                  useStore.setState({
+                    dialog: { kind: "projectSettings", projectId: project.id },
+                  })
+                }
+              >
+                Scripts and shared files
+              </button>
             </li>
           ))}
         </ul>
