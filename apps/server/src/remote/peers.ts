@@ -166,7 +166,11 @@ export function createPeers(options: {
         signal: AbortSignal.timeout(options.joinTimeoutMs ?? JOIN_TIMEOUT_MS),
       });
       if (response.status >= 300 && response.status < 400) {
-        throw new ServiceError("bad_request", "The remote redirected the pairing request.");
+        const location = response.headers.get("location");
+        throw new ServiceError(
+          "bad_request",
+          `The remote redirected the pairing request${location ? ` to ${location}` : ""}.`,
+        );
       }
       const text = await response.text();
       if (!response.ok) {

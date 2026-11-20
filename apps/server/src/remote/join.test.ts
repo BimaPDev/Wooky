@@ -155,10 +155,9 @@ describe("remote join hardening", () => {
       followed += 1;
       res.end("{}");
     });
+    const location = `http://127.0.0.1:${(target.address() as AddressInfo).port}/pair`;
     const redirector = await listen((_req, res) => {
-      res.writeHead(307, {
-        location: `http://127.0.0.1:${(target.address() as AddressInfo).port}/pair`,
-      });
+      res.writeHead(307, { location });
       res.end();
     });
     const peers = await peersFor(await tempDir("join-redirect"));
@@ -170,7 +169,10 @@ describe("remote join hardening", () => {
         },
         code: "23456789",
       }),
-    ).rejects.toMatchObject({ code: "bad_request", message: expect.stringMatching(/redirect/) });
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message: expect.stringContaining(location),
+    });
     expect(followed).toBe(0);
   });
 
