@@ -936,7 +936,11 @@ button.chip:active {
 
 .sidebar-section-toggle > span:first-child {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-section-toggle:hover {
