@@ -1335,8 +1335,20 @@ select,
   background: var(--bg-1);
 }
 
+.field textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  line-height: var(--leading);
+  resize: vertical;
+}
+
 select:hover,
-.field input:hover {
+.field input:hover,
+.field textarea:hover {
   border-color: var(--text-4);
 }
 

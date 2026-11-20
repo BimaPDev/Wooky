@@ -224,7 +224,19 @@ export function confirm(dialog: Omit<Extract<Dialog, { kind: "confirm" }>, "kind
   openDialog({ kind: "confirm", ...dialog });
 }
 
-export const addProject = (root: string) => dispatch({ type: "project.add", root });
+export const addProject = async (root: string) => {
+  const before = new Set(Object.keys(useStore.getState().model.projects));
+  const ack = await dispatch({ type: "project.add", root });
+  // The draft "New thread" screen starts in the project that was just added.
+  const state = useStore.getState();
+  if (ack && state.selectedThreadId === null) {
+    const added = Object.values(state.model.projects).find(
+      (project) => !before.has(project.id) && project.scratch !== true,
+    );
+    if (added) patchNewThread({ projectId: added.id });
+  }
+  return ack;
+};
 
 function desktopFolderPicker(): (() => Promise<string | null>) | null {
   const pick = globalThis.window?.wooky?.pickFolder;
