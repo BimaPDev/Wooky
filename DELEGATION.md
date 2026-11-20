@@ -39,6 +39,7 @@ agents on different models and harnesses). The method:
 | 14   | Workspace file search (Station 3)        | Sonnet 5.5                                           | Grok 4.7 (Cursor)                    | merged, no findings                                             | real-git tests                     |
 | 15   | P0 web UI (Station 4)                    | Composer 2.5 (Cursor)                                | Grok 4.7 (Cursor)                    | merged after 3 review rounds                                    | fixture screenshots                |
 | 16   | Anywhere W1: Windows tree-kill + CI      | Composer 2.5 (Cursor)                                | Gemini 4 Hydrogen (Antigravity)      | merged after 2 review rounds, 11 findings applied               | `pnpm check`; Windows CI not run   |
+| 17   | Anywhere S0: contracts, domain, spec     | Grok 4.7 (Cursor)                                    | Composer 2.5 (Cursor)                | merged, 9 review fixes applied                                  | `pnpm check`, 1391 tests           |
 
 Open items: the 19 server tests that fail on Windows (CRLF, path separators, POSIX
 signals) are unverified, because nobody has run them on Windows yet. A thrown effect is
