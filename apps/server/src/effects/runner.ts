@@ -59,6 +59,8 @@ interface RunnerDeps {
   deviceSettings?: () => DeviceSettings;
   limits?: LimitsService;
   now?: () => string;
+  runClaimThread?: (effect: Extract<Effect, { kind: "claimThread" }>) => Promise<void>;
+  recoverClaims?: () => void;
 }
 
 type Decision = "allow" | "deny";
@@ -71,6 +73,7 @@ const RECOVERABLE: ReadonlySet<Effect["kind"]> = new Set([
   "worktree.remove",
   "session.rewind",
   "thread.merge",
+  "claimThread",
 ]);
 
 /**
@@ -89,6 +92,8 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     deviceSettings,
     limits,
     now = () => new Date().toISOString(),
+    runClaimThread,
+    recoverClaims,
   } = deps;
   const tails = new Map<string, Promise<void>>();
   const inflight = new Set<Promise<void>>();
@@ -171,6 +176,9 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         return rewindSession(effect);
       case "thread.merge":
         return runMerge(effect);
+      case "claimThread":
+        if (!runClaimThread) throw new Error("claimThread handler not configured");
+        return runClaimThread(effect);
     }
   }
 
@@ -846,6 +854,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         else store.markEffect(effect.id, "retired");
       }
       enqueue(rerun);
+      recoverClaims?.();
       const busyRewind = new Set(
         store
           .pendingEffects()

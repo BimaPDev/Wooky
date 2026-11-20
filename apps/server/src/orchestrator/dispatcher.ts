@@ -39,7 +39,7 @@ export function createDispatcher(deps: {
       const settings = deps.deviceSettings?.();
       const decision = decide(store.model, command, {
         ...ctx,
-        ...(settings ? { failoverSettings: settings.failover } : {}),
+        ...(settings ? { failoverSettings: settings.failover, deviceSettings: settings } : {}),
       });
       if (!decision.ok) throw new ServiceError(decision.code, decision.message);
       const committed = store.commit({
