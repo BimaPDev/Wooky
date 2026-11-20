@@ -8,6 +8,8 @@ import { importTheme, MAX_THEME_IMPORT_TEXT } from "./theme-import.ts";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const orbitFixture = readFileSync(join(fixtureDir, "orbit-t3code.json"), "utf8");
+// Trimmed from Koi Pond by Dwite (t3-themes); the CSS is kept verbatim.
+const koiFixture = readFileSync(join(fixtureDir, "koi-pond-t3code.json"), "utf8");
 
 const safeSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#333"/></svg>`;
 
@@ -31,6 +33,36 @@ describe("importTheme", () => {
     expect(theme.variants?.light?.colors.text).toBe("#11151c");
     expect(theme.css).toBe(".safe { color: var(--text); }");
     AppearanceTheme.parse(theme);
+  });
+
+  it("imports Koi Pond with its CSS intact", () => {
+    const raw = JSON.parse(koiFixture) as Record<string, unknown>;
+    const { format, theme } = importTheme(koiFixture, "koi-pond.json");
+    expect(format).toBe("t3code");
+    expect(theme.id).toBe("koi-pond");
+    expect(theme.css).toBe(raw.css);
+    expect(theme.css).toContain('url("data:image/svg+xml,');
+    const rawVariants = raw.variants as { light?: { canvas?: string } } | undefined;
+    expect(theme.variants?.light?.canvas).toBe(rawVariants?.light?.canvas);
+    AppearanceTheme.parse(theme);
+  });
+
+  it("reports RTF uploads with a plain-text instruction", () => {
+    const rtf = "{\\rtf1\\ansi\\ansicpg1252\\cocoartf2868\\pard hello}";
+    expect(() => importTheme(rtf)).toThrow(/rich text \(RTF\), not JSON/);
+    expect(() => importTheme(rtf)).toThrow(/Format → Make Plain Text/);
+  });
+
+  it("names the failing field when a t3code theme is invalid", () => {
+    const raw = JSON.parse(orbitFixture) as Record<string, unknown>;
+    const colors = raw.colors as Record<string, unknown>;
+    colors.canvas = "not-a-colour";
+    expect(() => importTheme(JSON.stringify(raw))).toThrow(
+      /Invalid t3 theme field "colors.canvas"/,
+    );
+    colors.canvas = "#070b14";
+    raw.appearance = "blue";
+    expect(() => importTheme(JSON.stringify(raw))).toThrow(/Invalid t3 theme field "appearance"/);
   });
 
   it("rejects unsafe CSS in t3code imports", () => {

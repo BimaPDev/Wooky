@@ -280,6 +280,7 @@ export function ComposerForm({
       {queue}
       <form
         className="composer"
+        data-chat-composer-form=""
         onSubmit={(event) => {
           event.preventDefault();
           if (running) onStop?.();
