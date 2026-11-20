@@ -148,6 +148,8 @@ describe("claim helpers", () => {
   it("reads a busy refusal", () => {
     expect(isBusyReason("The agent on Work Mac is busy")).toBe(true);
     expect(isBusyReason("A turn is running")).toBe(true);
+    // The server's own wording when the owner has a turn in flight (transfer/claim.ts).
+    expect(isBusyReason("The owner is still working on that thread.")).toBe(true);
     expect(isBusyReason("A turn is already running on this thread.")).toBe(true);
     expect(isBusyReason("worker is running out of disk")).toBe(false);
     expect(isBusyReason("Network error")).toBe(false);

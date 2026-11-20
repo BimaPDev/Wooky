@@ -7,7 +7,7 @@ import { useState } from "react";
 import { loadDeviceSettings } from "../../../state/appearance.ts";
 import { backend } from "../../../state/backend.ts";
 import { useStore } from "../../../state/store.ts";
-import { directPublicHttpWarning } from "../format.ts";
+import { directPublicHttpWarning, splitPairingLink } from "../format.ts";
 
 type Kind = Connection["kind"];
 
@@ -162,7 +162,12 @@ export function AddMachineForm({
             spellCheck={false}
             autoComplete="off"
             aria-label={kind === "direct" ? "Direct URL" : "Custom URL"}
-            onChange={(event) => setUrl(event.target.value)}
+            onChange={(event) => {
+              // A pasted pairing link carries the one-time code: keep it out of the stored URL.
+              const link = splitPairingLink(event.target.value);
+              setUrl(link.url);
+              if (link.code) setCode(link.code);
+            }}
           />
         </label>
       ) : null}
