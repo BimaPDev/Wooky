@@ -98,40 +98,92 @@ export function formatSetupNotice(
  * Setup runs when the worktree is bound, which is before the thread has any turn. A notice with
  * no turn has nowhere to live, so it waits for the thread's first turn.
  */
-const heldNotices = new Map<string, string[]>();
+const MAX_HELD_SETUP_NOTICES = 200;
 
-function setupNoticeEvent(input: WorktreeSetupInput, turnId: string, text: string): PendingEvent {
+interface HeldSetupNotice {
+  text: string;
+  newId: (prefix: string) => string;
+}
+
+const heldNotices = new Map<string, HeldSetupNotice[]>();
+let watching: { store: EventStore; unsubscribe: () => void } | null = null;
+
+function setupNoticeEvent(
+  threadId: string,
+  turnId: string,
+  text: string,
+  newId: (prefix: string) => string,
+): PendingEvent {
   return {
     type: "turn.itemUpserted",
     commandId: null,
-    threadId: input.threadId,
+    threadId,
     turnId,
-    item: { kind: "notice", id: input.newId("notice"), text },
+    item: { kind: "notice", id: newId("notice"), text },
   };
+}
+
+/**
+ * One subscription for the whole server, never one per thread: every held notice waits on the
+ * same two events, and closing the store drops the lot.
+ */
+function watchHeldNotices(store: EventStore): void {
+  if (watching?.store === store) return;
+  unwatchHeldNotices();
+  const unsubscribe = store.subscribe((events) => {
+    const flushed: { threadId: string; turnId: string; pending: HeldSetupNotice[] }[] = [];
+    for (const event of events) {
+      if (event.type === "turn.started") {
+        const pending = heldNotices.get(event.threadId);
+        if (pending) {
+          heldNotices.delete(event.threadId);
+          flushed.push({ threadId: event.threadId, turnId: event.turnId, pending });
+        }
+      } else if (event.type === "thread.removed") {
+        heldNotices.delete(event.threadId);
+      }
+    }
+    if (flushed.length === 0) return;
+    store.appendInternal(
+      flushed.flatMap((entry) =>
+        entry.pending.map(({ text, newId }) =>
+          setupNoticeEvent(entry.threadId, entry.turnId, text, newId),
+        ),
+      ),
+    );
+  });
+  watching = { store, unsubscribe };
+}
+
+/** The server calls this when it closes the store. */
+export function unwatchHeldNotices(): void {
+  watching?.unsubscribe();
+  watching = null;
+  heldNotices.clear();
+}
+
+function holdSetupNotice(input: WorktreeSetupInput, text: string): void {
+  watchHeldNotices(input.store);
+  const existing = heldNotices.get(input.threadId);
+  if (existing) {
+    existing.push({ text, newId: input.newId });
+    return;
+  }
+  // A thread that has never had a turn is the cheapest to forget, so it goes first.
+  while (heldNotices.size >= MAX_HELD_SETUP_NOTICES) {
+    const oldest = heldNotices.keys().next();
+    if (oldest.done) break;
+    heldNotices.delete(oldest.value);
+  }
+  heldNotices.set(input.threadId, [{ text, newId: input.newId }]);
 }
 
 function recordSetupNotice(input: WorktreeSetupInput, text: string) {
   const turns = input.store.model.turns[input.threadId] ?? [];
   const turn = turns.find((item) => item.status === "running") ?? turns.at(-1);
   if (turn) {
-    input.store.appendInternal([setupNoticeEvent(input, turn.id, text)]);
+    input.store.appendInternal([setupNoticeEvent(input.threadId, turn.id, text, input.newId)]);
     return;
   }
-  const held = heldNotices.get(input.threadId) ?? [];
-  held.push(text);
-  heldNotices.set(input.threadId, held);
-  const unsubscribe = input.store.subscribe((events) => {
-    const started = events.find(
-      (event) => event.type === "turn.started" && event.threadId === input.threadId,
-    );
-    if (!started || started.type !== "turn.started") return;
-    unsubscribe();
-    const pending = heldNotices.get(input.threadId) ?? [];
-    heldNotices.delete(input.threadId);
-    if (pending.length > 0) {
-      input.store.appendInternal(
-        pending.map((heldText) => setupNoticeEvent(input, started.turnId, heldText)),
-      );
-    }
-  });
+  holdSetupNotice(input, text);
 }

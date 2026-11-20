@@ -1,4 +1,5 @@
-import { lstat, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -9,13 +10,17 @@ import {
   type AgeEvent,
   type AgeEventOf,
   type AgeEventType,
+  type PendingEvent,
   type TerminalInfo,
 } from "@wooky/contracts";
+import { emptyReadModel } from "@wooky/domain";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer } from "../server.ts";
 import { cleanupTestRepos, makeRepo } from "../git/test-repo.ts";
+import type { EventStore } from "../store/event-store.ts";
+import type { TerminalManager } from "../terminal/session.ts";
 import { tempDir } from "../testing.ts";
-import { formatSetupNotice } from "./worktree-setup.ts";
+import { formatSetupNotice, setupWorktree, unwatchHeldNotices } from "./worktree-setup.ts";
 
 const posix = process.platform !== "win32";
 const cleanup: (() => Promise<unknown> | void)[] = [];
@@ -91,6 +96,120 @@ async function connect(server: RunningServer) {
     },
   };
 }
+
+describe("held setup notices", () => {
+  function harness() {
+    const listeners = new Set<(events: readonly AgeEvent[]) => void>();
+    const appended: PendingEvent[] = [];
+    const store: EventStore = {
+      get model() {
+        return emptyReadModel();
+      },
+      commit() {
+        throw new Error("not used");
+      },
+      appendInternal(events) {
+        appended.push(...events);
+        return [];
+      },
+      receipt() {
+        return null;
+      },
+      eventsAfter() {
+        return [];
+      },
+      markEffect() {},
+      pendingEffects() {
+        return [];
+      },
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      close() {
+        listeners.clear();
+      },
+    };
+    return {
+      store,
+      appended,
+      listenerCount: () => listeners.size,
+      fire(events: AgeEvent[]) {
+        for (const listener of [...listeners]) listener(events);
+      },
+    };
+  }
+
+  const started = (threadId: string, turnId: string): AgeEvent =>
+    ({
+      type: "turn.started",
+      threadId,
+      turnId,
+      prompt: "Say ok",
+      provider: "demo",
+      model: "demo",
+      checkpointBefore: null,
+      seq: 1,
+      at: "2026-01-01T00:00:00.000Z",
+    }) as unknown as AgeEvent;
+
+  const removed = (threadId: string): AgeEvent =>
+    ({
+      type: "thread.removed",
+      threadId,
+      seq: 2,
+      at: "2026-01-01T00:00:01.000Z",
+    }) as unknown as AgeEvent;
+
+  it("subscribes once, holds at most 200 threads, and forgets removed ones", async () => {
+    const held = harness();
+    const projectRoot = await mkdtemp(join(tmpdir(), "wooky-held-project-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "wooky-held-worktree-"));
+    cleanup.push(() => rm(projectRoot, { recursive: true, force: true }));
+    cleanup.push(() => rm(worktreePath, { recursive: true, force: true }));
+    const terminals = {
+      open: async () => {
+        throw new Error("no setup commands in this test");
+      },
+    } as unknown as TerminalManager;
+
+    for (let i = 0; i < 300; i += 1) {
+      await setupWorktree({
+        threadId: `thread-${i}`,
+        projectRoot,
+        worktree: { path: worktreePath, branch: "main" },
+        store: held.store,
+        terminals,
+        newId: (prefix) => `${prefix}-${i}`,
+      });
+    }
+    expect(held.listenerCount()).toBe(1);
+
+    // The oldest threads were evicted to make room for the newest.
+    held.fire([started("thread-0", "turn-0")]);
+    expect(held.appended).toHaveLength(0);
+
+    held.fire([started("thread-250", "turn-250")]);
+    expect(held.appended).toEqual([
+      expect.objectContaining({
+        type: "turn.itemUpserted",
+        threadId: "thread-250",
+        turnId: "turn-250",
+        item: { kind: "notice", id: "notice-250", text: "Setting up worktree" },
+      }),
+    ]);
+    expect(held.listenerCount()).toBe(1);
+
+    // A thread removed before its first turn takes its notice with it.
+    held.fire([removed("thread-251")]);
+    held.fire([started("thread-251", "turn-251")]);
+    expect(held.appended).toHaveLength(1);
+    expect(held.listenerCount()).toBe(1);
+
+    unwatchHeldNotices();
+    expect(held.listenerCount()).toBe(0);
+  });
+});
 
 describe("worktree setup hook", () => {
   it.skipIf(!posix)(

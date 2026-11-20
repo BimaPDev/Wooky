@@ -26,7 +26,7 @@ import { createAttachmentStore } from "./attachments.ts";
 import { createScratchService } from "./scratch.ts";
 import { createThemeStore } from "./settings/themes.ts";
 import { openEventStore } from "./store/event-store.ts";
-import { setupWorktree } from "./scripts/worktree-setup.ts";
+import { setupWorktree, unwatchHeldNotices } from "./scripts/worktree-setup.ts";
 import { createTerminalManager } from "./terminal/session.ts";
 import { publishServerPresence } from "./presence.ts";
 import { createHttpHandler } from "./transport/static.ts";
@@ -101,6 +101,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
+  const closeStore = () => {
+    unwatchHeldNotices();
+    store.close();
+  };
   const git = options.git ?? createGitService();
   const terminals = createTerminalManager();
   let dispatchCommand: (command: Command) => void = () => {};
@@ -175,7 +179,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     });
   } catch (error) {
-    store.close();
+    closeStore();
     throw error;
   }
   const { port } = http.address() as AddressInfo;
@@ -188,7 +192,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   } catch (error) {
     closeSockets();
     http.close();
-    store.close();
+    closeStore();
     throw error;
   }
 
@@ -210,7 +214,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         http.closeAllConnections();
         await stopped;
         await history.close();
-        store.close();
+        closeStore();
       })();
       return closing;
     },
