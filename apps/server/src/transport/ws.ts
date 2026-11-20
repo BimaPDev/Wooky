@@ -14,7 +14,7 @@ import {
 } from "@wooky/contracts";
 import { WebSocket, WebSocketServer } from "ws";
 import { ServiceError } from "../errors.ts";
-import { selectWebSocketProtocol } from "../remote/auth.ts";
+import { presentedToken, selectWebSocketProtocol } from "../remote/auth.ts";
 import type { RemoteRuntime } from "../remote/runtime.ts";
 import type { AttachmentStore } from "../attachments.ts";
 import type { Dispatcher } from "../orchestrator/dispatcher.ts";
@@ -321,7 +321,8 @@ export function attachWebSocket(
       socket.destroy();
       return;
     }
-    const tokenProvesIntent = auth.deviceId !== "local";
+    const cookieAuth = presentedToken(req).source === "cookie";
+    const tokenProvesIntent = auth.deviceId !== "local" && !cookieAuth;
     if (!tokenProvesIntent && !originAllowed(req.headers.origin, req.headers.host, allowedHosts)) {
       return refuse(socket, "403 Forbidden");
     }

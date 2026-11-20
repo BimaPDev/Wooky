@@ -361,6 +361,17 @@ describe("remote auth", () => {
     expect(server.servePort()).toBeNull();
   });
 
+  it("checks Origin for cookie-authenticated websocket upgrades", async () => {
+    const server = await boot();
+    const token = await pair(server);
+    await expect(
+      openRemote(server, {
+        headers: { cookie: `wooky_token=${token}` },
+        origin: "http://evil.example",
+      }),
+    ).rejects.toThrow("upgrade 403");
+  });
+
   it("closes the socket when the token is revoked and still checks Origin on loopback", async () => {
     const server = await boot();
     const token = await pair(server);
