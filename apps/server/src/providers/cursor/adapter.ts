@@ -329,16 +329,20 @@ async function* runCursorTurn(
     const pid = child.pid;
     if (!pid) return;
     const treeSignal: KillTreeSignal = signal === "SIGKILL" ? "SIGKILL" : "SIGTERM";
-    void killTree(pid, treeSignal);
+    void killTree(pid, treeSignal, { mode: "group" });
   };
 
   const killOnAbort = () => {
     aborted = true;
+    if (process.platform === "win32") {
+      killGroup("SIGKILL");
+      return;
+    }
     killGroup("SIGTERM");
     killTimer = setTimeout(() => {
       const pid = child.pid;
       if (!pid) return;
-      if (isTreeAlive(pid)) killGroup("SIGKILL");
+      if (isTreeAlive(pid, { platform: process.platform })) killGroup("SIGKILL");
     }, KILL_GRACE_MS);
   };
 

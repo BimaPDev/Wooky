@@ -18,11 +18,29 @@ const steps = [
       ]),
 ];
 
+function runCommand(cmd, args) {
+  if (cmd === "node") {
+    return spawnSync(process.execPath, args, { stdio: "inherit" });
+  }
+  if (cmd === "pnpm") {
+    const cli = process.env.npm_execpath;
+    if (!cli) {
+      console.error("pnpm steps require npm_execpath (run via `pnpm check`).");
+      return { status: 1 };
+    }
+    return spawnSync(process.execPath, [cli, ...args], {
+      stdio: "inherit",
+      env: process.env,
+    });
+  }
+  return spawnSync(cmd, args, { stdio: "inherit" });
+}
+
 const results = [];
 for (const [name, [cmd, ...args]] of steps) {
   const started = Date.now();
   process.stdout.write(`\n── ${name} ──\n`);
-  const run = spawnSync(cmd, args, { stdio: "inherit" });
+  const run = runCommand(cmd, args);
   results.push({ name, ok: run.status === 0, ms: Date.now() - started });
 }
 

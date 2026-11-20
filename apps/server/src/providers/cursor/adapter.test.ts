@@ -92,46 +92,43 @@ describe("createCursorAdapter e2e", () => {
     }
   }
 
-  it.skipIf(process.platform === "win32")(
-    "interrupts a hanging turn and kills the fake process group",
-    async () => {
-      const work = await mkdtemp(join(tmpdir(), "wooky-cursor-abort-"));
-      const pidFile = join(work, "pid");
-      const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
-      const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
-      process.env.WOOKY_FAKE_CURSOR_MODE = "hang";
-      process.env.WOOKY_FAKE_CURSOR_PID_FILE = pidFile;
+  it("interrupts a hanging turn and kills the fake process group", async () => {
+    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-abort-"));
+    const pidFile = join(work, "pid");
+    const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
+    const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+    process.env.WOOKY_FAKE_CURSOR_MODE = "hang";
+    process.env.WOOKY_FAKE_CURSOR_PID_FILE = pidFile;
 
-      const ac = new AbortController();
-      const adapter = createCursorAdapter({
-        cursorBin: process.execPath,
-        cursorArgsPrefix: [fakeBin],
-      });
+    const ac = new AbortController();
+    const adapter = createCursorAdapter({
+      cursorBin: process.execPath,
+      cursorArgsPrefix: [fakeBin],
+    });
 
-      const iter = adapter.runTurn(baseInput({ signal: ac.signal }));
-      const donePromise = (async () => {
-        const events = await collect(iter);
-        return events.filter((e) => e.type === "done").at(-1);
-      })();
+    const iter = adapter.runTurn(baseInput({ signal: ac.signal }));
+    const donePromise = (async () => {
+      const events = await collect(iter);
+      return events.filter((e) => e.type === "done").at(-1);
+    })();
 
-      const pid = await waitForPositivePid(pidFile);
-      expect(pid).toBeGreaterThan(0);
-      ac.abort();
+    const pid = await waitForPositivePid(pidFile);
+    expect(pid).toBeGreaterThan(0);
+    ac.abort();
 
-      const done = await donePromise;
-      expect(done?.status).toBe("interrupted");
-      expect(isTreeAlive(pid)).toBe(false);
+    const done = await donePromise;
+    expect(done?.status).toBe("interrupted");
+    expect(isTreeAlive(pid)).toBe(false);
 
-      try {
-        await rm(work, { recursive: true, force: true });
-      } finally {
-        if (prevMode === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
-        else process.env.WOOKY_FAKE_CURSOR_MODE = prevMode;
-        if (prevPid === undefined) delete process.env.WOOKY_FAKE_CURSOR_PID_FILE;
-        else process.env.WOOKY_FAKE_CURSOR_PID_FILE = prevPid;
-      }
-    },
-  ); // detached process groups are POSIX-only
+    try {
+      await rm(work, { recursive: true, force: true });
+    } finally {
+      if (prevMode === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
+      else process.env.WOOKY_FAKE_CURSOR_MODE = prevMode;
+      if (prevPid === undefined) delete process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+      else process.env.WOOKY_FAKE_CURSOR_PID_FILE = prevPid;
+    }
+  });
 
   it("returns interrupted without spawning when already aborted", async () => {
     const ac = new AbortController();

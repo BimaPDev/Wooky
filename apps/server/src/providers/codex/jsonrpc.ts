@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
-import { isTreeAlive, killTree, type KillTreeSignal } from "../../process/kill-tree.ts";
+import {
+  isTreeAlive,
+  killTree,
+  killTreeSync,
+  type KillTreeSignal,
+} from "../../process/kill-tree.ts";
 import { StringDecoder } from "node:string_decoder";
 import type { z } from "zod";
 import { type JsonRpcErrorPayload, type JsonRpcId, parseJsonRpcMessage } from "./protocol.ts";
@@ -10,6 +15,7 @@ const SIGKILL_GRACE_MS = 3_000;
 // can inherit them) before we destroy them so the close event still fires.
 const STDIO_CLOSE_GRACE_MS = 250;
 const GROUP_POLL_MS = 20;
+const WIN32_STDIO_KILL_MS = 500;
 // Polls allowed after SIGKILL before we stop waiting for an unreaped group member.
 const GROUP_POLL_ATTEMPTS = 100;
 
@@ -131,7 +137,7 @@ export class JsonRpcClient {
   // is detached, so nothing else would stop its group. Must stay synchronous.
   private readonly exitGuard = (): void => {
     if (this.groupGone || typeof this.pid !== "number") return;
-    void killTree(this.pid, "SIGKILL");
+    killTreeSync(this.pid, "SIGKILL", { mode: "group" });
   };
 
   constructor(options: JsonRpcClientOptions) {
@@ -399,11 +405,31 @@ export class JsonRpcClient {
       this.child.stdin.end();
     }
 
-    this.signalGroup("SIGTERM");
-    this.watchGroup();
+    if (process.platform === "win32") {
+      await this.win32TeardownKill();
+    } else {
+      this.signalGroup("SIGTERM");
+      this.watchGroup();
+    }
 
     const [info] = await Promise.all([this.closed, this.groupGonePromise]);
     return info;
+  }
+
+  private async win32TeardownKill(): Promise<void> {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        if (!this.processAlive) resolve();
+        else this.child.once("close", () => resolve());
+      }),
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(WIN32_STDIO_KILL_MS, this.stdioGraceMs)),
+      ),
+    ]);
+    this.signalGroup("SIGKILL");
+    while (this.refreshGroup()) {
+      await new Promise<void>((resolve) => setTimeout(resolve, GROUP_POLL_MS));
+    }
   }
 
   /** Whether anything in the app-server's process group is still running. */
@@ -416,6 +442,7 @@ export class JsonRpcClient {
     }
     if (process.platform === "win32") {
       if (this.processAlive) return true;
+      killTreeSync(pid, "SIGKILL", { mode: "group" });
       this.markGroupGone();
       return false;
     }
@@ -437,7 +464,7 @@ export class JsonRpcClient {
     const pid = this.pid;
     if (typeof pid !== "number" || !this.refreshGroup()) return;
     const treeSignal: KillTreeSignal = signal === "SIGKILL" ? "SIGKILL" : "SIGTERM";
-    void killTree(pid, treeSignal);
+    void killTree(pid, treeSignal, { mode: "group" });
   }
 
   // After SIGTERM, poll the group so teardown ends as soon as it is gone, and escalate

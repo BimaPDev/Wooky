@@ -1,16 +1,17 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 
-type SpawnFn = (
-  command: string,
-  args: readonly string[],
-  options: import("node:child_process").SpawnOptions,
-) => ChildProcess;
+type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
 
 export type KillTreeSignal = "SIGTERM" | "SIGKILL";
+export type KillTreeMode = "group" | "tree";
 
 export interface KillTreeOptions {
   platform?: NodeJS.Platform;
   spawn?: SpawnFn;
+  spawnSync?: typeof spawnSync;
+  mode?: KillTreeMode;
+  log?: (message: string) => void;
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
 }
 
 function isErrno(err: unknown, code: string): boolean {
@@ -22,9 +23,15 @@ function isErrno(err: unknown, code: string): boolean {
   );
 }
 
-function notFoundMessage(text: string): boolean {
-  const lower = text.toLowerCase();
-  return lower.includes("not found") || lower.includes("no running instance");
+function swallowKillError(err: unknown, log?: (message: string) => void): void {
+  if (isErrno(err, "ESRCH") || isErrno(err, "EPERM")) return;
+  log?.(`killTree: ${err instanceof Error ? err.message : String(err)}`);
+}
+
+export function win32TaskkillArgs(pid: number, signal: KillTreeSignal): string[] {
+  const args = ["/pid", String(pid), "/t"];
+  if (signal === "SIGKILL") args.push("/f");
+  return args;
 }
 
 /** Whether the process (POSIX: group; Windows: pid) appears to be running. */
@@ -40,45 +47,84 @@ export function isTreeAlive(pid: number, opts?: Pick<KillTreeOptions, "platform"
   }
 }
 
-/** Stop a spawned process and its descendants. Kill only a PID we own. */
+function posixKill(
+  pid: number,
+  signal: KillTreeSignal,
+  mode: KillTreeMode,
+  killFn: (pid: number, signal: NodeJS.Signals) => void,
+  log?: (message: string) => void,
+): void {
+  try {
+    killFn(-pid, signal);
+  } catch (err) {
+    if (mode === "group") {
+      swallowKillError(err, log);
+      return;
+    }
+    if (!isErrno(err, "ESRCH")) {
+      swallowKillError(err, log);
+      return;
+    }
+    try {
+      killFn(pid, signal);
+    } catch (inner) {
+      swallowKillError(inner, log);
+    }
+  }
+}
+
+/** Stop a spawned process and its descendants. Kill only a PID we own. Never rejects. */
 export async function killTree(
   pid: number,
   signal: KillTreeSignal,
   opts?: KillTreeOptions,
 ): Promise<void> {
   const platform = opts?.platform ?? process.platform;
-  if (platform === "win32") {
-    const spawnFn = opts?.spawn ?? spawn;
-    const args = ["/pid", String(pid), "/t"];
-    if (signal === "SIGKILL") args.push("/f");
-    // wooky-allow child-process: taskkill targets only the PID we spawned (and its tree).
-    await new Promise<void>((resolve) => {
-      const child: ChildProcess = spawnFn("taskkill", args, {
+  const log = opts?.log;
+  try {
+    if (platform === "win32") {
+      const spawnFn = opts?.spawn ?? spawn;
+      const args = win32TaskkillArgs(pid, signal);
+      // wooky-allow child-process: taskkill targets only the PID we spawned (and its tree).
+      await new Promise<void>((resolve) => {
+        const child = spawnFn("taskkill", args, {
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        child.once("error", () => resolve());
+        child.once("exit", () => resolve());
+      });
+      return;
+    }
+    const mode = opts?.mode ?? "tree";
+    const killFn = opts?.kill ?? process.kill.bind(process);
+    posixKill(pid, signal, mode, killFn, log);
+  } catch (err) {
+    swallowKillError(err, log);
+  }
+}
+
+/** Synchronous tree kill for process exit handlers. */
+export function killTreeSync(
+  pid: number,
+  signal: KillTreeSignal = "SIGKILL",
+  opts?: KillTreeOptions,
+): void {
+  const platform = opts?.platform ?? process.platform;
+  const log = opts?.log;
+  try {
+    if (platform === "win32") {
+      const sync = opts?.spawnSync ?? spawnSync;
+      sync("taskkill", win32TaskkillArgs(pid, signal), {
         stdio: "ignore",
         windowsHide: true,
       });
-      let stderr = "";
-      child.stderr?.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString("utf8");
-      });
-      const finish = () => resolve();
-      child.once("error", finish);
-      child.once("exit", (code) => {
-        if (code === 128 || code === 1 || notFoundMessage(stderr)) finish();
-        else finish();
-      });
-    });
-    return;
-  }
-
-  try {
-    process.kill(-pid, signal);
-  } catch (err) {
-    if (!isErrno(err, "ESRCH")) throw err;
-    try {
-      process.kill(pid, signal);
-    } catch (inner) {
-      if (!isErrno(inner, "ESRCH")) throw inner;
+      return;
     }
+    const mode = opts?.mode ?? "tree";
+    const killFn = opts?.kill ?? process.kill.bind(process);
+    posixKill(pid, signal, mode, killFn, log);
+  } catch (err) {
+    swallowKillError(err, log);
   }
 }

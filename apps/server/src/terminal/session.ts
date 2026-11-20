@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { killTree } from "../process/kill-tree.ts";
 import { randomUUID } from "node:crypto";
 import type { TerminalPush } from "@wooky/contracts";
+import { killTreeSync } from "../process/kill-tree.ts";
 import { ServiceError } from "../errors.ts";
 import { defaultCwd, resolveShellCommand, type ShellCommand } from "./shell.ts";
 
@@ -22,6 +22,57 @@ export interface TerminalManager {
   resize(sessionId: string, cols: number, rows: number): void;
   close(sessionId: string): void;
   closeAll(): void;
+}
+
+const TERMINAL_KILL_GRACE_MS = 1_500;
+const killEscalationTimers = new WeakMap<
+  ChildProcessWithoutNullStreams,
+  ReturnType<typeof setTimeout>
+>();
+
+function childStillRunning(child: ChildProcessWithoutNullStreams): boolean {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+function stopTree(child: ChildProcessWithoutNullStreams, sync = false) {
+  const pid = child.pid;
+
+  const clearEscalation = () => {
+    const timer = killEscalationTimers.get(child);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      killEscalationTimers.delete(child);
+    }
+  };
+  child.once("exit", clearEscalation);
+
+  if (process.platform === "win32") {
+    if (pid === undefined || !childStillRunning(child)) return;
+    killTreeSync(pid, "SIGKILL");
+    return;
+  }
+
+  if (!childStillRunning(child)) return;
+
+  const sendSignal = (signal: NodeJS.Signals) => {
+    if (!childStillRunning(child)) return;
+    try {
+      child.kill(signal);
+    } catch {
+      // already gone
+    }
+  };
+
+  sendSignal("SIGTERM");
+
+  if (sync) {
+    sendSignal("SIGKILL");
+    return;
+  }
+
+  const timer = setTimeout(() => sendSignal("SIGKILL"), TERMINAL_KILL_GRACE_MS);
+  timer.unref();
+  killEscalationTimers.set(child, timer);
 }
 
 /** Local interactive shells owned by the server. Kill only PIDs we spawned. */
@@ -109,31 +160,12 @@ export function createTerminalManager(): TerminalManager {
   }
 
   function closeAll() {
-    for (const id of [...sessions.keys()]) close(id);
+    const sync = process.platform === "win32";
+    for (const session of sessions.values()) {
+      sessions.delete(session.id);
+      stopTree(session.child, sync);
+    }
   }
 
   return { open, write, resize, close, closeAll };
-}
-
-const TERMINAL_KILL_GRACE_MS = 1_500;
-
-function stopTree(child: ChildProcessWithoutNullStreams) {
-  const pid = child.pid;
-  if (pid === undefined) return;
-  void killTree(pid, "SIGTERM").catch(() => {
-    try {
-      child.kill();
-    } catch {
-      // already gone
-    }
-  });
-  setTimeout(() => {
-    void killTree(pid, "SIGKILL").catch(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // already gone
-      }
-    });
-  }, TERMINAL_KILL_GRACE_MS).unref();
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // `pnpm dev`: the Wooky server on a free port (state in .wooky-dev), then the web dev server.
 // Each child leads its own process group, so shutdown reaches exactly what this script started.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -52,11 +52,13 @@ function groupAlive(pid) {
   }
 }
 
-function killTree(pid, signal) {
+function killTree(pid, signal, sync = false) {
   if (win32) {
     const args = ["/pid", String(pid), "/t"];
     if (signal === "SIGKILL") args.push("/f");
-    spawn("taskkill", args, { stdio: "ignore", windowsHide: true });
+    const opts = { stdio: "ignore", windowsHide: true };
+    if (sync) spawnSync("taskkill", args, opts);
+    else spawn("taskkill", args, opts);
     return;
   }
   try {
@@ -83,8 +85,10 @@ function shutdown(code, reason) {
     if (spawned.every((child) => !groupAlive(child.pid))) finish();
   }, 100);
   const forceKill = setTimeout(() => {
-    for (const child of spawned) {
-      if (groupAlive(child.pid)) killTree(child.pid, "SIGKILL");
+    for (const entry of spawned) {
+      if (entry.exited) continue;
+      if (win32) killTree(entry.pid, "SIGKILL", true);
+      else if (groupAlive(entry.pid)) killTree(entry.pid, "SIGKILL");
     }
     finish();
   }, KILL_AFTER_MS);
@@ -98,7 +102,7 @@ function start(name, args, env, onLine) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  const entry = { name, pid: child.pid };
+  const entry = { name, pid: child.pid, child, exited: false };
   children.push(entry);
 
   createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => {
@@ -111,6 +115,7 @@ function start(name, args, env, onLine) {
 
   child.on("error", (error) => shutdown(1, `${name} failed to start: ${error.message}`));
   child.on("exit", (code, signal) => {
+    entry.exited = true;
     if (shuttingDown) return;
     const clean = code === 0 && signal === null;
     shutdown(clean ? 0 : 1, `${name} exited (${code ?? signal}); stopping Wooky.`);
