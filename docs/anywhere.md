@@ -63,6 +63,12 @@ for `ssh`/`url` (the tunnel does the exposure).
 - Desktop clients keep tokens in Electron `safeStorage`. A server acting as a sync peer keeps them in
   WOOKY_HOME/peers.json, mode 0600 (on Windows, under the user profile ACL).
 
+## Trust model
+
+Project settings (scripts, worktree setup, shared files) are editable from paired devices, like
+running commands in the terminal. The pairing token is the trust boundary: revoking a device
+closes its sockets at once, so it can no longer read or change anything.
+
 ## Sync
 
 Per device, `SyncSettings`:
