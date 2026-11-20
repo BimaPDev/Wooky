@@ -17,8 +17,8 @@ export function QrCode({ text }: { text: string }) {
       aria-label="Pairing QR code"
       viewBox={`${-quiet} ${-quiet} ${view} ${view}`}
     >
-      <rect x={-quiet} y={-quiet} width={view} height={view} fill="var(--bg-0)" />
-      <path d={path.join("")} fill="var(--text)" />
+      <rect x={-quiet} y={-quiet} width={view} height={view} fill="var(--qr-bg)" />
+      <path d={path.join("")} fill="var(--qr-ink)" />
     </svg>
   );
 }

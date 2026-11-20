@@ -74,9 +74,15 @@ export function PairingCodeView({
 
   // sync: one-second clock for the pairing code expiry, only while this view is mounted
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    const id = window.setInterval(() => {
+      setNow(() => {
+        const next = Date.now();
+        if (next >= new Date(expiresAt).getTime()) window.clearInterval(id);
+        return next;
+      });
+    }, 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [expiresAt]);
 
   const copy = async () => {
     try {

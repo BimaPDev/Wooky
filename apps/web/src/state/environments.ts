@@ -14,6 +14,7 @@ import { remoteConnectInfo, type RemoteConnectInfoResult } from "../rpc/anywhere
 import type { ConnectionStatus } from "../rpc/client.ts";
 import { backend } from "./backend.ts";
 import { receiveSnapshot, useStore } from "./store.ts";
+import { loadDeviceSettings } from "./appearance.ts";
 
 export const LOCAL_ENVIRONMENT_ID = "local";
 
@@ -295,9 +296,11 @@ async function connectRemote(id: string, reset: boolean) {
   if (reset) await resetModel();
   if (useStore.getState().fixture) {
     if (!reset) await resetModel();
+    void loadDeviceSettings();
     return;
   }
   transport?.reconnect(info.wsUrl, info.token);
+  void loadDeviceSettings();
 }
 
 function localLabel() {
@@ -320,6 +323,7 @@ export async function switchEnvironment(id: string) {
     });
     await resetModel();
     if (!useStore.getState().fixture) transport?.reconnect(transport.localUrl(), null);
+    void loadDeviceSettings();
     syncEnvironmentsFromStore(useStore.getState().deviceSettings);
     return;
   }

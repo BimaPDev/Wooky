@@ -1,6 +1,5 @@
 import { PairRequest, PairResponse, PairingCodeText } from "@wooky/contracts";
 import { browserDeviceName, browserPlatform, pairDeviceId } from "./device.ts";
-import { savePairedToken } from "./token.ts";
 
 export type PairOutcome = { ok: true; hostName: string } | { ok: false; message: string };
 
@@ -35,12 +34,6 @@ export async function pairWithHost(
   if (!response.ok) return { ok: false, message: await failureMessage(response) };
   const parsed = PairResponse.safeParse(await response.json().catch(() => null));
   if (!parsed.success) return { ok: false, message: "The host sent an unexpected answer." };
-  if (!savePairedToken(parsed.data.token)) {
-    return {
-      ok: false,
-      message: "This browser could not keep the pairing. Allow site storage and try again.",
-    };
-  }
   return { ok: true, hostName: parsed.data.host.name };
 }
 

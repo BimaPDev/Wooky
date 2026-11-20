@@ -52,7 +52,7 @@ export function AddMachineForm({
     identityFile,
   });
   const parsed = RemoteConnection.safeParse(connection);
-  const codeParsed = PairingCodeText.safeParse(code);
+  const codeParsed = PairingCodeText.safeParse(code.replace(/\s+/g, ""));
   const warning = kind === "direct" && url.trim() ? directPublicHttpWarning(url) : null;
   const issues = parsed.success ? [] : parsed.error.issues.map((issue) => issue.message);
   const showIssues = submitted || hasDraft(kind, { hostName, url, target, identityFile });

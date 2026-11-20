@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pairWithHost } from "./pair.ts";
-import { loadPairedToken } from "./token.ts";
 
 function stubStorage() {
   const map = new Map<string, string>();
@@ -27,7 +26,6 @@ describe("pairWithHost", () => {
     const fetcher = answer(200, { token: "tok-123", host });
     const outcome = await pairWithHost("abcd 2345", "Phone", fetcher);
     expect(outcome).toEqual({ ok: true, hostName: "Home server" });
-    expect(loadPairedToken()).toBe("tok-123");
     const [url, init] = vi.mocked(fetcher).mock.calls[0] ?? [];
     expect(url).toBe("/pair");
     const sent = JSON.parse(String((init as RequestInit).body));
@@ -46,7 +44,6 @@ describe("pairWithHost", () => {
     const outcome = await pairWithHost("ABCD2345", "Phone", answer(401, { error: "bad" }));
     expect(outcome).toMatchObject({ ok: false });
     expect(outcome.ok === false && outcome.message).toContain("wrong, used, or expired");
-    expect(loadPairedToken()).toBeNull();
   });
 
   it("explains a lockout", async () => {
@@ -65,6 +62,17 @@ describe("pairWithHost", () => {
   it("refuses an answer that is not a pairing response", async () => {
     const outcome = await pairWithHost("ABCD2345", "Phone", answer(200, { token: "" }));
     expect(outcome.ok).toBe(false);
-    expect(loadPairedToken()).toBeNull();
+  });
+  it("writes nothing token-like to localStorage", async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, value),
+      removeItem: (key: string) => void storage.delete(key),
+    });
+    const fetcher = answer(200, { token: "tok-123", host });
+    await pairWithHost("ABCD2345", "Phone", fetcher);
+    expect([...storage.keys()].some((key) => /token/i.test(key))).toBe(false);
+    vi.unstubAllGlobals();
   });
 });

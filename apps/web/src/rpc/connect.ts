@@ -1,7 +1,6 @@
 import { WOOKY_WS_PATH } from "@wooky/contracts";
 import { emptyReadModel } from "@wooky/domain";
 import { createFixtureBackend } from "../dev/fixture.ts";
-import { loadPairedToken } from "../components/anywhere/pair/token.ts";
 import {
   bindTransport,
   bootEnvironments,
@@ -47,7 +46,7 @@ export function startConnection() {
   const localUrl = `${location.origin.replace(/^http/, "ws")}${WOOKY_WS_PATH}`;
   const client = createRpcClient({
     url: localUrl,
-    token: loadPairedToken(),
+    token: null,
     socketFactory: browserSocket,
     getSeq: () => useStore.getState().model.seq,
     onSnapshot: receiveSnapshot,
@@ -69,10 +68,7 @@ export function startConnection() {
         void refreshProviders();
         void loadDeviceSettings().then(() => {
           void bootEnvironments();
-          void refreshSync();
         });
-      } else if (status === "open") {
-        void refreshProviders();
       }
     },
   });
