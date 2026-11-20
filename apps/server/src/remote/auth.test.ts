@@ -201,7 +201,7 @@ describe("remote auth", () => {
       { providers: { claude: { extraArgs: ["--dangerous"] } } },
       { providers: { claude: { env: { PATH: "/tmp" } } } },
       {
-        acpAgents: [{ id: "a", name: "A", command: "/tmp/evil", args: [], env: {} }],
+        acpAgents: [{ id: "a", name: "A", command: "/tmp/evil", args: [], env: {}, enabled: true }],
       },
       { environments: [] },
       { sync: { enabled: true } },

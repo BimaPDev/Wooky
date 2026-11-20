@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import type { HostingSettings } from "@wooky/contracts";
 import { requireDeviceToken } from "./auth.ts";
@@ -34,6 +34,15 @@ function formatHost(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
 }
 
+function trackConnections(server: Server, sockets: WeakMap<Server, Set<Socket>>): void {
+  const open = new Set<Socket>();
+  sockets.set(server, open);
+  server.on("connection", (socket) => {
+    open.add(socket);
+    socket.once("close", () => open.delete(socket));
+  });
+}
+
 export function createBindManager(options: {
   host: string;
   port: number;
@@ -43,6 +52,7 @@ export function createBindManager(options: {
   tailnetIps: () => Promise<string[]>;
 }) {
   const listeners = new Map<string, Server>();
+  const sockets = new WeakMap<Server, Set<Socket>>();
   let assignedPort: number | null = null;
   let serveServer: Server | null = null;
   let serveBound: number | null = null;
@@ -64,6 +74,7 @@ export function createBindManager(options: {
 
   function listen(host: string, port: number, trackPort = true): Promise<Server> {
     const server = createServer((req, res) => handler(req, res));
+    trackConnections(server, sockets);
     server.on("upgrade", (req, socket, head) => onUpgrade(req, socket, head));
     return new Promise((resolve, reject) => {
       const fail = (error: Error) => {
@@ -88,10 +99,7 @@ export function createBindManager(options: {
     const server = listeners.get(host);
     if (!server) return;
     listeners.delete(host);
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-      server.closeAllConnections();
-    });
+    await closeServer(server);
   }
 
   async function apply(): Promise<{ url: string; port: number }> {
@@ -121,19 +129,13 @@ export function createBindManager(options: {
       try {
         for (const host of hosts) opened.push([host, await listen(host, port)]);
       } catch (error) {
-        for (const [, server] of opened) {
-          server.close();
-          server.closeAllConnections();
-        }
+        for (const [, server] of opened) await closeServer(server);
         assignedPort = previousPort;
         listeners.clear();
         for (const [host, server] of previous) listeners.set(host, server);
         throw error;
       }
-      for (const [, server] of previous) {
-        server.close();
-        server.closeAllConnections();
-      }
+      for (const [, server] of previous) await closeServer(server);
       listeners.clear();
       for (const [host, server] of opened) listeners.set(host, server);
     } else {
@@ -159,9 +161,12 @@ export function createBindManager(options: {
   }
 
   async function closeServer(server: Server): Promise<void> {
+    const open = sockets.get(server);
+    sockets.delete(server);
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections();
+      for (const socket of open ?? []) socket.destroy();
     });
   }
 
@@ -171,6 +176,7 @@ export function createBindManager(options: {
       requireDeviceToken(req);
       handler(req, res);
     });
+    trackConnections(server, sockets);
     server.on("upgrade", (req, socket, head) => {
       requireDeviceToken(req);
       onUpgrade(req, socket, head);
