@@ -50,6 +50,25 @@ describe("two devices", () => {
     expect(await read(a.root, "f.txt")).toBe("line1\nA\nline3\n");
   });
 
+  it("snapshots uncommitted local work before applying, and a revert undoes the apply", async () => {
+    const { a, b } = await twoDevices();
+    await put(b.root, "mine.txt", "uncommitted on B\n");
+    await put(a.root, "f.txt", "line1\nfrom A\nline3\n");
+    await a.engine.snapshot(a.projectId, "interval");
+    await b.engine.now();
+    expect(await read(b.root, "f.txt")).toBe("line1\nfrom A\nline3\n");
+    expect(await read(b.root, "mine.txt")).toBe("uncommitted on B\n");
+    // Sync now snapshots B first, so B's uncommitted file is already in the snapshot the
+    // incoming one is built on; that snapshot is the backup.
+    const listed = await snapshotsOf(b);
+    const incoming = listed.findIndex((s) => s.reason === "incoming");
+    expect(incoming).toBeGreaterThanOrEqual(0);
+    const backup = listed[incoming + 1];
+    await b.engine.restore({ snapshotId: must(backup).id });
+    expect(await read(b.root, "f.txt")).toBe(BASE);
+    expect(await read(b.root, "mine.txt")).toBe("uncommitted on B\n");
+  });
+
   it("merges edits to different files cleanly in both directions", async () => {
     const { a, b } = await twoDevices();
     await put(a.root, "a-only.txt", "from a\n");

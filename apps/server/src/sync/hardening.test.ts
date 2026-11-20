@@ -1,8 +1,7 @@
-import { existsSync } from "node:fs";
-import { writeFileSync } from "node:fs";
-import { chmod, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { chmod, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { cleanupTestRepos, makeRepo } from "../git/test-repo.ts";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createShadowGit, safeRelativePath } from "../git/shadow.ts";
 import { cleanupSyncTests, makeDevice, must, pair, put, read, tempDir } from "./testing.ts";
@@ -371,7 +370,7 @@ describe("hostile path names", () => {
 
 describe("test hooks", () => {
   it("has no env or flag that injects peers into a real server", async () => {
-    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { readFileSync, statSync } = await import("node:fs");
     const { dirname, join: joinPath } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
     const { resolveConfig } = await import("../config.ts");
@@ -569,5 +568,128 @@ describe("the project's own exclude file", () => {
       snap.id,
     ]);
     expect(listed.text.split("\n").filter(Boolean)).toEqual(["public.txt", "seed.txt"]);
+  });
+});
+
+describe("path escapes", () => {
+  async function rig() {
+    const root = await tempDir("wooky-escape-");
+    const outside = await tempDir("wooky-outside-");
+    const home = await tempDir("wooky-escape-home-");
+    const shadow = createShadowGit();
+    const repo = { gitDir: join(home, "escape.git"), workTree: root };
+    await shadow.ensure(repo);
+    const blob = (
+      await shadow.run(repo, ["hash-object", "-w", "--stdin"], { input: "pwned\n" })
+    ).text.trim();
+    const mktree = async (text: string) =>
+      (await shadow.run(repo, ["mktree"], { input: text })).text.trim();
+    const empty = (
+      await shadow.run(repo, ["hash-object", "-t", "tree", "-w", "--stdin"], { input: "" })
+    ).text.trim();
+    const rules = (mineTree: string) => ({
+      exclude: [],
+      mineTree,
+      maxFileBytes: 1e9,
+      maxTotalBytes: 1e9,
+    });
+    return { root, outside, shadow, repo, blob, mktree, empty, rules };
+  }
+
+  it("refuses .., absolute, drive-letter and backslash spellings before writing anything", async () => {
+    const { root, outside, shadow, repo, blob, mktree, empty, rules } = await rig();
+    expect(safeRelativePath("../x")).toBeNull();
+    expect(safeRelativePath("a/../../x")).toBeNull();
+    expect(safeRelativePath("/etc/passwd")).toBeNull();
+    expect(safeRelativePath("C:/Windows/x")).toBeNull();
+    expect(safeRelativePath("a\\..\\x".replace(/\\/g, sep === "\\" ? "\\" : "/"))).toBeNull();
+    const tree = await mktree(`100644 blob ${blob}\tok.txt\n`);
+    const changes = [
+      ...(await shadow.changes(repo, empty, tree)),
+      { status: "A" as const, path: "../escape.txt", mode: "100644", sha: blob },
+      { status: "A" as const, path: `${outside}/abs.txt`, mode: "100644", sha: blob },
+    ];
+    const report = await shadow.applyChanges(repo, tree, changes, rules(empty));
+    expect(report.skipped.map((s) => s.reason)).toEqual(["unsafe", "unsafe"]);
+    expect(existsSync(join(root, "..", "escape.txt"))).toBe(false);
+    expect(existsSync(join(outside, "abs.txt"))).toBe(false);
+    expect(existsSync(join(root, "ok.txt"))).toBe(true);
+  });
+
+  it("never writes through a symlinked directory that points outside the project", async () => {
+    if (process.platform === "win32") return;
+    const { root, outside, shadow, repo, blob, mktree, empty, rules } = await rig();
+    await symlink(outside, join(root, "dir"));
+    const mine = await mktree(
+      `120000 blob ${(
+        await shadow.run(repo, ["hash-object", "-w", "--stdin"], { input: outside })
+      ).text.trim()}\tdir\n`,
+    );
+    const inner = await mktree(`100644 blob ${blob}\tevil.txt\n`);
+    const target = await mktree(`040000 tree ${inner}\tdir\n`);
+    await shadow.applyChanges(repo, target, await shadow.changes(repo, mine, target), rules(mine));
+    expect(existsSync(join(outside, "evil.txt"))).toBe(false);
+    expect(readdirSync(outside)).toEqual([]);
+    void empty;
+  });
+
+  it("replaces a symlinked file instead of writing through it", async () => {
+    if (process.platform === "win32") return;
+    const { root, outside, shadow, repo, blob, mktree, rules } = await rig();
+    await writeFile(join(outside, "victim.txt"), "original\n");
+    await symlink(join(outside, "victim.txt"), join(root, "f.txt"));
+    const linkBlob = (
+      await shadow.run(repo, ["hash-object", "-w", "--stdin"], {
+        input: join(outside, "victim.txt"),
+      })
+    ).text.trim();
+    const mine = await mktree(`120000 blob ${linkBlob}\tf.txt\n`);
+    const target = await mktree(`100644 blob ${blob}\tf.txt\n`);
+    await shadow.applyChanges(repo, target, await shadow.changes(repo, mine, target), rules(mine));
+    expect(await readFile(join(outside, "victim.txt"), "utf8")).toBe("original\n");
+  });
+
+  it("does not delete through a symlinked directory", async () => {
+    if (process.platform === "win32") return;
+    const { root, outside, shadow, repo, blob, mktree, rules } = await rig();
+    await writeFile(join(outside, "keep.txt"), "keep\n");
+    await symlink(outside, join(root, "dir"));
+    const inner = await mktree(`100644 blob ${blob}\tkeep.txt\n`);
+    const mine = await mktree(`040000 tree ${inner}\tdir\n`);
+    const target = await mktree("");
+    await shadow.applyChanges(repo, target, await shadow.changes(repo, mine, target), rules(mine));
+    expect(await readFile(join(outside, "keep.txt"), "utf8")).toBe("keep\n");
+  });
+});
+
+describe("bundle requests", () => {
+  it("wait for a snapshot in the same project, so a peer never sees a half-moved ref", async () => {
+    if (process.platform === "win32") return;
+    const slow = join(await tempDir("wooky-slowgit-"), "git-slow.sh");
+    await writeFile(slow, '#!/bin/sh\ncase "$*" in *write-tree*) sleep 1;; esac\nexec git "$@"\n', {
+      mode: 0o755,
+    });
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj", gitBin: slow });
+    await put(a.root, "f.txt", "v1\n");
+    await a.engine.snapshot(a.projectId, "manual");
+    await put(a.root, "f.txt", "v2\n");
+    const order: string[] = [];
+    const snapshot = a.engine.snapshot(a.projectId, "manual").then(() => order.push("snapshot"));
+    const bundle = a.engine.openBundle("proj", null).then((opened) => {
+      order.push("bundle");
+      return opened;
+    });
+    const [, opened] = await Promise.all([snapshot, bundle]);
+    expect(order).toEqual(["snapshot", "bundle"]);
+    if (opened && !opened.empty) {
+      opened.stdout.resume();
+      await opened.done;
+    }
+  });
+
+  it("answer 404 for a project nobody maps and never touch another folder", async () => {
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj" });
+    expect(await a.engine.openBundle("nope", null)).toBeNull();
+    expect(await a.engine.openBundle("../../etc", null)).toBeNull();
   });
 });
