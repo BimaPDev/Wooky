@@ -30,6 +30,13 @@ import {
 } from "../components/theme-studio/helpers.ts";
 import type { Backend } from "../state/backend.ts";
 import { RpcCallError } from "../rpc/client.ts";
+import {
+  anywhereHistoryCommand,
+  anywhereHistoryRespond,
+  fixtureMovedThreads,
+  fixtureMovedTurns,
+  fixtureProjectMap,
+} from "./fixture-anywhere-history.ts";
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -919,6 +926,9 @@ export const fixtureModel: ReadModel = {
   pendingClaims: {},
 };
 
+Object.assign(fixtureModel.threads, fixtureMovedThreads);
+Object.assign(fixtureModel.turns, fixtureMovedTurns);
+
 export const fixtureProviders: ProviderStatus[] = [
   {
     kind: "claude",
@@ -1141,6 +1151,7 @@ let fixtureSettings: DeviceSettingsValue = DeviceSettings.parse({
   confirmDelete: true,
   confirmArchive: true,
   importLocalHistory: true,
+  sync: { enabled: true, projectMap: fixtureProjectMap },
 });
 
 function fixtureUsageMode(): string | null {
@@ -1295,6 +1306,7 @@ function injectFixtureEvents(drafts: readonly FixtureDraft[]): void {
 }
 
 function applyFixtureCommand(command: Command): void {
+  if (anywhereHistoryCommand(command, injectFixtureEvents)) return;
   const at = new Date().toISOString();
   if (command.type === "fanout.start") {
     const groupId = `g-${command.commandId}`;
@@ -1403,6 +1415,8 @@ function applyFixtureCommand(command: Command): void {
 }
 
 function respond(method: RpcMethod, params: unknown): unknown {
+  const anywhere = anywhereHistoryRespond(method, params);
+  if (anywhere) return anywhere.value;
   switch (method) {
     case "snapshot":
       return fixtureModel;

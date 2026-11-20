@@ -149,6 +149,15 @@ dialog * {
   border-right: 1px solid var(--line);
 }
 
+.conversation {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .right-pane {
   display: flex;
   flex-direction: column;

@@ -25,6 +25,9 @@ import {
   IconSidebar,
   IconSliders,
 } from "./Icons.tsx";
+import { usePhone, IconMenu } from "./anywhere/phone/phone.tsx";
+import { ReplicaCrumb } from "./anywhere/replicas/ReplicaThreadView.tsx";
+import { useAnywhereHistory } from "../state/anywhere-history.ts";
 import { InlineRename } from "./InlineRename.tsx";
 import { modelLabel, providerLabels, runtimeLabel } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
@@ -51,6 +54,8 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
   const canBack = useStore((state) => state.nav.past.length > 0);
   const canForward = useStore((state) => state.nav.future.length > 0);
   const hasProjects = useStore((state) => Object.keys(state.model.projects).length > 0);
+  const phone = usePhone();
+  const peerThread = useAnywhereHistory((state) => state.replicaView !== null);
   const [editing, setEditing] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const leadClass = ["topbar-lead", !sidebarOpen && macDesktop ? "desktop-traffic-inset" : null]
@@ -68,7 +73,7 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
               aria-label="Show sidebar"
               onClick={toggleSidebar}
             >
-              <IconSidebar />
+              {phone ? <IconMenu /> : <IconSidebar />}
             </button>
           </Tooltip>
         ) : null}
@@ -126,6 +131,8 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
               </button>
             )}
           </>
+        ) : peerThread ? (
+          <ReplicaCrumb />
         ) : draftView ? (
           <>
             {draftProject ? <ProjectMonogram name={draftProject.name} /> : <IconFolder />}
