@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { killTree, type KillTreeSignal } from "../../process/kill-tree.ts";
 import type { z } from "zod";
 import { parseIncoming, type RpcIdValue } from "./protocol.ts";
 
@@ -325,16 +326,8 @@ export class AcpClient {
   private signalGroup(signal: NodeJS.Signals): void {
     const pid = this.pid;
     if (pid === undefined) return;
-    try {
-      if (process.platform === "win32") process.kill(pid, signal);
-      else process.kill(-pid, signal);
-    } catch {
-      try {
-        process.kill(pid, signal);
-      } catch {
-        // Already gone.
-      }
-    }
+    const treeSignal: KillTreeSignal = signal === "SIGKILL" ? "SIGKILL" : "SIGTERM";
+    void killTree(pid, treeSignal);
   }
 
   private stderrText(): string {

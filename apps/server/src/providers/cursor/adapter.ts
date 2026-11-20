@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProviderEvent, ProviderSettings, ProviderStatus } from "@wooky/contracts";
 import { z } from "zod";
+import { isTreeAlive, killTree, type KillTreeSignal } from "../../process/kill-tree.ts";
 import { resolveCommand } from "../../process/resolve-command.ts";
 import { fleetChildEnv, prefixSessionPrompt } from "../agent-env.ts";
 import { resolveLaunch, withUserEnv } from "../settings.ts";
@@ -327,15 +328,8 @@ async function* runCursorTurn(
   const killGroup = (signal: NodeJS.Signals) => {
     const pid = child.pid;
     if (!pid) return;
-    try {
-      process.kill(-pid, signal);
-    } catch {
-      try {
-        process.kill(pid, signal);
-      } catch {
-        // already gone
-      }
-    }
+    const treeSignal: KillTreeSignal = signal === "SIGKILL" ? "SIGKILL" : "SIGTERM";
+    void killTree(pid, treeSignal);
   };
 
   const killOnAbort = () => {
@@ -344,12 +338,7 @@ async function* runCursorTurn(
     killTimer = setTimeout(() => {
       const pid = child.pid;
       if (!pid) return;
-      try {
-        process.kill(-pid, 0);
-        killGroup("SIGKILL");
-      } catch {
-        // already gone
-      }
+      if (isTreeAlive(pid)) killGroup("SIGKILL");
     }, KILL_GRACE_MS);
   };
 

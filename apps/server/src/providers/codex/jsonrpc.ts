@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { isTreeAlive, killTree, type KillTreeSignal } from "../../process/kill-tree.ts";
 import { StringDecoder } from "node:string_decoder";
 import type { z } from "zod";
 import { type JsonRpcErrorPayload, type JsonRpcId, parseJsonRpcMessage } from "./protocol.ts";
@@ -130,15 +131,7 @@ export class JsonRpcClient {
   // is detached, so nothing else would stop its group. Must stay synchronous.
   private readonly exitGuard = (): void => {
     if (this.groupGone || typeof this.pid !== "number") return;
-    try {
-      if (process.platform === "win32") {
-        if (this.processAlive) process.kill(this.pid, "SIGKILL");
-      } else {
-        process.kill(-this.pid, "SIGKILL");
-      }
-    } catch {
-      // Already gone.
-    }
+    void killTree(this.pid, "SIGKILL");
   };
 
   constructor(options: JsonRpcClientOptions) {
@@ -426,16 +419,10 @@ export class JsonRpcClient {
       this.markGroupGone();
       return false;
     }
-    try {
-      process.kill(-pid, 0);
-      return true;
-    } catch (err) {
-      // EPERM means the group exists but we may not signal it: still alive.
-      if (isErrnoCode(err, "EPERM")) return true;
-      // Once the group is seen empty, never signal it again: the pid may be reused.
-      this.markGroupGone();
-      return false;
-    }
+    if (isTreeAlive(pid)) return true;
+    // Once the group is seen empty, never signal it again: the pid may be reused.
+    this.markGroupGone();
+    return false;
   }
 
   private markGroupGone(): void {
@@ -449,14 +436,8 @@ export class JsonRpcClient {
   private signalGroup(signal: NodeJS.Signals): void {
     const pid = this.pid;
     if (typeof pid !== "number" || !this.refreshGroup()) return;
-    try {
-      // Negative pid targets the whole group we lead (detached: true), so any
-      // grandchildren die with the app-server. Never fall back to the bare pid:
-      // after the child exits it may belong to someone else.
-      process.kill(process.platform === "win32" ? pid : -pid, signal);
-    } catch {
-      // The group went away between the check and the signal.
-    }
+    const treeSignal: KillTreeSignal = signal === "SIGKILL" ? "SIGKILL" : "SIGTERM";
+    void killTree(pid, treeSignal);
   }
 
   // After SIGTERM, poll the group so teardown ends as soon as it is gone, and escalate
@@ -615,10 +596,6 @@ export class JsonRpcClient {
     const base = `Codex app-server exited (${detail})`;
     return new Error(stderr ? `${base}: ${stderr}` : base);
   }
-}
-
-function isErrnoCode(err: unknown, code: string): boolean {
-  return typeof err === "object" && err !== null && "code" in err && err.code === code;
 }
 
 export class UnhandledServerRequestError extends Error {

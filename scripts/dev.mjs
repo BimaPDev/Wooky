@@ -33,7 +33,17 @@ function prefix(name) {
   return colour ? `\x1b[2m${TAGS[name]}\x1b[22m ` : `${TAGS[name]} `;
 }
 
+const win32 = process.platform === "win32";
+
 function groupAlive(pid) {
+  if (win32) {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return error.code === "EPERM";
+    }
+  }
   try {
     process.kill(-pid, 0);
     return true;
@@ -42,7 +52,13 @@ function groupAlive(pid) {
   }
 }
 
-function signalGroup(pid, signal) {
+function killTree(pid, signal) {
+  if (win32) {
+    const args = ["/pid", String(pid), "/t"];
+    if (signal === "SIGKILL") args.push("/f");
+    spawn("taskkill", args, { stdio: "ignore", windowsHide: true });
+    return;
+  }
   try {
     process.kill(-pid, signal);
   } catch (error) {
@@ -56,7 +72,7 @@ function shutdown(code, reason) {
   exitCode = code;
   if (reason) console.error(reason);
   const spawned = children.filter((child) => child.pid !== undefined);
-  for (const child of spawned) signalGroup(child.pid, "SIGTERM");
+  for (const child of spawned) killTree(child.pid, "SIGTERM");
 
   const finish = () => {
     clearInterval(poll);
@@ -68,7 +84,7 @@ function shutdown(code, reason) {
   }, 100);
   const forceKill = setTimeout(() => {
     for (const child of spawned) {
-      if (groupAlive(child.pid)) signalGroup(child.pid, "SIGKILL");
+      if (groupAlive(child.pid)) killTree(child.pid, "SIGKILL");
     }
     finish();
   }, KILL_AFTER_MS);
@@ -78,8 +94,9 @@ function start(name, args, env, onLine) {
   const child = spawn("pnpm", args, {
     cwd: repo,
     env,
-    detached: true,
+    detached: !win32,
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
   const entry = { name, pid: child.pid };
   children.push(entry);

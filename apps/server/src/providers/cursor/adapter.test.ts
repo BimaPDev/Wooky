@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProviderEvent } from "@wooky/contracts";
+import { isTreeAlive } from "../../process/kill-tree.ts";
 import { createCursorAdapter, CURSOR_FAKE_AGENT_SCRIPT } from "./adapter.ts";
 // @ts-expect-error test fixture is plain ESM without types
 import { FAKE_CURSOR_AGENT_VERSION } from "./fixtures/fake-cursor-agent.mjs";
@@ -91,52 +92,46 @@ describe("createCursorAdapter e2e", () => {
     }
   }
 
-  function processGroupAlive(pid: number): boolean {
-    try {
-      process.kill(-pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  it.skipIf(process.platform === "win32")(
+    "interrupts a hanging turn and kills the fake process group",
+    async () => {
+      const work = await mkdtemp(join(tmpdir(), "wooky-cursor-abort-"));
+      const pidFile = join(work, "pid");
+      const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
+      const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+      process.env.WOOKY_FAKE_CURSOR_MODE = "hang";
+      process.env.WOOKY_FAKE_CURSOR_PID_FILE = pidFile;
 
-  it("interrupts a hanging turn and kills the fake process group", async () => {
-    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-abort-"));
-    const pidFile = join(work, "pid");
-    const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
-    const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
-    process.env.WOOKY_FAKE_CURSOR_MODE = "hang";
-    process.env.WOOKY_FAKE_CURSOR_PID_FILE = pidFile;
+      const ac = new AbortController();
+      const adapter = createCursorAdapter({
+        cursorBin: process.execPath,
+        cursorArgsPrefix: [fakeBin],
+      });
 
-    const ac = new AbortController();
-    const adapter = createCursorAdapter({
-      cursorBin: process.execPath,
-      cursorArgsPrefix: [fakeBin],
-    });
+      const iter = adapter.runTurn(baseInput({ signal: ac.signal }));
+      const donePromise = (async () => {
+        const events = await collect(iter);
+        return events.filter((e) => e.type === "done").at(-1);
+      })();
 
-    const iter = adapter.runTurn(baseInput({ signal: ac.signal }));
-    const donePromise = (async () => {
-      const events = await collect(iter);
-      return events.filter((e) => e.type === "done").at(-1);
-    })();
+      const pid = await waitForPositivePid(pidFile);
+      expect(pid).toBeGreaterThan(0);
+      ac.abort();
 
-    const pid = await waitForPositivePid(pidFile);
-    expect(pid).toBeGreaterThan(0);
-    ac.abort();
+      const done = await donePromise;
+      expect(done?.status).toBe("interrupted");
+      expect(isTreeAlive(pid)).toBe(false);
 
-    const done = await donePromise;
-    expect(done?.status).toBe("interrupted");
-    expect(processGroupAlive(pid)).toBe(false);
-
-    try {
-      await rm(work, { recursive: true, force: true });
-    } finally {
-      if (prevMode === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
-      else process.env.WOOKY_FAKE_CURSOR_MODE = prevMode;
-      if (prevPid === undefined) delete process.env.WOOKY_FAKE_CURSOR_PID_FILE;
-      else process.env.WOOKY_FAKE_CURSOR_PID_FILE = prevPid;
-    }
-  });
+      try {
+        await rm(work, { recursive: true, force: true });
+      } finally {
+        if (prevMode === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
+        else process.env.WOOKY_FAKE_CURSOR_MODE = prevMode;
+        if (prevPid === undefined) delete process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+        else process.env.WOOKY_FAKE_CURSOR_PID_FILE = prevPid;
+      }
+    },
+  ); // detached process groups are POSIX-only
 
   it("returns interrupted without spawning when already aborted", async () => {
     const ac = new AbortController();
@@ -185,40 +180,43 @@ describe("createCursorAdapter e2e", () => {
     }
   });
 
-  it("finishes with failed when the child dies on a signal", async () => {
-    const work = await mkdtemp(join(tmpdir(), "wooky-cursor-signal-"));
-    const pidFile = join(work, "pid");
-    const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
-    const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
-    process.env.WOOKY_FAKE_CURSOR_MODE = "hang";
-    process.env.WOOKY_FAKE_CURSOR_PID_FILE = pidFile;
+  it.skipIf(process.platform === "win32")(
+    "finishes with failed when the child dies on a signal",
+    async () => {
+      const work = await mkdtemp(join(tmpdir(), "wooky-cursor-signal-"));
+      const pidFile = join(work, "pid");
+      const prevMode = process.env.WOOKY_FAKE_CURSOR_MODE;
+      const prevPid = process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+      process.env.WOOKY_FAKE_CURSOR_MODE = "hang";
+      process.env.WOOKY_FAKE_CURSOR_PID_FILE = pidFile;
 
-    const adapter = createCursorAdapter({
-      cursorBin: process.execPath,
-      cursorArgsPrefix: [fakeBin],
-    });
+      const adapter = createCursorAdapter({
+        cursorBin: process.execPath,
+        cursorArgsPrefix: [fakeBin],
+      });
 
-    const doneP = collect(adapter.runTurn(baseInput({ turnId: "turn-signal-kill" }))).then((ev) =>
-      ev.filter((e) => e.type === "done").at(-1),
-    );
+      const doneP = collect(adapter.runTurn(baseInput({ turnId: "turn-signal-kill" }))).then((ev) =>
+        ev.filter((e) => e.type === "done").at(-1),
+      );
 
-    const pid = await waitForPositivePid(pidFile);
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      process.kill(pid, "SIGKILL");
-    }
+      const pid = await waitForPositivePid(pidFile);
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        process.kill(pid, "SIGKILL");
+      }
 
-    const done = await doneP;
-    expect(done?.status).toBe("failed");
-    expect(done?.error).toMatch(/SIGKILL/);
+      const done = await doneP;
+      expect(done?.status).toBe("failed");
+      expect(done?.error).toMatch(/SIGKILL/);
 
-    await rm(work, { recursive: true, force: true });
-    if (prevMode === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
-    else process.env.WOOKY_FAKE_CURSOR_MODE = prevMode;
-    if (prevPid === undefined) delete process.env.WOOKY_FAKE_CURSOR_PID_FILE;
-    else process.env.WOOKY_FAKE_CURSOR_PID_FILE = prevPid;
-  });
+      await rm(work, { recursive: true, force: true });
+      if (prevMode === undefined) delete process.env.WOOKY_FAKE_CURSOR_MODE;
+      else process.env.WOOKY_FAKE_CURSOR_MODE = prevMode;
+      if (prevPid === undefined) delete process.env.WOOKY_FAKE_CURSOR_PID_FILE;
+      else process.env.WOOKY_FAKE_CURSOR_PID_FILE = prevPid;
+    },
+  ); // relies on POSIX process-group SIGKILL semantics
 
   it("passes --force only in full runtime mode", async () => {
     const argvFile = join(await mkdtemp(join(tmpdir(), "wooky-cursor-argv-")), "argv.json");

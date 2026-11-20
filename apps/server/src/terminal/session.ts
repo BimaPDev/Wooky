@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { killTree } from "../process/kill-tree.ts";
 import { randomUUID } from "node:crypto";
 import type { TerminalPush } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
@@ -104,7 +105,7 @@ export function createTerminalManager(): TerminalManager {
     const session = sessions.get(sessionId);
     if (!session) return;
     sessions.delete(sessionId);
-    killTree(session.child);
+    stopTree(session.child);
   }
 
   function closeAll() {
@@ -114,24 +115,25 @@ export function createTerminalManager(): TerminalManager {
   return { open, write, resize, close, closeAll };
 }
 
-function killTree(child: ChildProcessWithoutNullStreams) {
+const TERMINAL_KILL_GRACE_MS = 1_500;
+
+function stopTree(child: ChildProcessWithoutNullStreams) {
   const pid = child.pid;
   if (pid === undefined) return;
-  try {
-    if (process.platform === "win32") {
-      // wooky-allow child-process: taskkill targets only the PID we spawned (and its tree).
-      spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
-    } else {
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (!child.killed) child.kill("SIGKILL");
-      }, 1500).unref();
-    }
-  } catch {
+  void killTree(pid, "SIGTERM").catch(() => {
     try {
       child.kill();
     } catch {
       // already gone
     }
-  }
+  });
+  setTimeout(() => {
+    void killTree(pid, "SIGKILL").catch(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+    });
+  }, TERMINAL_KILL_GRACE_MS).unref();
 }
