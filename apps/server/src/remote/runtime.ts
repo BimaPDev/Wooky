@@ -75,6 +75,7 @@ export function createRemoteRuntime(options: {
     now,
     hostInfo: () => device.info(),
     listenPort: () => bind.port(),
+    listenAddresses: () => bind.addresses(),
     hosting: () => options.themes.getSettings().hosting,
     tailscaleStatus: () => tailscale.status(),
     onRevoke: (deviceId) => closeDevice(deviceId),

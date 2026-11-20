@@ -180,8 +180,10 @@ export type PairedDeviceView = z.infer<typeof PairedDeviceView>;
 export const PairingCode = z.object({
   code: PairingCodeText,
   expiresAt: z.string(),
-  /** Host URL the client pairs against. */
-  url: z.string().min(1),
+  /** Host URL another device can reach, or null when this host is not reachable by anyone else. */
+  url: z.string().min(1).nullable(),
+  /** Why there is no URL, in one sentence. Null when url is set. */
+  reason: z.string().nullable(),
 });
 export type PairingCode = z.infer<typeof PairingCode>;
 

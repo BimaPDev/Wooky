@@ -3,7 +3,7 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { useStore } from "../state/store.ts";
 import { installFixtureBackend, resetAnywhereHistory } from "./anywhere/testing.ts";
 import { App } from "./App.tsx";
@@ -12,7 +12,7 @@ import { App } from "./App.tsx";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
-let errors: ReturnType<typeof vi.spyOn>;
+let errors: MockInstance<typeof console.error>;
 
 // A selector that returns a fresh array/object each call makes zustand re-render forever:
 // React throws error #185 ("Maximum update depth exceeded") or warns about getSnapshot.
@@ -28,7 +28,7 @@ async function mountApp() {
 describe("App on a fresh install (no projects, no threads)", () => {
   beforeEach(() => {
     useStore.setState(useStore.getInitialState(), true);
-    useStore.setState({ status: "connected" });
+    useStore.setState({ status: "open" });
     resetAnywhereHistory();
     installFixtureBackend();
     errors = vi.spyOn(console, "error").mockImplementation(() => undefined);

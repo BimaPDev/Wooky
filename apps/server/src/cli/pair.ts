@@ -43,6 +43,10 @@ async function run(args: string[], env: NodeJS.ProcessEnv, io: CliIo): Promise<n
   }
   const serverUrl = discoverServerUrl(env);
   const created = await rpcCall(serverUrl, "remote.pairingCode.create", {});
+  if (created.url === null) {
+    io.stderr.write(`${created.reason ?? "This host is not reachable by other devices."}\n`);
+    return 1;
+  }
   const link = `${created.url.replace(/\/$/, "")}/#/pair?code=${created.code}`;
   io.stdout.write(`${created.url}\n${created.code}\n`);
   try {

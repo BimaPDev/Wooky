@@ -56,11 +56,17 @@ export function firstNonInternalIPv4(): string | null {
   return null;
 }
 
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || host === "localhost";
+}
+
 export function createPairing(options: {
   home: string;
   now?: () => number;
   hostInfo: () => DeviceInfo;
   listenPort: () => number;
+  /** Hosts the server is listening on right now. */
+  listenAddresses: () => string[];
   hosting: () => Pick<HostingSettings, "enabled" | "bind" | "tailscaleServe">;
   tailscaleStatus: () => Promise<Pick<TailscaleStatus, "hostName">>;
   onRevoke: (deviceId: string) => void;
@@ -97,18 +103,34 @@ export function createPairing(options: {
     return code;
   }
 
-  async function baseUrl(): Promise<string> {
+  /**
+   * A URL another device can actually reach, or null with the reason there is none.
+   * Only addresses the server really listens on are advertised: a LAN IP while the
+   * server is bound to loopback would be a dead link.
+   */
+  async function reachableUrl(): Promise<{ url: string | null; reason: string | null }> {
     const hosting = options.hosting();
     const port = options.listenPort();
-    if (hosting.enabled && hosting.bind === "tailscale") {
+    const hosts = options.listenAddresses().filter((host) => !isLoopbackHost(host));
+    if (hosts.length === 0) {
+      return {
+        url: null,
+        reason: hosting.enabled
+          ? "Hosting is limited to this machine. Allow your tailnet or your network under Settings → Anywhere → Host, then show a code again."
+          : "Hosting is off. Turn on hosting under Settings → Anywhere → Host before pairing another device.",
+      };
+    }
+    if (hosting.bind === "tailscale") {
       const status = await options.tailscaleStatus();
       if (status.hostName) {
-        if (hosting.tailscaleServe) return `https://${status.hostName}`;
-        return `http://${status.hostName}:${port}`;
+        if (hosting.tailscaleServe) return { url: `https://${status.hostName}`, reason: null };
+        return { url: `http://${status.hostName}:${port}`, reason: null };
       }
     }
-    const ip = firstNonInternalIPv4() ?? "127.0.0.1";
-    return `http://${ip}:${port}`;
+    const wildcard = hosts.some((host) => host === "0.0.0.0" || host === "::");
+    const host = wildcard ? firstNonInternalIPv4() : hosts[0];
+    if (!host) return { url: null, reason: "This machine has no network address to pair over." };
+    return { url: `http://${host.includes(":") ? `[${host}]` : host}:${port}`, reason: null };
   }
 
   async function create(): Promise<PairingCode> {
@@ -127,7 +149,7 @@ export function createPairing(options: {
     return PairingCode.parse({
       code,
       expiresAt: new Date(expiresAt).toISOString(),
-      url: await baseUrl(),
+      ...(await reachableUrl()),
     });
   }
 
