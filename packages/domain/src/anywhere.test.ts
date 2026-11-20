@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgeEvent, Thread } from "@wooky/contracts";
+import type { AgeEvent, HistoryTurn, Thread } from "@wooky/contracts";
 import { applyEvents, emptyReadModel } from "./project.ts";
 import { testLog } from "./test-log.ts";
 
@@ -90,6 +90,7 @@ describe("anywhere reducer", () => {
         sourceDeviceId: "other-device",
         sourceThreadId: "remote-thread",
         transcript: "the conversation so far",
+        historyTurns: [],
         seq: model.seq + 1,
         at,
       },
@@ -162,4 +163,117 @@ describe("anywhere reducer", () => {
       pullRequest: null,
     });
   });
+
+  it("keeps imported history and appends a later turn after it", () => {
+    const model = testLog().project("p1", "/work").model();
+    const imported = applyEvents(model, [
+      {
+        type: "thread.imported",
+        commandId: "c",
+        thread: thread({ id: "local", title: "From home" }),
+        sourceDeviceId: "other-device",
+        sourceThreadId: "remote-thread",
+        transcript: "handoff",
+        historyTurns: [historyTurn("h1", "remote-thread"), historyTurn("h2", "remote-thread")],
+        seq: model.seq + 1,
+        at,
+      },
+    ]);
+    expect(imported.turns.local?.map((turn) => [turn.id, turn.threadId])).toEqual([
+      ["h1", "local"],
+      ["h2", "local"],
+    ]);
+    const continued = applyEvents(imported, [
+      {
+        type: "turn.started",
+        commandId: "c2",
+        threadId: "local",
+        turnId: "u-new",
+        prompt: "continue",
+        provider: "demo",
+        model: "demo",
+        checkpointBefore: null,
+        seq: imported.seq + 1,
+        at,
+      },
+    ]);
+    expect(continued.turns.local?.map((turn) => turn.id)).toEqual(["h1", "h2", "u-new"]);
+    expect(continued.turns.local?.at(-1)?.threadId).toBe("local");
+  });
+
+  it("tracks a claim, ignores a duplicate, and clears it on failure or import", () => {
+    const model = testLog().project("p1", "/work").model();
+    const requested = applyEvents(model, [claim("claim-1", model.seq + 1)]);
+    expect(requested.pendingClaims["claim-1"]).toEqual({
+      claimId: "claim-1",
+      ownerDeviceId: "other-device",
+      ownerThreadId: "remote-thread",
+      projectId: "p1",
+      at,
+    });
+
+    const duplicate = applyEvents(requested, [claim("claim-2", requested.seq + 1)]);
+    expect(Object.keys(duplicate.pendingClaims)).toEqual(["claim-1"]);
+
+    const failed = applyEvents(requested, [
+      {
+        type: "thread.claimFailed",
+        commandId: null,
+        claimId: "claim-1",
+        reason: "The owner is offline.",
+        seq: requested.seq + 1,
+        at,
+      },
+    ]);
+    expect(failed.pendingClaims).toEqual({});
+
+    const imported = applyEvents(requested, [
+      {
+        type: "thread.imported",
+        commandId: "claim-1",
+        claimId: "claim-1",
+        thread: thread({ id: "local" }),
+        sourceDeviceId: "other-device",
+        sourceThreadId: "remote-thread",
+        transcript: "handoff",
+        historyTurns: [],
+        seq: requested.seq + 1,
+        at,
+      },
+    ]);
+    expect(imported.pendingClaims).toEqual({});
+    expect(imported.threads.local?.movedFrom?.threadId).toBe("remote-thread");
+  });
 });
+
+function historyTurn(id: string, threadId: string): HistoryTurn {
+  return {
+    id,
+    threadId,
+    prompt: id,
+    provider: "demo",
+    model: "demo",
+    status: "completed",
+    items: [],
+    startedAt: at,
+    endedAt: at,
+    checkpointBefore: null,
+    checkpointAfter: null,
+    changedFiles: [],
+    usage: null,
+    error: null,
+  };
+}
+
+function claim(claimId: string, seq: number): AgeEvent {
+  return {
+    type: "thread.claimRequested",
+    commandId: claimId,
+    claimId,
+    ownerDeviceId: "other-device",
+    ownerThreadId: "remote-thread",
+    projectId: "p1",
+    seq,
+    at,
+  };
+}

@@ -4,6 +4,7 @@ import {
   DiffStat,
   EffortLevel,
   FLEET_LIMITS,
+  HistoryTurn,
   Id,
   InteractionMode,
   IsoTime,
@@ -260,8 +261,27 @@ export const AgeEvent = z.discriminatedUnion("type", [
     toDeviceId: DeviceId,
   }),
   /**
-   * A local thread created from a peer. The reducer sets `movedFrom` from the source
-   * fields. `transcript` and `turnsJson` stay on the event for the claim effect.
+   * Continue a peer thread on this device. `claimId` is the `thread.claim` command id.
+   * The time is this event's `at`.
+   */
+  z.object({
+    ...meta,
+    type: z.literal("thread.claimRequested"),
+    claimId: Id,
+    ownerDeviceId: DeviceId,
+    ownerThreadId: Id,
+    projectId: Id,
+  }),
+  z.object({
+    ...meta,
+    type: z.literal("thread.claimFailed"),
+    claimId: Id,
+    reason: z.string().min(1),
+  }),
+  /**
+   * A local thread created from a peer. The reducer sets `movedFrom` and stores
+   * `historyTurns` under the new thread id. `transcript` stays for the provider handoff.
+   * `claimId` resolves the matching pending claim.
    */
   z.object({
     ...meta,
@@ -270,7 +290,8 @@ export const AgeEvent = z.discriminatedUnion("type", [
     sourceDeviceId: DeviceId,
     sourceThreadId: Id,
     transcript: z.string(),
-    turnsJson: z.unknown().optional(),
+    historyTurns: z.array(HistoryTurn).max(500).default([]),
+    claimId: Id.optional(),
   }),
   /** The git effect recorded a pull request for this thread. Null clears it. */
   z.object({

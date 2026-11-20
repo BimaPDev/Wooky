@@ -69,5 +69,13 @@ function withLegacyDefaults(model: LegacyModel) {
       { ...project, settings: { scripts: [] } },
     ]),
   );
-  return { ...model, projects, threads, cooldowns: {}, groups: {}, reviewNotes: {} };
+  return {
+    ...model,
+    projects,
+    threads,
+    cooldowns: {},
+    groups: {},
+    reviewNotes: {},
+    pendingClaims: {},
+  };
 }

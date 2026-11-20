@@ -358,6 +358,12 @@ export const Turn = z.object({
 });
 export type Turn = z.infer<typeof Turn>;
 
+/** A finished turn copied from another device. A running turn is not history. */
+export const HistoryTurn = Turn.extend({
+  status: z.enum(["completed", "interrupted", "failed"]),
+});
+export type HistoryTurn = z.infer<typeof HistoryTurn>;
+
 export const FileDiff = z.object({
   path: z.string(),
   status: z.enum(["added", "modified", "deleted", "renamed"]),

@@ -73,6 +73,9 @@ describe("remote contracts", () => {
     expect(RemoteConnection.parse({ kind: "direct", url: "http://192.168.1.9:4317" }).kind).toBe(
       "direct",
     );
+    expect(RemoteConnection.parse({ kind: "direct", url: "http://example.com" }).kind).toBe(
+      "direct",
+    );
     expect(
       RemoteConnection.parse({
         kind: "ssh",
@@ -84,6 +87,32 @@ describe("remote contracts", () => {
     expect(
       RemoteConnection.safeParse({ kind: "ssh", target: "home", remotePort: 4317 }).success,
     ).toBe(false);
+    expect(
+      RemoteConnection.safeParse({
+        kind: "ssh",
+        target: "-oProxyCommand=calc@host",
+        remotePort: 22,
+      }).success,
+    ).toBe(false);
+    expect(
+      RemoteConnection.safeParse({
+        kind: "ssh",
+        target: "user@host",
+        remotePort: 22,
+        identityFile: "-oProxyCommand=calc",
+      }).success,
+    ).toBe(false);
+    expect(
+      RemoteConnection.safeParse({ kind: "ssh", target: "user@host", remotePort: 0 }).success,
+    ).toBe(false);
+    expect(
+      RemoteConnection.parse({
+        kind: "ssh",
+        target: "user@host.example",
+        remotePort: 22,
+        identityFile: "/home/user/.ssh/id_ed25519",
+      }).kind,
+    ).toBe("ssh");
   });
 
   it("rejects plain http on a public host for url connections", () => {
@@ -98,6 +127,18 @@ describe("remote contracts", () => {
       false,
     );
     expect(RemoteConnection.safeParse({ kind: "url", url: "ftp://localhost" }).success).toBe(false);
+    expect(
+      RemoteConnection.safeParse({ kind: "url", url: "http://evil.com@10.0.0.1" }).success,
+    ).toBe(false);
+    expect(
+      RemoteConnection.safeParse({ kind: "direct", url: "http://evil.com@10.0.0.1" }).success,
+    ).toBe(false);
+    expect(RemoteConnection.safeParse({ kind: "url", url: "http://[fd00::1]" }).success).toBe(true);
+    expect(RemoteConnection.safeParse({ kind: "url", url: "http://[fe80::1]" }).success).toBe(true);
+    expect(RemoteConnection.safeParse({ kind: "url", url: "http://[febf::1]" }).success).toBe(true);
+    expect(RemoteConnection.safeParse({ kind: "url", url: "http://[fec0::1]" }).success).toBe(
+      false,
+    );
 
     const allowed = [
       "https://example.com",
@@ -124,6 +165,9 @@ describe("remote contracts", () => {
       url: "http://100.64.0.1:4317",
     });
     expect(code.code).toBe("23456789");
+    expect(
+      PairingCode.parse({ code: "abcdefgh", expiresAt: at, url: "http://localhost" }).code,
+    ).toBe("ABCDEFGH");
     expect(
       PairingCode.safeParse({ code: "00000000", expiresAt: at, url: "http://localhost" }).success,
     ).toBe(false);

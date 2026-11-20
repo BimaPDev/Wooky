@@ -180,13 +180,18 @@ Schemas live in `packages/contracts`. Old logs omit the new fields and decode to
 ### Schemas
 
 - `DeviceId`, `DevicePlatform`, `DeviceInfo`
-- `RemoteConnection` — `tailscale` `{hostName, port, https}`, `direct` `{url}` (any http(s) URL),
-  `url` `{url}` (https, or http only for localhost, 127/8, `::1`, 10/8, 172.16/12, 192.168/16,
-  100.64/10, and `*.ts.net`), `ssh` `{target, remotePort, localPort?, identityFile?}`
+- `RemoteConnection` — `tailscale` `{hostName, port, https}`, `direct` `{url}` (any http(s) URL,
+  including a public host; the UI warns), `url` `{url}` (https, or http only for localhost, 127/8,
+  `::1`, 10/8, 172.16/12, 192.168/16, 100.64/10, `*.ts.net`, IPv6 ULA `fd00::/8`, and link-local
+  `fe80::/10`). Both `direct` and `url` reject userinfo (`@` in the authority). `ssh`
+  `{target, remotePort, localPort?, identityFile?}`: `target` matches
+  `^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$` and neither `target` nor `identityFile` may start with `-`.
+  Ports are integers from 1 to 65535.
 - `Environment` `{id, label, deviceId?, connection, addedAt}` — the local server is not stored
 - `PairedDevice` `{deviceId, name, platform, pairedAt, lastSeenAt, tokenHash, revoked}`
 - `PairedDeviceView` — `PairedDevice` without `tokenHash`
-- `PairingCode` `{code, expiresAt, url}` — `code` is 8 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ`
+- `PairingCode` `{code, expiresAt, url}` — `code` is uppercased, then checked as 8 characters from
+  `23456789ABCDEFGHJKMNPQRSTUVWXYZ`
 - `HostingSettings` `{enabled: false, bind: "tailscale", port: 4317, tailscaleServe: false}`
 - `PairRequest` `{code, device: DeviceInfo}`, `PairResponse` `{token, host: DeviceInfo}`
 - `TailscaleStatus` `{installed, running, hostName, ips}`
@@ -210,6 +215,9 @@ Schemas live in `packages/contracts`. Old logs omit the new fields and decode to
   `pty: false` is the pipe fallback
 - `PullRequest` `{url, number, state: open|merged|closed, branch}`
 - `ThreadMovedTo` `{deviceId, at}`, `ThreadMovedFrom` `{deviceId, threadId}`
+- `HistoryTurn` — a `Turn` whose status is `completed`, `interrupted`, or `failed` (not `running`)
+- `PendingClaim` `{claimId, ownerDeviceId, ownerThreadId, projectId, at}`
+- `ReplicaSlice` `{seq, threads, turns}`, `ReplicaModel` `{replicas: { [deviceId]: ReplicaSlice }}`
 
 `Project.settings` is `ProjectSettings` (default `{scripts: []}`).
 
@@ -217,10 +225,21 @@ Schemas live in `packages/contracts`. Old logs omit the new fields and decode to
 `pullRequest`, each defaulting to `null`.
 
 `DeviceSettings` adds `deviceName?`, `hosting`, `sync`, and `environments` (default `[]`).
-`DeviceSettingsPatch` still keeps only the keys that were sent. A patch of `{sync: {enabled: true}}`
-does not include `hosting` or `environments`. Nested objects are still parsed by their own
-schema, so omitted keys inside `sync` take `SyncSettings` defaults and the saved `sync` object
-is replaced as a whole, the same way `failover` already works.
+`DeviceSettingsPatch` keeps only the keys that were sent, and its nested objects are partial
+with no defaults. `{sync: {enabled: true}}` does not include `hosting`, `environments`, `peers`,
+`projectMap`, `categories`, `retention`, or `intervalSec`. `applySettingsPatch` in
+`@wooky/domain` deep-merges `sync` (including `categories` and `retention`), `hosting`, and
+`failover`. `peers` and `projectMap` replace the whole value when they are sent. Other
+top-level keys replace as before.
+
+`ReadModel.pendingClaims` defaults to `{}`. A `thread.claimRequested` adds one entry. A second
+request for the same owner device and thread, while one is still pending, changes nothing.
+`thread.claimFailed`, or a `thread.imported` that carries the same `claimId`, removes it.
+
+`ReplicaModel` is not on the local snapshot. A3 stores replica events apart from the local log
+and folds each owner's batch with `applyReplicaEvents(model, ownerDeviceId, events)`, which runs
+the same reducer. The slice keeps that owner's threads, turns, and the seq of the last applied
+replica event. Local threads stay local.
 
 `TerminalPush.kind` gains `replay`. `data` is the buffered scrollback.
 
@@ -231,10 +250,15 @@ Each carries `commandId`.
 - `project.configure` `{projectId, settings}` → `project.configured` `{projectId, settings}`
 - `thread.release` `{threadId, toDeviceId, force?}` → `thread.released` `{threadId, toDeviceId}`
   The release time is the event's `at`. The reducer sets `movedTo` to `{deviceId: toDeviceId, at}`.
-- `thread.import` `{sourceDeviceId, sourceThreadId, projectId, title, provider, model, transcript, turnsJson?}`
-  → `thread.imported` `{thread, sourceDeviceId, sourceThreadId, transcript, turnsJson?}`
-  The reducer creates that thread with `movedFrom` set from the source fields and an empty turn
-  list. `turnsJson` stays on the event; it is not folded into the read model.
+- `thread.claim` `{ownerDeviceId, ownerThreadId, projectId, force?}` → `thread.claimRequested`
+  `{claimId, ownerDeviceId, ownerThreadId, projectId}`. `claimId` is the command id. The time is
+  the event's `at`. Failure is `thread.claimFailed` `{claimId, reason}`. Success is
+  `thread.imported` with optional `claimId`.
+- `thread.import` `{sourceDeviceId, sourceThreadId, projectId, title, provider, model, transcript, historyTurns?}`
+  → `thread.imported` `{thread, sourceDeviceId, sourceThreadId, transcript, historyTurns, claimId?}`
+  `historyTurns` is at most 500 `HistoryTurn`s and defaults to `[]`. The reducer sets `movedFrom`,
+  remaps each turn's `threadId` to the new local thread, and stores them. A later `turn.started`
+  appends a new turn with its own id. `transcript` stays on the event for the provider handoff.
 
 ### Events
 
@@ -262,7 +286,9 @@ Params → result.
 - `terminal.list` `{}` → `TerminalInfo[]`
 - `terminal.attach` `{sessionId}` → `TerminalInfo` (the server then pushes `replay`)
 - `terminal.open` keeps `cwd`, `cols`, `rows`, and adds optional `projectId`, `scriptId`, `size`.
-  The result is `TerminalInfo` plus optional `lineEnding` (`"\n"` | `"\r\n"`).
+  The result is still `{sessionId, shell, lineEnding?}`. `TerminalInfo` fields (`title`, `cwd`,
+  `pty`, `createdAt`, `exited`, `projectId`, `scriptId`) are optional on this result until T1
+  fills them. `terminal.list`, `terminal.attach`, and `scripts.run` return `TerminalInfo`.
 - `scripts.run` `{projectId, scriptId, threadId?}` → `TerminalInfo`
 - `git.status` `{threadId}` → `{branch, upstream, ahead, behind, dirty, hasRemote, ghAvailable, ghAuthed}`
 - `git.commit` `{threadId, message}` → `{sha}`

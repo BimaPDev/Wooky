@@ -23,6 +23,7 @@ export function emptyReadModel(): ReadModel {
     cooldowns: {},
     groups: {},
     reviewNotes: {},
+    pendingClaims: {},
   };
 }
 
@@ -444,6 +445,37 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
         movedTo: { deviceId: event.toDeviceId, at: event.at },
       });
 
+    case "thread.claimRequested": {
+      const pending = model.pendingClaims ?? {};
+      if (pending[event.claimId]) return model;
+      const duplicate = Object.values(pending).some(
+        (claim) =>
+          claim.ownerDeviceId === event.ownerDeviceId &&
+          claim.ownerThreadId === event.ownerThreadId,
+      );
+      if (duplicate) return model;
+      return {
+        ...model,
+        pendingClaims: {
+          ...pending,
+          [event.claimId]: {
+            claimId: event.claimId,
+            ownerDeviceId: event.ownerDeviceId,
+            ownerThreadId: event.ownerThreadId,
+            projectId: event.projectId,
+            at: event.at,
+          },
+        },
+      };
+    }
+
+    case "thread.claimFailed": {
+      const pending = model.pendingClaims ?? {};
+      if (!pending[event.claimId]) return model;
+      const { [event.claimId]: _gone, ...rest } = pending;
+      return { ...model, pendingClaims: rest };
+    }
+
     case "thread.imported": {
       const thread = presentThread({
         ...event.thread,
@@ -452,10 +484,20 @@ function reduce(model: ReadModel, event: AgeEvent): ReadModel {
           threadId: event.sourceThreadId,
         },
       });
+      const history = (event.historyTurns ?? []).map((turn) => ({
+        ...turn,
+        threadId: thread.id,
+      }));
+      const pending = model.pendingClaims ?? {};
+      const pendingClaims =
+        event.claimId && pending[event.claimId]
+          ? Object.fromEntries(Object.entries(pending).filter(([id]) => id !== event.claimId))
+          : pending;
       return {
         ...model,
         threads: { ...model.threads, [thread.id]: thread },
-        turns: { ...model.turns, [thread.id]: [] },
+        turns: { ...model.turns, [thread.id]: history },
+        pendingClaims,
       };
     }
 

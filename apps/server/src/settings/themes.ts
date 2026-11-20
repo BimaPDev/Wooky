@@ -6,7 +6,9 @@ import {
   DeviceSettings,
   type AppearanceTheme as Theme,
   type DeviceSettings as Settings,
+  type DeviceSettingsPatch,
 } from "@wooky/contracts";
+import { applySettingsPatch } from "@wooky/domain";
 import { ServiceError } from "../errors.ts";
 import { getBuiltinWallpaperThemes } from "./builtin-wallpapers.ts";
 import { importTheme as parseImport } from "./theme-import.ts";
@@ -221,8 +223,8 @@ export function createThemeStore(home: string) {
     return readSettings();
   }
 
-  function putSettings(patch: Partial<Settings>): Settings {
-    const next = DeviceSettings.parse({ ...readSettings(), ...patch });
+  function putSettings(patch: DeviceSettingsPatch): Settings {
+    const next = applySettingsPatch(readSettings(), patch);
     if (patch.activeThemeId !== undefined) get(next.activeThemeId);
     return writeSettings(next);
   }

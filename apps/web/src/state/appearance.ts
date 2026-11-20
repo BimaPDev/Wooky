@@ -525,8 +525,8 @@ export function applyColorMode(mode: DeviceSettings["colorMode"]) {
 }
 
 export async function patchDeviceSettings(patch: Partial<DeviceSettings>) {
-  // `settings.put` parses its patch with `DeviceSettings.partial()`, which still fills defaults
-  // for absent keys and so resets them on the server. Sending every key keeps them.
+  // The server deep-merges sync, hosting, and failover. This still sends the stored
+  // settings plus the patch; omitted nested keys are filled from what is saved.
   const current = useStore.getState().deviceSettings;
   const settings = await backend().call("settings.put", { settings: { ...current, ...patch } });
   useStore.setState({ deviceSettings: settings });

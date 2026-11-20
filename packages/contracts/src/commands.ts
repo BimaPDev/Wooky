@@ -3,6 +3,7 @@ import { ModelTarget, TurnFailure } from "./failover.ts";
 import {
   EffortLevel,
   FLEET_LIMITS,
+  HistoryTurn,
   Id,
   InteractionMode,
   ProviderKind,
@@ -193,8 +194,20 @@ export const Command = z.discriminatedUnion("type", [
     force: z.boolean().optional(),
   }),
   /**
-   * Create a local thread from a peer's copy. `transcript` is the handoff context.
-   * `turnsJson` is the peer's turn list, kept on the event and not projected.
+   * Ask the owner to release a thread, then import it here. `commandId` is the claim id.
+   * A second claim for the same owner thread is rejected while one is pending.
+   */
+  z.object({
+    ...base,
+    type: z.literal("thread.claim"),
+    ownerDeviceId: DeviceId,
+    ownerThreadId: Id,
+    projectId: Id,
+    force: z.boolean().optional(),
+  }),
+  /**
+   * Create a local thread from a peer's copy. `transcript` is the provider handoff.
+   * `historyTurns` are finished turns, remapped onto the new thread by the reducer.
    */
   z.object({
     ...base,
@@ -206,7 +219,7 @@ export const Command = z.discriminatedUnion("type", [
     provider: ProviderKind,
     model: z.string().min(1),
     transcript: z.string(),
-    turnsJson: z.unknown().optional(),
+    historyTurns: z.array(HistoryTurn).max(500).optional(),
   }),
 ]);
 export type Command = z.infer<typeof Command>;

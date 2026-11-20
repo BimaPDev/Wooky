@@ -19,7 +19,7 @@ import {
   type UsageHistoryResult,
   type UsageWindowDays,
 } from "@wooky/contracts";
-import { fleetRows } from "@wooky/domain";
+import { applySettingsPatch, fleetRows } from "@wooky/domain";
 import { receiveEvent, useStore } from "../state/store.ts";
 import {
   looksLikeSvg,
@@ -915,6 +915,7 @@ export const fixtureModel: ReadModel = {
       },
     ],
   },
+  pendingClaims: {},
 };
 
 export const fixtureProviders: ProviderStatus[] = [
@@ -1456,7 +1457,10 @@ function respond(method: RpcMethod, params: unknown): unknown {
     case "settings.get":
       return fixtureSettings;
     case "settings.put": {
-      fixtureSettings = { ...fixtureSettings, ...(params as RpcParams<"settings.put">).settings };
+      fixtureSettings = applySettingsPatch(
+        fixtureSettings,
+        (params as RpcParams<"settings.put">).settings,
+      );
       return fixtureSettings;
     }
     case "themes.list":

@@ -22,33 +22,58 @@ export type DeviceInfo = z.infer<typeof DeviceInfo>;
 const PAIRING_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 const PAIRING_CODE_PATTERN = new RegExp(`^[${PAIRING_ALPHABET}]{8}$`);
 
-export const PairingCodeText = z
-  .string()
-  .regex(PAIRING_CODE_PATTERN, "Expected an 8-character pairing code");
+export const PairingCodeText = z.string().transform((value, ctx) => {
+  const code = value.toUpperCase();
+  if (!PAIRING_CODE_PATTERN.test(code)) {
+    ctx.addIssue({ code: "custom", message: "Expected an 8-character pairing code" });
+    return z.NEVER;
+  }
+  return code;
+});
 export type PairingCodeText = z.infer<typeof PairingCodeText>;
 
 /** Protocol and host only. Contracts cannot use the DOM `URL` type. */
-function parseHttpUrl(value: string): { protocol: "http:" | "https:"; hostname: string } | null {
+function parseHttpUrl(
+  value: string,
+): { protocol: "http:" | "https:"; hostname: string; userinfo: boolean } | null {
   const match = /^(https?):\/\/([^/?#]*)/i.exec(value);
   if (!match) return null;
   const protocol = match[1]?.toLowerCase() === "https" ? "https:" : "http:";
-  let host = match[2] ?? "";
-  const at = host.lastIndexOf("@");
-  if (at >= 0) host = host.slice(at + 1);
+  let authority = match[2] ?? "";
+  const at = authority.lastIndexOf("@");
+  const userinfo = at >= 0;
+  if (userinfo) authority = authority.slice(at + 1);
   let hostname: string;
-  if (host.startsWith("[")) {
-    const end = host.indexOf("]");
+  if (authority.startsWith("[")) {
+    const end = authority.indexOf("]");
     if (end < 1) return null;
-    hostname = host.slice(1, end);
+    hostname = authority.slice(1, end);
   } else {
-    hostname = host.split(":")[0] ?? "";
+    hostname = authority.split(":")[0] ?? "";
   }
   if (!hostname) return null;
-  return { protocol, hostname };
+  return { protocol, hostname, userinfo };
 }
 
 function isHttpUrl(value: string): boolean {
-  return parseHttpUrl(value) !== null;
+  const url = parseHttpUrl(value);
+  return url !== null && !url.userinfo;
+}
+
+/** First hextet of an IPv6 address, or null when the text is not one. */
+function firstHextet(host: string): number | null {
+  if (host.startsWith("::")) return 0;
+  const head = host.split(":")[0] ?? "";
+  if (!/^[0-9a-f]{1,4}$/.test(head)) return null;
+  return Number.parseInt(head, 16);
+}
+
+function isIpv6Private(host: string): boolean {
+  const bare = host.split("%")[0] ?? host;
+  const first = firstHextet(bare);
+  if (first === null) return false;
+  if (first >= 0xfd00 && first <= 0xfdff) return true;
+  return first >= 0xfe80 && first <= 0xfebf;
 }
 
 function isPrivateOrLoopbackHost(hostname: string): boolean {
@@ -56,6 +81,7 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   if (host === "::1") return true;
   if (host.endsWith(".ts.net")) return true;
+  if (host.includes(":") && isIpv6Private(host)) return true;
 
   const mapped = host.startsWith("::ffff:") ? host.slice("::ffff:".length) : host;
   const parts = mapped.split(".");
@@ -74,7 +100,7 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
 /** `url` connections: https anywhere, http only on loopback, private, tailnet, or *.ts.net. */
 function isAllowedUrlConnection(value: string): boolean {
   const url = parseHttpUrl(value);
-  if (!url) return false;
+  if (!url || url.userinfo) return false;
   if (url.protocol === "https:") return true;
   return isPrivateOrLoopbackHost(url.hostname);
 }
@@ -109,11 +135,18 @@ export const RemoteConnection = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("ssh"),
-    /** `user@host` passed to `ssh -N -L`. */
-    target: z.string().regex(/^[^\s@]+@[^\s@]+$/, "Expected user@host"),
+    /** `user@host` passed to `ssh -N -L`. No leading dash, so it cannot be an ssh option. */
+    target: z
+      .string()
+      .regex(/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$/, "Expected user@host")
+      .refine((value) => !value.startsWith("-"), "Target must not start with -"),
     remotePort: Port,
     localPort: Port.optional(),
-    identityFile: z.string().min(1).optional(),
+    identityFile: z
+      .string()
+      .min(1)
+      .refine((value) => !value.startsWith("-"), "Identity file must not start with -")
+      .optional(),
   }),
 ]);
 export type RemoteConnection = z.infer<typeof RemoteConnection>;

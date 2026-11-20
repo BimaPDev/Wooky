@@ -173,6 +173,8 @@ export function decide(model: ReadModel, command: Command, ctx: DecideContext): 
       throw new Error("not implemented");
     case "thread.import":
       throw new Error("not implemented");
+    case "thread.claim":
+      throw new Error("not implemented");
   }
 }
 

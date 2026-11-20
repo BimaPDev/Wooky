@@ -24,7 +24,6 @@ import type { ThemeStore } from "../settings/themes.ts";
 import type { EventStore } from "../store/event-store.ts";
 import { openSignInTerminal } from "../terminal/login.ts";
 import type { TerminalManager } from "../terminal/session.ts";
-import { defaultCwd } from "../terminal/shell.ts";
 import type { ScratchService } from "../scratch.ts";
 import type { FleetService } from "../fleet/service.ts";
 import type { HistoryService } from "../usage/history.ts";
@@ -152,24 +151,10 @@ function createHandlers(
       notifyThemes([]);
       return settings;
     },
-    "terminal.open": ({ cwd, cols, rows, projectId, scriptId, size }, conn) => {
-      const opened = terminals.open(
-        { cwd, cols: size?.cols ?? cols, rows: size?.rows ?? rows },
-        (message) => conn.send(message),
-      );
+    "terminal.open": ({ cwd, cols, rows }, conn) => {
+      const opened = terminals.open({ cwd, cols, rows }, (message) => conn.send(message));
       conn.trackTerminal(opened.sessionId);
-      return {
-        sessionId: opened.sessionId,
-        shell: opened.shell,
-        lineEnding: opened.lineEnding,
-        title: opened.shell,
-        cwd: defaultCwd(cwd),
-        pty: false,
-        createdAt: new Date().toISOString(),
-        exited: false,
-        projectId: projectId ?? null,
-        scriptId: scriptId ?? null,
-      };
+      return opened;
     },
     "terminal.write": ({ sessionId, data }) => {
       terminals.write(sessionId, data);
@@ -241,7 +226,7 @@ function createHandlers(
 }
 
 function notImplemented(): never {
-  throw new Error("not implemented");
+  throw new ServiceError("unavailable", "not implemented");
 }
 
 /** Attaches the RPC WebSocket at WOOKY_WS_PATH. Returns a function that closes every socket. */

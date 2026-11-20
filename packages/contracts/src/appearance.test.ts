@@ -157,8 +157,6 @@ describe("DeviceSettingsPatch", () => {
     const patch = DeviceSettingsPatch.parse({ sync: { enabled: true } });
     expect(patch.hosting).toBeUndefined();
     expect(patch.environments).toBeUndefined();
-    expect(Object.keys(patch)).toEqual(["sync"]);
-    expect(patch.sync?.enabled).toBe(true);
-    expect(patch.sync?.intervalSec).toBe(30);
+    expect(patch).toEqual({ sync: { enabled: true } });
   });
 });

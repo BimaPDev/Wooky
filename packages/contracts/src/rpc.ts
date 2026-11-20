@@ -16,6 +16,7 @@ import {
   FleetRow,
   FleetStatus,
   Id,
+  IsoTime,
   Project,
   ProviderKind,
   ProviderStatus,
@@ -50,6 +51,15 @@ export const Attachment = z.object({
 });
 export type Attachment = z.infer<typeof Attachment>;
 
+export const PendingClaim = z.object({
+  claimId: Id,
+  ownerDeviceId: DeviceId,
+  ownerThreadId: Id,
+  projectId: Id,
+  at: IsoTime,
+});
+export type PendingClaim = z.infer<typeof PendingClaim>;
+
 export const ReadModel = z.object({
   /** Sequence of the last event applied to this snapshot. */
   seq: z.number().int().nonnegative(),
@@ -62,8 +72,26 @@ export const ReadModel = z.object({
   groups: z.record(z.string(), ThreadGroup).default({}),
   /** Review notes keyed by thread, insertion order. Absent on older snapshots. */
   reviewNotes: z.record(z.string(), z.array(ReviewNote)).default({}),
+  /** In-flight "continue on this device" requests. Absent on older snapshots. */
+  pendingClaims: z.record(z.string(), PendingClaim).default({}),
 });
 export type ReadModel = z.infer<typeof ReadModel>;
+
+/**
+ * Thread replicas live beside the local read model. `seq` is the last replica
+ * event applied for that owner, so a replayed overlap is ignored.
+ */
+export const ReplicaSlice = z.object({
+  seq: z.number().int().nonnegative().default(0),
+  threads: z.record(z.string(), Thread).default({}),
+  turns: z.record(z.string(), z.array(Turn)).default({}),
+});
+export type ReplicaSlice = z.infer<typeof ReplicaSlice>;
+
+export const ReplicaModel = z.object({
+  replicas: z.record(DeviceId, ReplicaSlice).default({}),
+});
+export type ReplicaModel = z.infer<typeof ReplicaModel>;
 
 /** What `git.mergePreview` returns before a merge is attempted. */
 export const MergePreview = z.object({
@@ -198,9 +226,18 @@ export const RpcMethods = {
       scriptId: Id.optional(),
       size: TerminalSize.optional(),
     }),
-    result: TerminalInfo.extend({
+    result: z.object({
+      sessionId: TerminalSessionId,
+      shell: z.string(),
       /** CRLF on Windows shells, LF elsewhere. Absent on older servers; clients use LF. */
       lineEnding: z.enum(["\n", "\r\n"]).optional(),
+      title: z.string().optional(),
+      cwd: z.string().optional(),
+      pty: z.boolean().optional(),
+      createdAt: z.string().optional(),
+      exited: z.boolean().optional(),
+      projectId: Id.nullable().optional(),
+      scriptId: Id.nullable().optional(),
     }),
   },
   "terminal.list": { params: z.object({}), result: z.array(TerminalInfo) },
