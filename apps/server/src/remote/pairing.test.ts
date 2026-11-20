@@ -172,6 +172,42 @@ describe("pairing", () => {
     expect(seenAgain.devices[0]?.lastSeenAt).toBe(firstSeen);
   });
 
+  it("marks the cookie Secure when the pairing page came from HTTPS", async () => {
+    const { server } = await boot(
+      () => Date.parse("2026-06-01T00:00:00.000Z"),
+      (header) => header,
+    );
+    const client = await rpc(server);
+    const remote = { "x-wooky-remote-address": "203.0.113.20" };
+    const codeFor = async () => {
+      const created = await client.call("remote.pairingCode.create");
+      if (!created.ok) throw new Error("code was not created");
+      return (created.result as { code: string }).code;
+    };
+
+    const https = await postPair(
+      server,
+      { code: await codeFor(), device },
+      {
+        ...remote,
+        origin: "https://wooky.example",
+      },
+    );
+    expect(https.status).toBe(200);
+    expect(https.headers.getSetCookie().join(";")).toContain("Secure");
+
+    const http = await postPair(
+      server,
+      { code: await codeFor(), device },
+      {
+        ...remote,
+        origin: "http://wooky.example",
+      },
+    );
+    expect(http.status).toBe(200);
+    expect(http.headers.getSetCookie().join(";")).not.toContain("Secure");
+  });
+
   it("expires a code when the clock passes ten minutes", async () => {
     let now = Date.parse("2026-06-01T00:00:00.000Z");
     const { server } = await boot(() => now);

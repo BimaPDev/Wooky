@@ -109,7 +109,15 @@ function requestSecure(req: IncomingMessage): boolean {
   const forwarded = req.headers["x-forwarded-proto"];
   const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   const proto = value?.split(",")[0]?.trim().toLowerCase();
-  return proto === "https" && isLoopbackAddress(req.socket.remoteAddress);
+  if (proto === "https" && isLoopbackAddress(req.socket.remoteAddress)) return true;
+  const origin = req.headers.origin;
+  const raw = Array.isArray(origin) ? origin[0] : origin;
+  if (!raw) return false;
+  try {
+    return new URL(raw).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function cookie(token: string, secure: boolean): string {
