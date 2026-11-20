@@ -14,6 +14,7 @@ import {
   InitializeResult,
   METHOD_NOT_FOUND_CODE,
   PromptResult,
+  LoadSessionResult,
   SessionResult,
   SessionUpdateParams,
   initializeParams,
@@ -151,9 +152,9 @@ export async function* runAcpTurn(
         const loaded = await client.request(
           "session/load",
           { sessionId: input.resumeSessionId, cwd, mcpServers: [] },
-          SessionResult,
+          LoadSessionResult,
         );
-        sessionId = loaded.sessionId;
+        sessionId = loaded.sessionId ?? input.resumeSessionId;
         configOptions = loaded.configOptions ?? [];
         resuming = true;
       } catch (error) {

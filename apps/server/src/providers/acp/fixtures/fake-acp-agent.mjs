@@ -233,8 +233,9 @@ async function handle(message) {
   }
   if (message.method === "session/new" || message.method === "session/load") {
     const options = configOptions();
+    // Real agents (opencode 1.19) answer session/load without a sessionId.
     reply(message.id, {
-      sessionId: "sess_fake_1",
+      ...(message.method === "session/new" ? { sessionId: "sess_fake_1" } : {}),
       ...(options ? { configOptions: options } : {}),
     });
     return;

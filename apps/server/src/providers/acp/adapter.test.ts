@@ -334,6 +334,15 @@ describe("ACP adapter", () => {
       ),
     );
     expect(doneOf(resumed)?.status).toBe("completed");
+    // Recorded from `opencode acp` 1.19.6: session/load answers without a sessionId, and the
+    // session must stay the one that was loaded instead of falling back to a new one.
+    expect(resumed.find((event) => event.type === "session")).toEqual({
+      type: "session",
+      sessionId: "sess_old",
+    });
+    expect(resumed.some((event) => event.type === "item" && event.item.kind === "notice")).toBe(
+      false,
+    );
     const loaded = await readLog(log);
     expect(loaded.some((entry) => entry.method === "session/load")).toBe(true);
     expect(loaded.some((entry) => entry.method === "session/new")).toBe(false);
