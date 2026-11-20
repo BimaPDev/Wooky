@@ -10,6 +10,9 @@ import {
 import { backend } from "../state/backend.ts";
 import { draftProjectId, useStore } from "../state/store.ts";
 
+/** Stable empty list: a selector returning a fresh [] re-renders forever (React #185). */
+const NO_PROMPTS: readonly ProjectPrompt[] = [];
+
 export const PROMPT_PICK_PREFIX = "prompt:";
 
 export function promptPickId(id: string): string {
@@ -90,7 +93,9 @@ export function useComposerMenu(threadId: string | null, text: string, caret: nu
   const prompts = useStore((state) => {
     const thread = threadId ? state.model.threads[threadId] : undefined;
     const projectId = thread?.projectId ?? draftProjectId(state);
-    return (projectId ? state.model.projects[projectId]?.settings.prompts : undefined) ?? [];
+    return (
+      (projectId ? state.model.projects[projectId]?.settings.prompts : undefined) ?? NO_PROMPTS
+    );
   });
 
   const slashItems =

@@ -1,5 +1,5 @@
 import type { DeviceSettings, SyncCategories } from "@wooky/contracts";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { backend } from "../../../state/backend.ts";
 import {
   putSettings,
@@ -44,8 +44,11 @@ export function SyncSection({ settings }: { settings: DeviceSettings }) {
   const [syncing, setSyncing] = useState(false);
 
   const peers = peerChoices(settings, device?.deviceId ?? null, paired);
-  const liveProjects = useStore((state) =>
-    Object.values(state.model.projects).filter((project) => project.scratch !== true),
+  // Select the stable map and derive in render: a fresh array from the selector loops forever.
+  const projects = useStore((state) => state.model.projects);
+  const liveProjects = useMemo(
+    () => Object.values(projects).filter((project) => project.scratch !== true),
+    [projects],
   );
 
   const syncNow = async () => {
