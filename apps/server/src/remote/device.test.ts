@@ -1,7 +1,9 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { platform } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tempDir } from "../testing.ts";
-import { createDevice } from "./device.ts";
+import { createDevice, loadDeviceIdentity } from "./device.ts";
 
 async function open(home: string) {
   return createDevice({
@@ -26,5 +28,21 @@ describe("device identity", () => {
     writeFileSync(first.path, "{ not json");
     await expect(open(home)).rejects.toThrow(/Could not read/);
     expect(readFileSync(first.path, "utf8")).toBe("{ not json");
+  });
+
+  it("loadDeviceIdentity writes {deviceId, createdAt} in private mode and accepts an existing file", async () => {
+    const home = await tempDir("device-loader");
+    const createdAt = "2026-06-01T00:00:00.000Z";
+    const first = loadDeviceIdentity(home, () => createdAt);
+    expect(first).toEqual({ deviceId: expect.any(String), createdAt });
+    const file = join(home, "device.json");
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(first);
+    const privateMode = platform() === "win32" || (statSync(file).mode & 0o777) === 0o600;
+    expect(privateMode).toBe(true);
+
+    // A second loader, or one that races creation, reads the same file rather than replacing it.
+    expect(loadDeviceIdentity(home, () => "2026-07-01T00:00:00.000Z")).toEqual(first);
+    writeFileSync(file, JSON.stringify({ deviceId: "existing", createdAt: "earlier" }));
+    expect(loadDeviceIdentity(home)).toEqual({ deviceId: "existing", createdAt: "earlier" });
   });
 });

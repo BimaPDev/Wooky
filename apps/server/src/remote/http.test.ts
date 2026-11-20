@@ -13,14 +13,14 @@ describe("isPublicShell", () => {
       "/manifest.json",
       "/project/abc",
     ]) {
-      expect(isPublicShell("GET", path), path).toBe(true);
+      expect(isPublicShell("GET", path)).toBe(true);
     }
     expect(isPublicShell("HEAD", "/")).toBe(true);
   });
 
   it("keeps health, sockets, sync and writes authenticated", () => {
     for (const path of ["/healthz", "/ws", "/sync", "/sync/snapshots"]) {
-      expect(isPublicShell("GET", path), path).toBe(false);
+      expect(isPublicShell("GET", path)).toBe(false);
     }
     expect(isPublicShell("POST", "/")).toBe(false);
     expect(isPublicShell("DELETE", "/assets/app.js")).toBe(false);

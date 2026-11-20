@@ -41,16 +41,12 @@ function errorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-export function createDevice(options: {
-  home: string;
-  getSettings: () => DeviceSettings;
-  putSettings: (patch: DeviceSettingsPatch) => DeviceSettings;
-  now?: () => string;
-}) {
-  const path = join(options.home, "device.json");
-  const now = options.now ?? (() => new Date().toISOString());
-  const version = serverVersion();
-  const record = loadOrCreate();
+/** The single loader for WOOKY_HOME/device.json: reads one, or creates it once with mode 0600. */
+export function loadDeviceIdentity(
+  home: string,
+  now: () => string = () => new Date().toISOString(),
+): z.infer<typeof DeviceFile> {
+  const path = join(home, "device.json");
 
   function readExisting(): z.infer<typeof DeviceFile> {
     let raw: unknown;
@@ -65,21 +61,30 @@ export function createDevice(options: {
     return parsed.data;
   }
 
-  function loadOrCreate(): z.infer<typeof DeviceFile> {
-    try {
-      return readExisting();
-    } catch (error) {
-      if (errorCode(error) !== "ENOENT") throw error;
-    }
-    const created = { deviceId: randomUUID(), createdAt: now() };
-    try {
-      writeFileSync(path, JSON.stringify(created, null, 2), { flag: "wx", mode: 0o600 });
-      return created;
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
-    }
+  try {
     return readExisting();
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
   }
+  const created = { deviceId: randomUUID(), createdAt: now() };
+  try {
+    writeFileSync(path, JSON.stringify(created, null, 2), { flag: "wx", mode: 0o600 });
+    return created;
+  } catch (error) {
+    if (errorCode(error) !== "EEXIST") throw error;
+  }
+  return readExisting();
+}
+
+export function createDevice(options: {
+  home: string;
+  getSettings: () => DeviceSettings;
+  putSettings: (patch: DeviceSettingsPatch) => DeviceSettings;
+  now?: () => string;
+}) {
+  const path = join(options.home, "device.json");
+  const version = serverVersion();
+  const record = loadDeviceIdentity(options.home, options.now);
 
   function displayName(): string {
     const configured = options.getSettings().deviceName?.trim();
