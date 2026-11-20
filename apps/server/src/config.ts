@@ -45,7 +45,12 @@ export function resolveConfig(
     },
   });
   if (values.help) return "help";
-  const webDist = values["web-dist"] ?? env.WOOKY_WEB_DIST;
+  // `pnpm --filter` runs from the package directory; a relative --web-dist means the
+  // directory the user typed the command in, which pnpm and npm report as INIT_CWD.
+  const webDist =
+    values["web-dist"] !== undefined
+      ? resolve(env.INIT_CWD ?? process.cwd(), values["web-dist"])
+      : env.WOOKY_WEB_DIST;
   const home = resolve(values.home ?? env.WOOKY_HOME ?? join(homedir(), ".wooky"));
   const explicitPort = values.port ?? env.WOOKY_PORT;
   const port =

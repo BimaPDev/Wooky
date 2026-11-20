@@ -18,6 +18,14 @@ describe("resolveConfig", () => {
     });
   });
 
+  it("resolves a relative --web-dist against the directory the command was typed in", () => {
+    const typedIn = resolve("/typed/in");
+    expect(resolveConfig(["--web-dist", "apps/web/dist"], { INIT_CWD: typedIn })).toMatchObject({
+      webDist: join(typedIn, "apps/web/dist"),
+    });
+    expect(resolveConfig(["--web-dist", "dist"], {})).toMatchObject({ webDist: resolve("dist") });
+  });
+
   it("prefers flags over environment variables", () => {
     const env = { WOOKY_HOME: "/env/home", WOOKY_PORT: "5000", WOOKY_WEB_DIST: "/env/web" };
     expect(resolveConfig([], env)).toMatchObject({
