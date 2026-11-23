@@ -10,6 +10,7 @@ export const BRAIN_SUMMARY_MAX = 200;
 export const BRAIN_BODY_MAX_BYTES = 16 * 1024;
 export const BRAIN_MAX_MEMORIES = 2000;
 export const BRAIN_INBOX_MAX = 200;
+export const BRAIN_INBOX_MAX_PER_THREAD = 20;
 
 const SEGMENT = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/;
@@ -255,5 +256,18 @@ export const BrainInboxProposal = z.object({
   frontmatter: MemoryFrontmatter,
   body: z.string(),
   createdAt: z.iso.datetime(),
+  /** The target's `updatedAt` when this was proposed, or null when it did not exist. */
+  baseUpdatedAt: z.string().nullable(),
+  /** Set when the memory was written but the file could not be removed. The proposal is spent. */
+  consumedAt: z.iso.datetime().optional(),
 });
 export type BrainInboxProposal = z.infer<typeof BrainInboxProposal>;
+
+/** A proposal as listed: what approving it would do to the target as it is now. */
+export const BrainInboxItem = BrainInboxProposal.extend({
+  overwrites: z.boolean(),
+  existingSummary: z.string().optional(),
+  /** The target changed since the proposal was made, so approving it would be a conflict. */
+  stale: z.boolean(),
+});
+export type BrainInboxItem = z.infer<typeof BrainInboxItem>;

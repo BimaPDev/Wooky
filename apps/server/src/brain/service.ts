@@ -11,6 +11,7 @@ import type { AgentTokenService } from "../fleet/agent-token.ts";
 import { createBrainInbox } from "./inbox.ts";
 import type { BrainLog } from "./paths.ts";
 import type { BrainStore } from "./store.ts";
+import { sanitizeAgentFrontmatter } from "./trust.ts";
 
 const DEFAULT_SEARCH_LIMIT = 20;
 
@@ -129,36 +130,42 @@ export function createBrainService(deps: BrainServiceDeps): BrainService {
     write(params) {
       const caller = resolveCaller(params.agentToken);
       const parsed = parseUriOrThrow(params.uri);
-      if (caller.kind === "agent") {
-        const stampedFrontmatter = {
-          ...params.frontmatter,
-          source: {
-            threadId: caller.threadId,
-            agent: caller.agent,
-            at: clock(),
-          },
+      const writeOptions =
+        params.expectedUpdatedAt === undefined
+          ? {}
+          : { expectedUpdatedAt: params.expectedUpdatedAt };
+
+      // `propose` only ever lowers privilege: a caller without a token (a host that did not pass
+      // the environment on) asks for the inbox and gets it. Nothing here lets a flag skip it.
+      if (parsed.scope.kind === "global" && (caller.kind === "agent" || params.propose === true)) {
+        const source =
+          caller.kind === "agent"
+            ? { threadId: caller.threadId, agent: caller.agent, at: clock() }
+            : { agent: "mcp", at: clock() };
+        const proposal = inbox.propose(params.uri, {
+          frontmatter: { ...sanitizeAgentFrontmatter(params.frontmatter), source },
+          body: params.body,
+        });
+        return {
+          uri: proposal.targetUri,
+          updatedAt: proposal.createdAt,
+          created: false,
+          queued: true,
+          proposalId: proposal.id,
+          message: "Queued in the brain inbox for user approval.",
         };
-        if (parsed.scope.kind === "global") {
-          const proposal = inbox.propose(params.uri, {
-            frontmatter: stampedFrontmatter,
-            body: params.body,
-          });
-          return {
-            uri: proposal.targetUri,
-            updatedAt: proposal.createdAt,
-            created: false,
-            queued: true,
-            proposalId: proposal.id,
-            message: "Queued in the brain inbox for user approval.",
-          };
-        }
+      }
+
+      if (caller.kind === "agent") {
         assertWritableProjectScope(caller, parsed.scope);
+        const stamped = {
+          ...sanitizeAgentFrontmatter(params.frontmatter),
+          source: { threadId: caller.threadId, agent: caller.agent, at: clock() },
+        };
         const written = brainStore.write(
           params.uri,
-          { frontmatter: stampedFrontmatter as MemoryFrontmatterInput, body: params.body },
-          params.expectedUpdatedAt === undefined
-            ? {}
-            : { expectedUpdatedAt: params.expectedUpdatedAt },
+          { frontmatter: stamped as MemoryFrontmatterInput, body: params.body },
+          writeOptions,
         );
         return { ...written, queued: false };
       }
@@ -166,9 +173,7 @@ export function createBrainService(deps: BrainServiceDeps): BrainService {
       const written = brainStore.write(
         params.uri,
         { frontmatter: params.frontmatter as MemoryFrontmatterInput, body: params.body },
-        params.expectedUpdatedAt === undefined
-          ? {}
-          : { expectedUpdatedAt: params.expectedUpdatedAt },
+        writeOptions,
       );
       return { ...written, queued: false };
     },
@@ -241,7 +246,7 @@ export function createBrainService(deps: BrainServiceDeps): BrainService {
     inboxApprove(params) {
       const caller = resolveCaller(params.agentToken);
       requireUser(caller, "Agents may not approve brain proposals.");
-      return inbox.approve(params.id);
+      return inbox.approve(params.id, params.edits);
     },
 
     inboxReject(params) {

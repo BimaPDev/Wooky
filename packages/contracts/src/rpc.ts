@@ -8,7 +8,7 @@ import {
 } from "./appearance.ts";
 import {
   BrainEntry,
-  BrainInboxProposal,
+  BrainInboxItem,
   BrainScope,
   BrainSearchHit,
   BrainTier,
@@ -528,7 +528,10 @@ export const RpcMethods = {
       uri: BrainUri,
       frontmatter: BrainWriteFrontmatter,
       body: z.string(),
-      expectedUpdatedAt: z.string().optional(),
+      /** A stamp: update only if it matches. `null`: create only, the file must not exist. */
+      expectedUpdatedAt: z.string().nullable().optional(),
+      /** Downgrade only: a global write goes to the inbox even for a user. Never raises privilege. */
+      propose: z.boolean().optional(),
       ...AgentsAuthFields,
     }),
     result: z.object({
@@ -574,11 +577,13 @@ export const RpcMethods = {
   },
   "brain.inbox.list": {
     params: z.object({ ...AgentsAuthFields }),
-    result: z.array(BrainInboxProposal),
+    result: z.array(BrainInboxItem),
   },
   "brain.inbox.approve": {
     params: z.object({
       id: z.string().min(1),
+      /** The user's edits, applied in the same step as the approval. */
+      edits: z.object({ frontmatter: BrainWriteFrontmatter, body: z.string() }).optional(),
       ...AgentsAuthFields,
     }),
     result: z.object({

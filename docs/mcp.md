@@ -12,9 +12,14 @@ server speaks. That is MCP's negotiation rule: the server picks the version, and
 disconnects if it cannot use it.
 
 `wooky_approve` is not in the tool list unless the process is started with `--allow-approvals`.
-`--read-only` exposes only overview, list, read, and wait. `--projects id,id` limits every tool
+`--read-only` exposes only overview, list, read, and wait, plus the brain read tools. `--projects id,id` limits every tool
 to those projects; any other project id is rejected. Filesystem and folder-picker RPCs are not
 exposed.
+
+`--allow-global-write` lets `brain_write` save a global memory directly when the process has no
+agent token. Without it, every global write goes to the brain inbox for approval. A host that
+passes an environment allowlist drops `WOOKY_AGENT_TOKEN`, so this default keeps an agent from
+writing global memory as the user. See `docs/brain.md`.
 
 A task is a new thread plus its first turn, the same two commands the composer sends
 (`thread.create`, then `turn.start`). `runtimeMode` defaults to `approve`. `auto-edits` and
@@ -89,3 +94,6 @@ the client's env when this process should talk to a server that is not the defau
 | `wooky_read`         | `threadId`, `sinceTurn?`. Final assistant text of each turn, plus a diff stat. About 20000 characters, then a truncation note.                                                        |
 | `wooky_interrupt`    | `threadId`.                                                                                                                                                                           |
 | `wooky_approve`      | `threadId`, `approvalId`, `decision` of `approve` or `deny`. Only with `--allow-approvals`.                                                                                           |
+
+Brain tools (`brain_ls`, `brain_read`, `brain_search`, `brain_write`) read and write Wooky Brain
+memories. `brain_write` is hidden by `--read-only`. They are described in `docs/brain.md`.

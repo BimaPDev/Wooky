@@ -426,7 +426,8 @@ export function openRoot(
   try {
     realRoot = realpathSync.native(root);
   } catch (error) {
-    if (isMissing(error)) throw new ServiceError("not_found", `Project folder is missing: ${root}`);
+    if (isMissing(error))
+      throw new ServiceError("not_found", `Project folder is missing for ${scope.projectId}.`);
     throw error;
   }
   const projectBrain = fold(realpathNearest(join(realRoot, ".wooky", "brain")));

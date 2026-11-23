@@ -9,7 +9,7 @@ import {
 const PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18"] as const;
 const LATEST_PROTOCOL = "2025-06-18";
 
-const USAGE = `Usage: wooky mcp [--projects <id,id>] [--read-only] [--allow-approvals] [--allow-full]
+const USAGE = `Usage: wooky mcp [--projects <id,id>] [--read-only] [--allow-approvals] [--allow-full] [--allow-global-write]
 
 Speak MCP (JSON-RPC 2.0, one JSON object per line) to a running Wooky server.
 The server is $WOOKY_SERVER_URL, or WOOKY_HOME/server.json when that process is still alive.
@@ -18,7 +18,9 @@ Stdout is protocol only.
 --projects <id,id>   Only these projects. Other project ids are rejected.
 --read-only          Expose overview, list, read, and wait.
 --allow-approvals    Also expose wooky_approve. Off by default.
---allow-full         Let a task request full runtime. Otherwise the ceiling is approve.`;
+--allow-full         Let a task request full runtime. Otherwise the ceiling is approve.
+--allow-global-write Let brain_write save global memories directly when no agent token is
+                     present. Off by default: global writes go to the inbox for approval.`;
 
 export interface McpIo {
   stdin: ReadableStream<Uint8Array> | NodeJS.ReadableStream;
@@ -80,6 +82,7 @@ function parseMcpArgs(args: string[]): McpFlags | "help" {
   let readOnly = false;
   let allowApprovals = false;
   let allowFull = false;
+  let allowGlobalWrite = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? "";
     if (arg === "--help" || arg === "-h" || arg === "help") return "help";
@@ -93,6 +96,10 @@ function parseMcpArgs(args: string[]): McpFlags | "help" {
     }
     if (arg === "--allow-full") {
       allowFull = true;
+      continue;
+    }
+    if (arg === "--allow-global-write") {
+      allowGlobalWrite = true;
       continue;
     }
     const inline = arg.startsWith("--projects=") ? arg.slice("--projects=".length) : undefined;
@@ -112,7 +119,7 @@ function parseMcpArgs(args: string[]): McpFlags | "help" {
     }
     throw new Error(`Unknown argument ${arg}.`);
   }
-  return { projects, readOnly, allowApprovals, allowFull };
+  return { projects, readOnly, allowApprovals, allowFull, allowGlobalWrite };
 }
 
 async function drain(

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   AgeEvent,
@@ -42,6 +42,8 @@ export interface McpFlags {
   readOnly: boolean;
   allowApprovals: boolean;
   allowFull: boolean;
+  /** Tokenless global brain writes save directly instead of going to the inbox. Off by default. */
+  allowGlobalWrite: boolean;
 }
 
 const FULL_RUNTIME_ERROR = "Start `wooky mcp --allow-full` to allow full runtime.";
@@ -387,7 +389,7 @@ const TOOLS: Tool[] = [
   {
     name: "brain_write",
     description:
-      "Create or update a Wooky Brain memory. Use brain://project/<projectId>/<path>.md for repository-scoped decisions, architecture notes, conventions, and gotchas (saved directly in the repo's .wooky/brain/). Use brain://global/<path>.md for user-wide preferences, lessons, and playbooks (agent writes are queued in the inbox for user approval; user writes save directly). Paths must end in .md with lowercase segments.",
+      "Create or update a Wooky Brain memory. Use brain://project/<projectId>/<path>.md for repository-scoped decisions, architecture notes, conventions, and gotchas (saved directly in the repo's .wooky/brain/). Use brain://global/<path>.md for user-wide preferences, lessons, and playbooks (always queued in the inbox for the user to approve; they are not saved until then). Writing to a path that already has a memory fails unless you pass the expectedUpdatedAt from a read of it. Paths must end in .md with lowercase segments.",
     inputSchema: {
       type: "object",
       properties: {
@@ -417,16 +419,12 @@ const TOOLS: Tool[] = [
         status: {
           type: "string",
           enum: [...BrainStatus.options],
-          description: "Memory status. Default active (agent global writes are always proposed).",
-        },
-        pinned: {
-          type: "boolean",
-          description: "Pin this memory for always-on L0 prompt injection.",
+          description: "Memory status. Default active (global writes are always proposed).",
         },
         expectedUpdatedAt: {
           type: "string",
           description:
-            "Optional ISO timestamp from a prior read to fail with conflict if the memory changed.",
+            "The updatedAt from a read of the memory you are updating. Omit it to create a new memory; the write then fails with conflict if the path already holds one.",
         },
       },
       required: ["uri", "summary", "kind", "body"],
@@ -496,9 +494,19 @@ export function formatToolResult(value: unknown): string {
   return encode(value);
 }
 
-/** Neutralizes any `<repo-memory` or `</repo-memory` tag so untrusted content cannot break out of the fence. */
+/**
+ * Content cannot hold a literal `<` or `>` once it is fenced. Look-alikes are folded first (NFKC
+ * turns full-width brackets into ASCII; the single angle quotes are mapped by hand), and zero-width
+ * and bidi characters are dropped so a tag cannot be spelled around the escape. The same approach
+ * as `sanitize` in brain/context.ts on the feat/brain-inject branch; keep the two in step.
+ */
 export function escapeRepoFence(text: string): string {
-  return text.replace(/<(\s*\/?\s*repo-memory)/gi, "&lt;$1");
+  return text
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
+    .replace(/[\u2039\u203A]/g, (char) => (char === "\u2039" ? "<" : ">"))
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function escapeAttr(value: string): string {
@@ -509,8 +517,18 @@ function escapeAttr(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
-export function fenceRepoEntry(uri: string, content: string): string {
-  return `${REPO_DATA_NOTICE}\n<repo-memory uri="${escapeAttr(uri)}" untrusted="true">\n${escapeRepoFence(content)}\n</repo-memory>`;
+/** A tag name nobody can guess, so memory text cannot close the fence even by accident. */
+function fenceTag(nonce: string): string {
+  return `repo-memory-${nonce}`;
+}
+
+export function newFenceNonce(): string {
+  return randomBytes(8).toString("hex");
+}
+
+export function fenceRepoEntry(uri: string, content: string, nonce = newFenceNonce()): string {
+  const tag = fenceTag(nonce);
+  return `${REPO_DATA_NOTICE}\n<${tag} uri="${escapeAttr(uri)}" untrusted="true">\n${escapeRepoFence(content)}\n</${tag}>`;
 }
 
 interface FencedBlock {
@@ -520,9 +538,11 @@ interface FencedBlock {
 }
 
 function truncateFencedText(blocks: readonly FencedBlock[]): string {
+  const nonce = newFenceNonce();
+  const tag = fenceTag(nonce);
   const renderBlock = (block: FencedBlock) =>
     block.trust === "repo" && block.uri !== undefined
-      ? fenceRepoEntry(block.uri, block.content)
+      ? fenceRepoEntry(block.uri, block.content, nonce)
       : block.content;
 
   const full = blocks.map(renderBlock).join("\n\n");
@@ -544,8 +564,8 @@ function truncateFencedText(blocks: readonly FencedBlock[]): string {
     const remaining = budget - used - sep.length;
     if (remaining <= 0) break;
     if (block.trust === "repo" && block.uri !== undefined) {
-      const open = `${REPO_DATA_NOTICE}\n<repo-memory uri="${escapeAttr(block.uri)}" untrusted="true">\n`;
-      const close = "\n</repo-memory>";
+      const open = `${REPO_DATA_NOTICE}\n<${tag} uri="${escapeAttr(block.uri)}" untrusted="true">\n`;
+      const close = `\n</${tag}>`;
       const innerBudget = remaining - open.length - close.length;
       if (innerBudget > 0) {
         parts.push(`${open}${escapeRepoFence(block.content).slice(0, innerBudget)}${close}`);
@@ -944,25 +964,18 @@ async function brainSearch(args: Record<string, unknown>, ctx: ToolContext): Pro
 }
 
 async function brainWrite(args: Record<string, unknown>, ctx: ToolContext): Promise<unknown> {
-  knownKeys(args, [
-    "uri",
-    "summary",
-    "kind",
-    "body",
-    "tags",
-    "status",
-    "pinned",
-    "expectedUpdatedAt",
-  ]);
+  knownKeys(args, ["uri", "summary", "kind", "body", "tags", "status", "expectedUpdatedAt"]);
   const uri = requireString(args, "uri");
   const summary = requireString(args, "summary");
   const kind = requireBrainKind(args);
   const body = requireText(args, "body");
   const tags = optionalStringArray(args, "tags");
   const status = optionalBrainStatus(args);
-  const pinned = args.pinned === undefined ? undefined : booleanArg(args, "pinned", false);
   const expectedUpdatedAt = optionalString(args, "expectedUpdatedAt");
   assertBrainUriAllowed(ctx.flags, uri);
+  // A host may not pass WOOKY_AGENT_TOKEN on, and then the server cannot tell an agent from a
+  // person. Global writes therefore ask for the inbox unless the operator opted out.
+  const global = parseBrainUri(uri)?.scope.kind === "global";
   return withServer(ctx.env, async (session) =>
     session.call("brain.write", {
       uri,
@@ -971,10 +984,11 @@ async function brainWrite(args: Record<string, unknown>, ctx: ToolContext): Prom
         kind,
         ...(tags !== undefined ? { tags } : {}),
         ...(status !== undefined ? { status } : {}),
-        ...(pinned !== undefined ? { pinned } : {}),
       },
       body,
-      ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}),
+      // Not naming a memory to update means create: it must not overwrite one that is there.
+      expectedUpdatedAt: expectedUpdatedAt ?? null,
+      ...(global && !ctx.flags.allowGlobalWrite ? { propose: true } : {}),
       ...agentAuth(ctx.env),
     }),
   );

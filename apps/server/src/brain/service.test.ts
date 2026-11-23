@@ -387,6 +387,63 @@ describe("brain RPC round-trips and permissions", () => {
     );
   });
 
+  it("create-only and propose work over RPC, and approve takes edits", async () => {
+    const { client } = await boot();
+    const uri = "brain://global/prefs/rpc-once.md";
+    const fm = { summary: "Once", kind: "note" };
+
+    expectOk(
+      await client.call("brain.write", {
+        uri,
+        frontmatter: fm,
+        body: "a",
+        expectedUpdatedAt: null,
+      }),
+    );
+    expect(
+      expectErr(
+        await client.call("brain.write", {
+          uri,
+          frontmatter: fm,
+          body: "b",
+          expectedUpdatedAt: null,
+        }),
+      ).code,
+    ).toBe("conflict");
+
+    const queued = expectOk<{ queued: boolean; proposalId: string }>(
+      await client.call("brain.write", {
+        uri,
+        frontmatter: { summary: "Proposed over it", kind: "note" },
+        body: "c",
+        propose: true,
+      }),
+    );
+    expect(queued.queued).toBe(true);
+    const [item] = expectOk<{ id: string; overwrites: boolean; existingSummary?: string }[]>(
+      await client.call("brain.inbox.list", {}),
+    );
+    expect(item).toMatchObject({
+      id: queued.proposalId,
+      overwrites: true,
+      existingSummary: "Once",
+    });
+
+    // The target is unchanged since the proposal, so an edited approval lands.
+    expectOk(
+      await client.call("brain.inbox.approve", {
+        id: queued.proposalId,
+        edits: { frontmatter: { summary: "Edited", kind: "note" }, body: "edited" },
+      }),
+    );
+    expect(
+      expectOk<{ frontmatter: { summary: string } }>(
+        await client.call("brain.read", { uri, tier: 0 }),
+      ).frontmatter.summary,
+    ).toBe("Edited");
+    expect(expectOk(await client.call("brain.inbox.list", {}))).toEqual([]);
+  });
+
   it("rejects secrets over RPC without echoing them, including in unrecognized keys", async () => {
     const { client } = await boot();
     const secret = ["ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
