@@ -22,11 +22,13 @@ const execFileAsync = promisify(execFile);
 const git = createGitService();
 
 const bases: string[] = [];
+// Windows has no executable bit and forbids control characters in file names.
+const onWindows = process.platform === "win32";
 
 afterEach(async () => {
   while (bases.length > 0) {
     const base = bases.pop();
-    if (base) await rm(base, { recursive: true, force: true });
+    if (base) await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -99,7 +101,7 @@ describe("capture / restore round-trip", () => {
     await writeFile(join(root, "dir/nested.txt"), "nested v1\n");
     await writeFile(join(root, "keep.txt"), "keep\n");
     await writeFile(join(root, "script.sh"), "#!/bin/sh\necho hi\n");
-    await execFileAsync("chmod", ["755", join(root, "script.sh")]);
+    if (!onWindows) await execFileAsync("chmod", ["755", join(root, "script.sh")]);
     await writeFile(join(root, ".gitignore"), "ignored.log\n");
     await raw(root, "add", "-A");
     await raw(root, "commit", "-qm", "work");
@@ -114,7 +116,7 @@ describe("capture / restore round-trip", () => {
     await rm(join(root, "keep.txt"));
     await mkdir(join(root, "deep/er"), { recursive: true });
     await writeFile(join(root, "deep/er/file.txt"), "deep\n");
-    await execFileAsync("chmod", ["644", join(root, "script.sh")]);
+    if (!onWindows) await execFileAsync("chmod", ["644", join(root, "script.sh")]);
     await writeFile(join(root, "ignored.log"), "ignore-mutated\n");
 
     await git.restoreCheckpoint(root, ref);
@@ -127,7 +129,7 @@ describe("capture / restore round-trip", () => {
     expect(existsSync(join(root, "deep"))).toBe(false);
     expect(await read(root, "ignored.log")).toBe("ignore-mutated\n");
     const mode = (await stat(join(root, "script.sh"))).mode;
-    expect(mode & 0o111).not.toBe(0);
+    expect((mode & 0o111) !== 0).toBe(!onWindows);
   });
 });
 
@@ -430,7 +432,7 @@ describe("patch truncation on a code-point boundary (fix 7)", () => {
 });
 
 describe("patch parsing by position (fix 8)", () => {
-  it("produces a patch for a filename containing a newline", async () => {
+  it.skipIf(onWindows)("produces a patch for a filename containing a newline", async () => {
     const root = await makeRepo();
     const from = "refs/wooky/checkpoints/t/a/before";
     await git.captureCheckpoint(root, from);
@@ -518,7 +520,6 @@ async function setupFakeRepo(): Promise<{
   await symlink(join(base, "main"), join(base, "mainlink"));
   const bin = join(base, "fakegit.cjs");
   await writeFile(bin, FAKE_GIT);
-  await chmod(bin, 0o755);
   return {
     base,
     bin,
@@ -551,7 +552,7 @@ function expectNoOverlap(intervals: { start: number; end: number }[]): void {
 describe("serialization under the repo lock (fix 9)", () => {
   it("never overlaps two mutating operations on one repo", async () => {
     const { bin, rec, mainPath } = await setupFakeRepo();
-    const fake = createGitService({ gitBin: bin });
+    const fake = createGitService({ gitBin: process.execPath, gitPrefixArgs: [bin] });
     const prev = process.env.FAKE_REC;
     process.env.FAKE_REC = rec;
     try {
@@ -571,7 +572,7 @@ describe("serialization under the repo lock (fix 9)", () => {
 describe("one lock key through symlinked paths (fix 4)", () => {
   it("serializes main-repo and linked-worktree operations that realpath to one common dir", async () => {
     const { base, bin, rec, mainPath, wtPath } = await setupFakeRepo();
-    const fake = createGitService({ gitBin: bin });
+    const fake = createGitService({ gitBin: process.execPath, gitPrefixArgs: [bin] });
     const prevRec = process.env.FAKE_REC;
     const prevLink = process.env.FAKE_MAINLINK;
     process.env.FAKE_REC = rec;
@@ -612,8 +613,11 @@ describe("bounded run (fix 6)", () => {
     bases.push(base);
     const bin = join(base, "slow.cjs");
     await writeFile(bin, SLOW_GIT);
-    await chmod(bin, 0o755);
-    const fake = createGitService({ gitBin: bin, timeoutMs: 150 });
+    const fake = createGitService({
+      gitBin: process.execPath,
+      gitPrefixArgs: [bin],
+      timeoutMs: 150,
+    });
     await expect(fake.captureCheckpoint(base, "refs/wooky/x/y")).rejects.toThrow(/timed out/);
   });
 
@@ -622,8 +626,11 @@ describe("bounded run (fix 6)", () => {
     bases.push(base);
     const bin = join(base, "huge.cjs");
     await writeFile(bin, HUGE_GIT);
-    await chmod(bin, 0o755);
-    const fake = createGitService({ gitBin: bin, maxStdoutBytes: 1024 });
+    const fake = createGitService({
+      gitBin: process.execPath,
+      gitPrefixArgs: [bin],
+      maxStdoutBytes: 1024,
+    });
     await expect(fake.captureCheckpoint(base, "refs/wooky/x/y")).rejects.toThrow(/exceeded cap/);
   });
 });

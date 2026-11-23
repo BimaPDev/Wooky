@@ -20,7 +20,7 @@ afterEach(async () => {
   await cleanupTestRepos();
   while (bases.length > 0) {
     const base = bases.pop();
-    if (base) await rm(base, { recursive: true, force: true });
+    if (base) await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

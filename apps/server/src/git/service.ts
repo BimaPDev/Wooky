@@ -65,11 +65,14 @@ interface RunResult {
 
 export function createGitService(options?: {
   gitBin?: string;
+  /** Args placed before every git argument; tests run a node script as `git` with it. */
+  gitPrefixArgs?: readonly string[];
   timeoutMs?: number;
   maxStdoutBytes?: number;
   listFilesCap?: number;
 }): GitService {
   const gitBin = options?.gitBin ?? "git";
+  const gitPrefixArgs = options?.gitPrefixArgs ?? [];
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxStdoutBytes = options?.maxStdoutBytes ?? DEFAULT_STDOUT_CAP;
   const listCap = options?.listFilesCap ?? LIST_FILES_CAP;
@@ -88,7 +91,7 @@ export function createGitService(options?: {
         fn();
       };
 
-      const child = spawn(gitBin, args, {
+      const child = spawn(gitBin, [...gitPrefixArgs, ...args], {
         cwd: opts.cwd,
         env: opts.env ?? baseEnv(),
         windowsHide: true,
@@ -157,7 +160,8 @@ export function createGitService(options?: {
 
   async function topLevel(cwd: string): Promise<string> {
     const { stdout } = await run(["rev-parse", "--show-toplevel"], { cwd });
-    return stdout.trim();
+    // git prints forward slashes on Windows; every path below is built with the native separator.
+    return resolve(stdout.trim());
   }
 
   async function headExists(cwd: string, env: NodeJS.ProcessEnv): Promise<boolean> {
