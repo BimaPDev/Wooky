@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DeviceSettings,
   FailoverSettings,
@@ -61,6 +61,7 @@ async function harness(
     capabilities?: DecideContext["capabilities"];
     deviceSettings?: DeviceSettings;
     brain?: BrainTurnHooks;
+    onTurnFinished?: (finished: { threadId: string; turnId: string }) => void;
   } = {},
 ) {
   const home = await tempDir("runner");
@@ -83,6 +84,7 @@ async function harness(
     deviceSettings: () => settings,
     ...(options.brain ? { brain: options.brain } : {}),
     now: ctx.now,
+    ...(options.onTurnFinished ? { onTurnFinished: options.onTurnFinished } : {}),
   });
   const dispatcher = createDispatcher({
     store,
@@ -1792,5 +1794,49 @@ describe("effect runner brain context", () => {
       { provider: "demo", sessionId: null },
       { provider: "demo", sessionId: "sess-1" },
     ]);
+  });
+});
+
+describe("turn finished hook", () => {
+  const done = scripted("demo", async function* () {
+    yield { type: "item", item: { kind: "message", id: "m1", role: "assistant", text: "ok" } };
+    yield { type: "done", status: "completed", error: null };
+  });
+
+  it("is called once per finished turn, after the finish is recorded", async () => {
+    const seen: { threadId: string; turnId: string; status: string | undefined }[] = [];
+    const holder: { current: Awaited<ReturnType<typeof harness>> | null } = { current: null };
+    const h = await harness({
+      adapters: [done],
+      onTurnFinished: ({ threadId, turnId }) => {
+        const turn = holder.current?.store.model.turns[threadId]?.find((t) => t.id === turnId);
+        seen.push({ threadId, turnId, status: turn?.status });
+      },
+    });
+    holder.current = h;
+    const thread = h.createThread("full");
+    const { turnId } = h.startTurn(thread, "hello");
+    await h.runner.idle();
+    expect(seen).toEqual([{ threadId: thread, turnId, status: "completed" }]);
+  });
+
+  it("is wrapped: a hook that throws never breaks the turn", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const h = await harness({
+        adapters: [done],
+        onTurnFinished: () => {
+          throw new Error("hook exploded");
+        },
+      });
+      const thread = h.createThread("full");
+      const { turnId } = h.startTurn(thread, "hello");
+      await h.runner.idle();
+      expect(h.store.model.turns[thread]?.find((t) => t.id === turnId)?.status).toBe("completed");
+      expect(h.store.model.threads[thread]?.status).toBe("idle");
+      expect(errors).toHaveBeenCalledWith("onTurnFinished failed", expect.any(Error));
+    } finally {
+      errors.mockRestore();
+    }
   });
 });

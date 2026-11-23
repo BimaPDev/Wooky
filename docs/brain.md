@@ -5,15 +5,15 @@ gotchas and playbooks that outlive a thread. It borrows tiered loading from Open
 queryable store of typed records from Omnigraph, and stays native to Wooky: plain Markdown
 files, one SQLite cache, no model and no embeddings.
 
-This page is the design for all five steps. B1, B2 and B3 exist today.
+This page is the design for all five steps. B1 through B4 exist today.
 
-| Step | What                                                                                                                     | State |
-| ---- | ------------------------------------------------------------------------------------------------------------------------ | ----- |
-| B1   | Contracts, file store, path and secret safety, FTS5 index, deterministic overviews                                       | done  |
-| B2   | Server RPC, caller permissions, the inbox, and `wooky mcp` tools `brain_ls`, `brain_read`, `brain_search`, `brain_write` | done  |
-| B3   | L0 injection into turn prompts within a token budget; fleet-run claims and handoffs                                      | done  |
-| B4   | Post-turn and post-fleet-run extraction by a cheap model; the inbox; LLM-written overviews                               | next  |
-| B5   | Web Brain panel: tree, viewer, editor, inbox                                                                             |       |
+| Step | What                                                                                                                     | State                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| B1   | Contracts, file store, path and secret safety, FTS5 index, deterministic overviews                                       | done                     |
+| B2   | Server RPC, caller permissions, the inbox, and `wooky mcp` tools `brain_ls`, `brain_read`, `brain_search`, `brain_write` | done                     |
+| B3   | L0 injection into turn prompts within a token budget; fleet-run claims and handoffs                                      | done                     |
+| B4   | Post-turn and post-fleet-run extraction by a cheap model; the inbox; LLM-written overviews                               | done (overviews pending) |
+| B5   | Web Brain panel: tree, viewer, editor, inbox                                                                             | next                     |
 
 ## Two scopes
 
@@ -561,8 +561,53 @@ the block already carries the live state at the start of each turn.
 ## Later steps
 
 **B4, extraction.** After a turn or a fleet run a cheap model proposes memories from the
-transcript. Project proposals are written as `active` with `source`; global ones go to the inbox as
-`proposed`. The same step can write LLM-authored L1 overviews, replacing the `auto` one.
+transcript. Project proposals are written as `active` with `source` and the `extracted` tag;
+global ones go to B2's inbox as `proposed`. Built in `apps/server/src/brain/extract*.ts`:
+
+- **Digest.** The user prompt, the final answer, files touched, the outcome and (fleet) worker
+  reports with their titles and statuses, at most 6000 characters. The prompt, the answer and the
+  reports are scanned for secrets together, joined three ways, so a secret split across them is
+  found. A hit drops all of them, never masks, and leaves only the outcome and the files, which
+  is too little to call the model. Every part, labels included, is fenced as data.
+- **What the model sees.** Only the digest and the summaries of the project's own memories. The
+  global brain never leaves the machine: duplicates of global memories (and of anything waiting in
+  an inbox) are dropped locally, after the model has answered.
+- **Validation.** The reply is parsed tolerantly (fences, prose, a bare array) and each candidate
+  is checked on its own against the contracts. At most 5 are kept. Only an exact repeat of an
+  existing summary (equal after normalizing case, spacing and punctuation) is dropped. A near
+  match is kept, because it is often a correction ("Node 24" after "Node 22").
+- **Routing.** The extractor never updates a memory, its own included: every write takes the
+  first free numbered path (`x.md`, `x-2.md`, ...) and nothing it writes is pinned. The extractor
+  holds no way to write the global brain; global candidates go through `submitGlobalProposal`,
+  which `server.ts` points at a disabled stand-in that logs once and drops them
+  (`TODO(integration)`: B2's `propose`).
+- **No tools.** The call is one throwaway agent turn in an empty folder with `toolless` set. For
+  Claude that means no tools, no allowed tools, no user or project settings (so no allow rules,
+  hooks or CLAUDE.md), no MCP servers, `dontAsk` permissions, no saved session and none of the
+  fleet environment (server URL, shim, token). A provider whose adapter cannot guarantee that
+  (`supportsToolless`) is refused with a logged reason. Only Claude can today; a Codex, Cursor,
+  OpenCode or ACP model in `brain.extractModel` fails closed.
+- **Scheduling.** The effect runner calls a small hook after a turn's finish is recorded. It runs
+  in the background and skips trivial, failed and cancelled turns, workers (their coordinator's
+  run covers them), the demo provider and the hidden "No project". One extraction runs at a time
+  across all threads; at most 3 wait behind it and the oldest waiting one is dropped past that.
+  A thread with one queued or running drops a second finish. A project waits 60 s
+  (`EXTRACT_COOLDOWN_MS`) between extractions. A 90 s timeout aborts the turn and frees the line,
+  but the thread keeps its slot until the work really settles; at shutdown the server waits up to
+  2 s for that before closing the store. A coordinator's run is extracted once its turn
+  completed, its queue is empty and no worker is working or waiting, and only worker reports not
+  yet extracted are passed on.
+- **Where it writes, and the switches.** `brain.extractProject` and `brain.extractGlobal` in device
+  settings are both on by default. Project extraction is on by default, so a project's first
+  qualifying turn creates untracked files under `.wooky/brain/` in the project root, even when
+  the thread ran in a worktree, because the project brain belongs to the project and not to a
+  worktree. Turn it off per device with `brain.extractProject`.
+- **Model.** `brain.extractModel` picks the model (at most 100 characters of letters, digits and
+  `. _ : / @ + [ ] -`; clear it with `null` or an empty string); the default is Claude Haiku when
+  Claude is on. When no model can be used, scheduling skips before reading any brain and logs why
+  once.
+- **Not yet.** LLM-written `_overview.md`: the store cannot write the reserved file, so this needs a
+  store method first.
 
 **B5, UI.** A Brain panel in the web app: a tree of both scopes, a viewer with the three tiers, an
 editor that sends `expectedUpdatedAt`, and the inbox with approve (with edits) and reject. It

@@ -9,6 +9,9 @@ import {
 } from "@wooky/contracts";
 import { createRunStore } from "./brain/claims.ts";
 import { createBrainHooks } from "./brain/context.ts";
+import { createDisabledGlobalProposals } from "./brain/extract.ts";
+import { createExtractor, createFinishHook } from "./brain/extract-hook.ts";
+import { createProviderComplete, extractionModelProblem } from "./brain/extract-model.ts";
 import { createBrainService } from "./brain/service.ts";
 import { createBrainStore } from "./brain/store.ts";
 import { createEffectRunner } from "./effects/runner.ts";
@@ -45,6 +48,8 @@ import { createTransferService } from "./transfer/service.ts";
 import { createClaimFileSync } from "./transfer/file-sync.ts";
 
 const SERVE_OFF_TIMEOUT_MS = 3_000;
+/** At shutdown, how long to let an aborted brain extraction settle before the store closes. */
+const EXTRACT_SHUTDOWN_WAIT_MS = 2_000;
 
 async function stopServe(remote: RemoteRuntime): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -254,7 +259,30 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     hasProvider: (kind) => knownProviders.has(kind),
     broadcastSync: (message) => broadcastSync(message),
   });
+  const extractor = createExtractor({
+    deps: {
+      complete: createProviderComplete({
+        providers,
+        settings: () => themes.getSettings(),
+        home: options.home,
+      }),
+      brain: brainStore,
+      // TODO(integration): B2 owns the global inbox. Until its `propose` is wired here, extracted
+      // global memories are logged and dropped, never written to the global brain or elsewhere.
+      submitGlobalProposal: createDisabledGlobalProposals((message) => console.warn(message)),
+      log: (message) => console.warn(message),
+    },
+    settings: () => themes.getSettings().brain,
+    projectBrain: (projectId) => store.model.projects[projectId]?.scratch !== true,
+    unavailable: () => extractionModelProblem(themes.getSettings()),
+    log: (message) => console.warn(message),
+  });
   const runner = createEffectRunner({
+    onTurnFinished: createFinishHook({
+      extractor,
+      model: () => store.model,
+      log: (message) => console.warn(message),
+    }),
     store,
     providers,
     git,
@@ -376,6 +404,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           httpServers.map((http) => new Promise<void>((resolve) => http.close(() => resolve()))),
         );
         for (const http of httpServers) http.closeIdleConnections();
+        extractor.stop();
         await runner.shutdown();
         sockets.close();
         remote.closeTunnels();
@@ -384,6 +413,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         await history.close();
         transfer.stop();
         await sync.close();
+        if (!(await extractor.drain(EXTRACT_SHUTDOWN_WAIT_MS))) {
+          console.warn("brain: extraction is still settling at shutdown");
+        }
         closeStore();
       })();
       return closing;

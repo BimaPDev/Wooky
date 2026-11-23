@@ -1,6 +1,6 @@
 import { DeviceSettings, type DeviceSettingsPatch } from "@wooky/contracts";
 
-/** Deep-merges sync, hosting, and failover. Arrays and records inside them replace whole. */
+/** Deep-merges sync, hosting, failover and brain. Arrays and records inside them replace whole. */
 export function applySettingsPatch(
   current: DeviceSettings,
   patch: DeviceSettingsPatch,
@@ -19,6 +19,17 @@ export function applySettingsPatch(
     : current.sync;
   const hosting = patch.hosting ? { ...current.hosting, ...patch.hosting } : current.hosting;
   const failover = patch.failover ? { ...current.failover, ...patch.failover } : current.failover;
-  const { sync: _sync, hosting: _hosting, failover: _failover, ...rest } = patch;
-  return DeviceSettings.parse({ ...current, ...rest, sync, hosting, failover });
+  const brain = patch.brain ? mergeBrain(current.brain, patch.brain) : current.brain;
+  const { sync: _sync, hosting: _hosting, failover: _failover, brain: _brain, ...rest } = patch;
+  return DeviceSettings.parse({ ...current, ...rest, sync, hosting, failover, brain });
+}
+
+function mergeBrain(
+  current: DeviceSettings["brain"],
+  patch: NonNullable<DeviceSettingsPatch["brain"]>,
+): DeviceSettings["brain"] {
+  const { extractModel, ...rest } = patch;
+  const { extractModel: kept, ...others } = current;
+  const model = extractModel === undefined ? kept : extractModel || undefined;
+  return { ...others, ...rest, ...(model === undefined ? {} : { extractModel: model }) };
 }
