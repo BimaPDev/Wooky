@@ -576,8 +576,15 @@ describe("probe", () => {
 
   it("still reports installed when --version exits non-zero", async () => {
     const dir = await mkdtemp(join(tmpdir(), "wooky-claude-probe-"));
-    const bin = join(dir, "claude");
-    await writeFile(bin, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    let bin = join(dir, "claude");
+    if (process.platform === "win32") {
+      // Windows runs shims, not shebangs: the resolver unwraps a .cmd that names a .js file.
+      await writeFile(join(dir, "fail.js"), "process.exit(3);\n");
+      bin = join(dir, "claude.cmd");
+      await writeFile(bin, '@echo off\r\nnode "%~dp0fail.js" %*\r\n');
+    } else {
+      await writeFile(bin, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    }
     const status = await createClaudeAdapter({ claudeBin: bin }).probe();
     expect(status).toMatchObject({ installed: true, version: null });
     expect(status.problem).toMatch(/installed/i);

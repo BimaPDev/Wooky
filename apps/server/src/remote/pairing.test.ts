@@ -95,7 +95,8 @@ describe("pairing", () => {
     let now = Date.parse("2026-06-01T00:00:00.000Z");
     const { home, server } = await boot(() => now);
     const stat = statSync(join(home, "device.json"));
-    expect(stat.mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits; Node reports 0o666 there.
+    expect(stat.mode & 0o777).toBe(process.platform === "win32" ? 0o666 : 0o600);
     const identity = JSON.parse(readFileSync(join(home, "device.json"), "utf8")) as {
       deviceId: string;
       createdAt: string;
@@ -156,7 +157,9 @@ describe("pairing", () => {
     const stored = readFileSync(join(home, "paired-devices.json"), "utf8");
     expect(stored).toContain("tokenHash");
     expect(stored).not.toContain(body.token);
-    expect(statSync(join(home, "paired-devices.json")).mode & 0o777).toBe(0o600);
+    expect(statSync(join(home, "paired-devices.json")).mode & 0o777).toBe(
+      process.platform === "win32" ? 0o666 : 0o600,
+    );
 
     now += 30_000;
     await fetch(`${server.url}/healthz`, { headers: { authorization: `Bearer ${body.token}` } });

@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { type Origin, UsageHistoryResult } from "@wooky/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CACHE_FILE_NAME } from "./history-cache.ts";
@@ -220,7 +220,7 @@ describe("file-level cache", () => {
     await core.handle({ kind: "scan", nowMs: NOW });
     const stored = async () =>
       (JSON.parse(await readFile(cachePath(), "utf8")).origins.claude.files as unknown[][])
-        .map((file) => String(file[0]).split("/").at(-1))
+        .map((file) => basename(String(file[0])))
         .sort();
     expect(await stored()).toEqual(["a.jsonl", "b.jsonl"]);
 
