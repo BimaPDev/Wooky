@@ -5552,7 +5552,7 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
 }
 
 .ship-pr-pill:hover {
-  color: var(--text-1);
+  color: var(--text);
   border-color: var(--line-strong);
 }
 
