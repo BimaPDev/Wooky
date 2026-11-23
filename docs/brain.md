@@ -142,15 +142,16 @@ part of the schema version, so switching rebuilds the tables.
 
 ## Approval policy
 
-| Origin                                     | Where it goes               | Status                              |
-| ------------------------------------------ | --------------------------- | ----------------------------------- |
-| Project memory proposed automatically (B4) | `.wooky/brain/` directly    | `active`, with `source`             |
-| Global memory proposed automatically (B4)  | `<WOOKY_HOME>/brain/inbox/` | `proposed`, until the user approves |
-| Anything the user writes themselves        | Where they put it           | What they set                       |
+| Origin                                     | Where it goes              | Status                              |
+| ------------------------------------------ | -------------------------- | ----------------------------------- |
+| Project memory proposed automatically (B4) | `.wooky/brain/` directly   | `active`, with `source`             |
+| Global memory proposed automatically (B4)  | B2's inbox (not wired yet) | `proposed`, until the user approves |
+| Anything the user writes themselves        | Where they put it          | What they set                       |
 
 Project memories are saved straight away because they are reviewable in the repo diff and
-revertable in git. Global ones are not, so they wait. The inbox is B4; B1 only defines the
-`proposed` status.
+revertable in git. Global ones are not, so they wait in the inbox. The inbox belongs to B2 and
+B1 only defines the `proposed` status. Until B2's inbox is wired in, B4 logs and drops extracted
+global memories; it never writes them anywhere.
 
 ## Security
 
@@ -253,26 +254,50 @@ a memory through B4.
 
 **B4, extraction.** After a turn or a fleet run a cheap model proposes memories from the
 transcript. Project proposals are written as `active` with `source` and the `extracted` tag;
-global ones go to the inbox as `proposed`. Built in `apps/server/src/brain/extract*.ts`:
+global ones go to B2's inbox as `proposed`. Built in `apps/server/src/brain/extract*.ts`:
 
 - **Digest.** The user prompt, the final answer, files touched, the outcome and (fleet) worker
-  reports, at most 6000 characters. A segment that trips the secret scan, whole or after
-  truncation, is dropped, never masked. The prompt says the transcript is data.
+  reports with their titles and statuses, at most 6000 characters. The prompt, the answer and the
+  reports are scanned for secrets together, joined three ways, so a secret split across them is
+  found. A hit drops all of them, never masks, and leaves only the outcome and the files, which
+  is too little to call the model. Every part, labels included, is fenced as data.
+- **What the model sees.** Only the digest and the summaries of the project's own memories. The
+  global brain never leaves the machine: duplicates of global memories (and of anything waiting in
+  an inbox) are dropped locally, after the model has answered.
 - **Validation.** The reply is parsed tolerantly (fences, prose, a bare array) and each candidate
-  is checked on its own against the contracts. At most 5 are kept. Near-duplicates of existing
-  project, global and inbox summaries are dropped (equal after normalizing, or sharing most words).
-- **Routing.** A project candidate never overwrites: an existing path is updated (with
-  `expectedUpdatedAt`) only if it carries the `extracted` tag and a `source`, otherwise it takes a
-  numbered path. The extractor holds no way to write the global brain; global candidates go
-  through `submitGlobalProposal`.
+  is checked on its own against the contracts. At most 5 are kept. Only an exact repeat of an
+  existing summary (equal after normalizing case, spacing and punctuation) is dropped. A near
+  match is kept, because it is often a correction ("Node 24" after "Node 22").
+- **Routing.** The extractor never updates a memory, its own included: every write takes the
+  first free numbered path (`x.md`, `x-2.md`, ...) and nothing it writes is pinned. The extractor
+  holds no way to write the global brain; global candidates go through `submitGlobalProposal`,
+  which `server.ts` points at a disabled stand-in that logs once and drops them
+  (`TODO(integration)`: B2's `propose`).
+- **No tools.** The call is one throwaway agent turn in an empty folder with `toolless` set. For
+  Claude that means no tools, no allowed tools, no user or project settings (so no allow rules,
+  hooks or CLAUDE.md), no MCP servers, `dontAsk` permissions, no saved session and none of the
+  fleet environment (server URL, shim, token). A provider whose adapter cannot guarantee that
+  (`supportsToolless`) is refused with a logged reason. Only Claude can today; a Codex, Cursor,
+  OpenCode or ACP model in `brain.extractModel` fails closed.
 - **Scheduling.** The effect runner calls a small hook after a turn's finish is recorded. It runs
-  in the background, one extraction per thread (a second finish is dropped, not queued), with a
-  90 s timeout, and skips trivial, failed and cancelled turns, workers (their coordinator's run
-  covers them), the demo provider and the hidden "No project". A coordinator's run is extracted
-  once its turn completed, its queue is empty and no worker is working or waiting.
-- **Switches and model.** `brain.extractProject` and `brain.extractGlobal` in device settings,
-  both on by default. `brain.extractModel` picks the model; the default is Claude Haiku when
-  Claude is on. The call is one throwaway agent turn in an empty folder with every approval denied.
+  in the background and skips trivial, failed and cancelled turns, workers (their coordinator's
+  run covers them), the demo provider and the hidden "No project". One extraction runs at a time
+  across all threads; at most 3 wait behind it and the oldest waiting one is dropped past that.
+  A thread with one queued or running drops a second finish. A project waits 60 s
+  (`EXTRACT_COOLDOWN_MS`) between extractions. A 90 s timeout aborts the turn and frees the line,
+  but the thread keeps its slot until the work really settles; at shutdown the server waits up to
+  2 s for that before closing the store. A coordinator's run is extracted once its turn
+  completed, its queue is empty and no worker is working or waiting, and only worker reports not
+  yet extracted are passed on.
+- **Where it writes, and the switches.** `brain.extractProject` and `brain.extractGlobal` in device
+  settings are both on by default. Project extraction is on by default, so a project's first
+  qualifying turn creates untracked files under `.wooky/brain/` in the project root, even when
+  the thread ran in a worktree, because the project brain belongs to the project and not to a
+  worktree. Turn it off per device with `brain.extractProject`.
+- **Model.** `brain.extractModel` picks the model (at most 100 characters of letters, digits and
+  `. _ : / @ + [ ] -`; clear it with `null` or an empty string); the default is Claude Haiku when
+  Claude is on. When no model can be used, scheduling skips before reading any brain and logs why
+  once.
 - **Not yet.** LLM-written `_overview.md`: the store cannot write the reserved file, so this needs a
   store method first.
 

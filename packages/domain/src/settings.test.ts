@@ -73,4 +73,33 @@ describe("applySettingsPatch", () => {
     expect(next.sync.projectMap).toEqual({});
     expect(next.sync.intervalSec).toBe(60);
   });
+
+  it("sets the brain extraction model, keeps the switches, and clears it with null or an empty string", () => {
+    const withModel = applySettingsPatch(
+      current,
+      DeviceSettingsPatch.parse({
+        brain: { extractModel: { provider: "claude", model: "sonnet" } },
+      }),
+    );
+    expect(withModel.brain.extractModel).toEqual({ provider: "claude", model: "sonnet" });
+    expect(withModel.brain.extractProject).toBe(true);
+    const off = applySettingsPatch(
+      withModel,
+      DeviceSettingsPatch.parse({ brain: { extractGlobal: false } }),
+    );
+    expect(off.brain).toEqual({
+      extractProject: true,
+      extractGlobal: false,
+      extractModel: { provider: "claude", model: "sonnet" },
+    });
+    for (const clear of [null, ""]) {
+      const cleared = applySettingsPatch(
+        withModel,
+        DeviceSettingsPatch.parse({ brain: { extractModel: clear } }),
+      );
+      expect(cleared.brain.extractModel).toBeUndefined();
+      expect("extractModel" in cleared.brain).toBe(false);
+      expect(cleared.brain.extractProject).toBe(true);
+    }
+  });
 });

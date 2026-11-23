@@ -50,6 +50,12 @@ export interface TurnInput {
   handoffContext: string | null;
   /** Absent means solo. A worker cannot spawn; every other role may. */
   role?: ThreadRole;
+  /**
+   * A one-shot text completion: the turn must run with no tools at all, no user settings, hooks,
+   * MCP servers or project instructions, and no saved session. Only an adapter that sets
+   * `supportsToolless` may be given it.
+   */
+  toolless?: boolean;
   signal: AbortSignal;
   /** Resolve an approval card. Only called when runtimeMode requires it. */
   requestApproval: (request: ApprovalRequest) => Promise<"allow" | "deny">;
@@ -86,6 +92,8 @@ export interface ProviderAdapter {
    * at a message via TurnInput.resumeAt, or, if they cannot, get the handoff transcript.
    */
   rewind?(input: RewindInput): Promise<{ sessionId: string | null }>;
+  /** True when the adapter honours TurnInput.toolless and can guarantee the turn runs no tool. */
+  supportsToolless?: boolean;
   /** True when the adapter honours TurnInput.resumeAt (resume the native session at a message). */
   supportsResumeAt?: boolean;
 }

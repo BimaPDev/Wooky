@@ -16,29 +16,53 @@ import { findSecret } from "./safety.ts";
 /**
  * B4: a cheap model proposes memories after a turn or a fleet run. The model is untrusted and so
  * is what it reads: the transcript is redacted before it leaves, the answer is validated one
- * candidate at a time, project memories go live as `active`, and global ones only ever reach the
- * inbox (this module is never handed a way to write the global brain). See docs/brain.md.
+ * candidate at a time, project memories go live as `active`, and global ones only ever reach a
+ * proposal sink (this module is never handed a way to write the global brain). Only project
+ * summaries are sent to the model: the global brain never leaves the machine. See docs/brain.md.
  */
 
 export const EXTRACT_DIGEST_MAX = 6000;
 export const EXTRACT_MAX_PROPOSALS = 5;
-/** Marks a memory the extractor wrote, so a later run may update it and nothing else. */
+/** Marks a memory the extractor wrote. The extractor never updates a memory, its own included. */
 export const EXTRACT_TAG = "extracted";
 
 const BODY_MAX_CHARS = 4000;
 const EXISTING_PROMPT_MAX = 100;
 const EXISTING_SCAN_MAX = 300;
 const EXISTING_LISTINGS_MAX = 60;
-const PATH_ATTEMPTS = 5;
+const PATH_ATTEMPTS = 25;
 
 /** One prompt in, the model's text out. Must honour `signal`, but callers do not rely on it. */
 export type CompleteFn = (prompt: string, options: { signal: AbortSignal }) => Promise<string>;
 
-/** B2's inbox satisfies this. `target` is the `brain://global/<path>` the memory would take on approval. */
+/**
+ * B2's inbox satisfies this. `target` is the `brain://global/<path>` the memory would take on
+ * approval. A sink that could not keep the proposal returns "dropped" (it has logged why).
+ */
 export type SubmitGlobalProposal = (
   target: string,
   memory: BrainWriteInput,
-) => void | Promise<void>;
+) => void | "dropped" | Promise<void | "dropped">;
+
+/**
+ * Global proposals are off until B2's inbox exists: a candidate is logged and dropped, once per
+ * process, rather than written anywhere.
+ * TODO(integration): replace this with B2's `propose` in server.ts and delete it.
+ */
+export function createDisabledGlobalProposals(
+  log: (message: string) => void,
+): SubmitGlobalProposal {
+  let warned = false;
+  return () => {
+    if (!warned) {
+      warned = true;
+      log(
+        "brain: global proposals need the B2 inbox; extracted global memories are dropped until it is wired",
+      );
+    }
+    return "dropped";
+  };
+}
 
 export interface ExtractInput {
   projectId: string;
@@ -59,7 +83,7 @@ export interface ExtractDeps {
   /** Only `list`, `read` and `write` are used, and `write` only with project URIs. */
   brain: Pick<BrainStore, "list" | "read" | "write">;
   submitGlobalProposal: SubmitGlobalProposal;
-  /** L0 lines already waiting in the inbox, so the model does not propose them twice. */
+  /** L0 lines already waiting in a global inbox. Compared locally; never sent to the model. */
   inboxSummaries?: () => string[];
   now?: () => string;
   log?: (message: string) => void;
@@ -86,7 +110,8 @@ const neutralize = (text: string) => text.replace(/<\s*\/?\s*(transcript|existin
 
 /**
  * Redaction is dropping: a segment that trips the secret scan, whole or after truncation, is left
- * out entirely, never masked.
+ * out entirely, never masked. Everything that reaches the model goes through here, labels
+ * included, so the label is fixed text and anything variable belongs to `text`.
  */
 function segment(label: string, text: string, max: number): string | null {
   const clean = text.replace(/\r\n?/g, "\n").trim();
@@ -97,21 +122,47 @@ function segment(label: string, text: string, max: number): string | null {
   return `[${label}]\n${neutralize(cut)}`;
 }
 
+/**
+ * A secret can be split across the prompt, the answer and the reports: a key at the end of one,
+ * its value at the start of the next. Scan them joined, three ways, so a break (a newline, a
+ * space or nothing) does not hide it.
+ */
+function splitSecret(texts: readonly string[]): boolean {
+  const parts = texts.map((text) => text.replace(/\r\n?/g, "\n").trim()).filter((t) => t !== "");
+  return ["\n\n", " ", ""].some((glue) => findSecret(parts.join(glue)) !== null);
+}
+
 /** At most EXTRACT_DIGEST_MAX characters, secret-free by construction. */
 export function buildDigest(input: ExtractInput): string {
   const files = input.changedFiles
     .filter((file) => file.length <= 200 && findSecret(file) === null)
     .slice(0, 30);
+  const reports = (input.workerReports ?? []).map((report) => ({
+    title: report.title.replace(/\s+/g, " ").slice(0, 80),
+    status: report.status.replace(/\s+/g, " ").slice(0, 20),
+    summary: report.summary,
+  }));
+  const dropContent = splitSecret([
+    input.prompt,
+    input.finalMessage,
+    ...reports.flatMap((report) => [report.title, report.status, report.summary]),
+  ]);
   const plan: [string, string, number][] = [
     ["outcome", input.outcome, 100],
-    ["user prompt", input.prompt, 1500],
-    ["assistant final message", input.finalMessage, 2500],
+    ...(dropContent
+      ? []
+      : ([
+          ["user prompt", input.prompt, 1500],
+          ["assistant final message", input.finalMessage, 2500],
+        ] as [string, string, number][])),
     ["files touched", files.join("\n"), 600],
-    ...(input.workerReports ?? []).map((report, index): [string, string, number] => [
-      `worker ${index + 1}: ${report.title.slice(0, 80)} (${report.status})`,
-      report.summary,
-      600,
-    ]),
+    ...(dropContent
+      ? []
+      : reports.map((report, index): [string, string, number] => [
+          `worker ${index + 1}`,
+          `${report.title} (${report.status})\n${report.summary}`,
+          600,
+        ])),
   ];
   const parts: string[] = [];
   let used = 0;
@@ -265,56 +316,21 @@ export function parseCandidates(raw: string): {
 
 /* --------------------------------- duplicates --------------------------------- */
 
-const STOPWORDS = new Set([
-  "the",
-  "and",
-  "for",
-  "with",
-  "that",
-  "this",
-  "use",
-  "uses",
-  "using",
-  "are",
-  "not",
-  "when",
-  "then",
-  "than",
-  "into",
-  "your",
-  "its",
-]);
-
-function tokens(text: string): Set<string> {
-  const out = new Set<string>();
-  for (const word of text.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (word.length < 3 || STOPWORDS.has(word)) continue;
-    out.add(word.length > 4 ? word.replace(/(ing|ed|es|s)$/, "") : word);
-  }
-  return out;
-}
-
+/** Case, spacing and punctuation are noise; letters, digits and `+` or `#` are not. */
 const normalize = (text: string) =>
   text
+    .normalize("NFKC")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}+#]+/gu, " ")
     .trim();
 
-/** Equal after normalizing, or sharing most of their words. */
-export function isNearDuplicate(summary: string, existing: readonly string[]): boolean {
+/**
+ * Only an exact repeat is dropped. A near match is often a correction ("Node 24" after "Node 22",
+ * "never npm" after "never pnpm"), and the model has already seen the project's summaries.
+ */
+export function isDuplicate(summary: string, known: readonly string[]): boolean {
   const flat = normalize(summary);
-  const mine = tokens(summary);
-  for (const other of existing) {
-    if (normalize(other) === flat) return true;
-    const theirs = tokens(other);
-    const smaller = Math.min(mine.size, theirs.size);
-    if (smaller === 0) continue;
-    let shared = 0;
-    for (const word of mine) if (theirs.has(word)) shared += 1;
-    if (shared / (mine.size + theirs.size - shared) >= 0.6) return true;
-    if (smaller >= 4 && shared / smaller >= 0.85) return true;
-  }
-  return false;
+  return flat !== "" && known.some((other) => normalize(other) === flat);
 }
 
 /* ------------------------------------ run ------------------------------------ */
@@ -378,14 +394,15 @@ export async function runExtraction(
 
   const project: BrainScope = { kind: "project", projectId: input.projectId };
   const global: BrainScope = { kind: "global" };
+  const projectKnown = collectSummaries(brain, formatBrainUri(project));
   const known = [
-    ...collectSummaries(brain, formatBrainUri(project)),
+    ...projectKnown,
     ...collectSummaries(brain, formatBrainUri(global)),
     ...(deps.inboxSummaries?.() ?? []),
   ];
 
   report.skipped = false;
-  const reply = await deps.complete(buildExtractionPrompt(digest, known), { signal });
+  const reply = await deps.complete(buildExtractionPrompt(digest, projectKnown), { signal });
   signal.throwIfAborted();
   const parsed = parseCandidates(reply);
   report.rejected += parsed.rejected;
@@ -402,7 +419,7 @@ export async function runExtraction(
   for (const candidate of parsed.candidates) {
     signal.throwIfAborted();
     if (candidate.scope === "project" ? !switches.project : !switches.global) continue;
-    if (isNearDuplicate(candidate.summary, known)) {
+    if (isDuplicate(candidate.summary, known)) {
       report.duplicates += 1;
       continue;
     }
@@ -440,8 +457,10 @@ function frontmatterFor(
 }
 
 /**
- * Never overwrites someone else's memory: an existing path is updated only when the extractor
- * wrote it (its tag and a source), and then conditionally; anything else gets a numbered path.
+ * Never updates a memory, the extractor's own included: a pinned or hand-edited file would lose
+ * its flag or its text, and two facts under one stem would overwrite each other. Every write takes
+ * the first path that is free, and an exact repeat is dropped before it gets here. Nothing the
+ * extractor writes is pinned.
  */
 function writeProject(
   brain: ExtractDeps["brain"],
@@ -451,26 +470,16 @@ function writeProject(
 ): string | null {
   for (let attempt = 1; attempt <= PATH_ATTEMPTS; attempt += 1) {
     const uri = formatBrainUri(scope, withSuffix(candidate.path, attempt));
-    let existing: ReturnType<ExtractDeps["brain"]["read"]> | null = null;
     try {
-      existing = brain.read(uri, 0);
+      brain.read(uri, 0);
+      continue;
     } catch (error) {
       if (!isNotFound(error)) throw error;
     }
-    const input = {
+    return brain.write(uri, {
       frontmatter: frontmatterFor(candidate, "active", source),
       body: candidate.body,
-    };
-    if (existing === null) return brain.write(uri, input).uri;
-    const own = existing.frontmatter;
-    if (own.tags.includes(EXTRACT_TAG) && own.source !== undefined && own.status === "active") {
-      const pinned = own.pinned === true ? { pinned: true } : {};
-      return brain.write(
-        uri,
-        { ...input, frontmatter: { ...input.frontmatter, ...pinned } },
-        { expectedUpdatedAt: own.updatedAt },
-      ).uri;
-    }
+    }).uri;
   }
   return null;
 }
@@ -490,11 +499,11 @@ async function proposeGlobal(
       if (!isNotFound(error)) throw error;
     }
     try {
-      await deps.submitGlobalProposal(target, {
+      const outcome = await deps.submitGlobalProposal(target, {
         frontmatter: frontmatterFor(candidate, "proposed", source),
         body: candidate.body,
       });
-      return target;
+      return outcome === "dropped" ? null : target;
     } catch (error) {
       if (!(error instanceof ServiceError && error.code === "conflict")) throw error;
     }

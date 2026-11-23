@@ -5,12 +5,18 @@ import { ServiceError } from "../errors.ts";
 import type { ProviderAdapter, TurnInput } from "../providers/types.ts";
 import type { CompleteFn, ExtractDeps, ExtractInput } from "./extract.ts";
 import {
+  EXTRACT_COOLDOWN_MS,
+  EXTRACT_QUEUE_MAX,
   createExtractor,
   createFinishHook,
   inputForFinishedTurn,
   isTrivialTurn,
 } from "./extract-hook.ts";
-import { createProviderComplete, extractionModel } from "./extract-model.ts";
+import {
+  createProviderComplete,
+  extractionModel,
+  extractionModelProblem,
+} from "./extract-model.ts";
 
 const candidate = JSON.stringify({
   candidates: [
@@ -41,6 +47,8 @@ const input = (extra: Partial<ExtractInput> = {}): ExtractInput => ({
 interface Rig {
   writes: string[];
   logs: string[];
+  lists: string[];
+  clock: { now: number };
   complete: ReturnType<typeof vi.fn<CompleteFn>>;
   extractor: ReturnType<typeof createExtractor>;
 }
@@ -50,12 +58,20 @@ function rig(options: {
   settings?: { extractProject: boolean; extractGlobal: boolean };
   timeoutMs?: number;
   projectBrain?: (id: string) => boolean;
+  unavailable?: () => string | null;
+  cooldownMs?: number;
+  queueMax?: number;
 }): Rig {
   const writes: string[] = [];
   const logs: string[] = [];
+  const lists: string[] = [];
+  const clock = { now: 1_000_000 };
   const complete = vi.fn<CompleteFn>(options.complete ?? (async () => candidate));
   const brain: ExtractDeps["brain"] = {
-    list: () => [],
+    list: (dir) => {
+      lists.push(dir);
+      return [];
+    },
     read: () => {
       throw new ServiceError("not_found", "none");
     },
@@ -69,9 +85,13 @@ function rig(options: {
     settings: () => options.settings ?? { extractProject: true, extractGlobal: true },
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options.projectBrain ? { projectBrain: options.projectBrain } : {}),
+    ...(options.unavailable ? { unavailable: options.unavailable } : {}),
+    ...(options.queueMax === undefined ? {} : { queueMax: options.queueMax }),
+    cooldownMs: options.cooldownMs ?? 0,
+    now: () => clock.now,
     log: (message) => logs.push(message),
   });
-  return { writes, logs, complete, extractor };
+  return { writes, logs, lists, clock, complete, extractor };
 }
 
 afterEach(() => {
@@ -113,7 +133,7 @@ describe("extractor guards", () => {
     expect(isTrivialTurn(input())).toBe(false);
   });
 
-  it("runs one extraction per thread at a time and lets other threads run", async () => {
+  it("runs one extraction per thread at a time", async () => {
     const release: (() => void)[] = [];
     const r = rig({
       complete: () =>
@@ -123,13 +143,13 @@ describe("extractor guards", () => {
     });
     r.extractor.onTurnFinished(input());
     r.extractor.onTurnFinished(input({ turnId: "u2" }));
-    r.extractor.onTurnFinished(input({ threadId: "t2" }));
-    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(2));
-    for (const done of release) done();
+    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(1));
+    release[0]?.();
     await r.extractor.idle();
+    expect(r.complete).toHaveBeenCalledTimes(1);
     r.extractor.onTurnFinished(input({ turnId: "u3" }));
-    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(3));
-    release.at(-1)?.();
+    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(2));
+    release[1]?.();
     await r.extractor.idle();
   });
 
@@ -159,7 +179,6 @@ describe("extractor guards", () => {
     });
     r.extractor.onTurnFinished(input());
     await vi.advanceTimersByTimeAsync(1001);
-    await r.extractor.idle();
     expect(seen?.aborted).toBe(true);
     expect(r.logs.join("\n")).toContain("timed out");
     expect(r.writes).toEqual([]);
@@ -183,6 +202,170 @@ describe("extractor guards", () => {
     r.extractor.onTurnFinished(input({ threadId: "t9" }));
     await r.extractor.idle();
     expect(r.complete).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("extractor cost and cadence", () => {
+  const onProject = (n: number, extra: Partial<ExtractInput> = {}) =>
+    input({ threadId: `t${n}`, projectId: `p${n}`, ...extra });
+
+  it("runs one extraction at a time across all threads", async () => {
+    let active = 0;
+    let peak = 0;
+    const release: (() => void)[] = [];
+    const r = rig({
+      complete: () =>
+        new Promise<string>((resolve) => {
+          active += 1;
+          peak = Math.max(peak, active);
+          release.push(() => {
+            active -= 1;
+            resolve(candidate);
+          });
+        }),
+    });
+    r.extractor.onTurnFinished(onProject(1));
+    r.extractor.onTurnFinished(onProject(2));
+    r.extractor.onTurnFinished(onProject(3));
+    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(1));
+    release[0]?.();
+    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(2));
+    release[1]?.();
+    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(3));
+    release[2]?.();
+    await r.extractor.idle();
+    expect(peak).toBe(1);
+    expect(r.writes).toHaveLength(3);
+  });
+
+  it("keeps a small queue and drops the oldest waiting job beyond it", async () => {
+    expect(EXTRACT_QUEUE_MAX).toBeGreaterThan(0);
+    const release: (() => void)[] = [];
+    const r = rig({
+      queueMax: 2,
+      complete: () =>
+        new Promise<string>((resolve) => {
+          release.push(() => resolve(candidate));
+        }),
+    });
+    for (const n of [1, 2, 3, 4]) r.extractor.onTurnFinished(onProject(n));
+    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(1));
+    expect(r.logs.join("\n")).toMatch(/dropped the oldest/);
+    for (let index = 0; index < 3; index += 1) {
+      await vi.waitFor(() => expect(release[index]).toBeDefined());
+      release[index]?.();
+    }
+    await r.extractor.idle();
+    expect(r.writes.map((uri) => uri.split("/")[3])).toEqual(["p1", "p3", "p4"]);
+  });
+
+  it("waits out a per-project cooldown, and other projects are not held by it", async () => {
+    expect(EXTRACT_COOLDOWN_MS).toBe(60_000);
+    const r = rig({ cooldownMs: EXTRACT_COOLDOWN_MS });
+    r.extractor.onTurnFinished(input({ threadId: "t1" }));
+    await r.extractor.idle();
+    r.clock.now += 30_000;
+    r.extractor.onTurnFinished(input({ threadId: "t2" }));
+    r.extractor.onTurnFinished(input({ threadId: "t3", projectId: "p2" }));
+    await r.extractor.idle();
+    expect(r.writes.map((uri) => uri.split("/")[3])).toEqual(["p1", "p2"]);
+    r.clock.now += 31_000;
+    r.extractor.onTurnFinished(input({ threadId: "t4" }));
+    await r.extractor.idle();
+    expect(r.writes.map((uri) => uri.split("/")[3])).toEqual(["p1", "p2", "p1"]);
+  });
+
+  it("checks for a usable model before scanning any brain and logs the skip once", async () => {
+    let reason: string | null = "provider codex cannot run a tool-free turn";
+    const r = rig({ unavailable: () => reason });
+    r.extractor.onTurnFinished(input());
+    r.extractor.onTurnFinished(input({ turnId: "u2" }));
+    r.extractor.onFleetRunFinished(input({ threadId: "t2" }));
+    await r.extractor.idle();
+    expect(r.complete).not.toHaveBeenCalled();
+    expect(r.lists).toEqual([]);
+    expect(
+      r.logs.filter((line) => line.includes("codex cannot run a tool-free turn")),
+    ).toHaveLength(1);
+    reason = null;
+    r.extractor.onTurnFinished(input({ turnId: "u3" }));
+    await r.extractor.idle();
+    expect(r.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a thread's slot until its work settles after a timeout, but frees the line", async () => {
+    vi.useFakeTimers();
+    const finish: (() => void)[] = [];
+    const r = rig({
+      timeoutMs: 1000,
+      complete: () =>
+        new Promise<string>((resolve) => {
+          finish.push(() => resolve(candidate));
+        }),
+    });
+    r.extractor.onTurnFinished(onProject(1));
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(r.logs.join("\n")).toContain("timed out");
+    let idled = false;
+    void r.extractor.idle().then(() => {
+      idled = true;
+    });
+    r.extractor.onTurnFinished(onProject(1, { turnId: "u2" }));
+    r.extractor.onTurnFinished(onProject(2));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(r.complete).toHaveBeenCalledTimes(2);
+    expect(idled).toBe(false);
+    finish[0]?.();
+    finish[1]?.();
+    await vi.advanceTimersByTimeAsync(0);
+    await r.extractor.idle();
+    expect(idled).toBe(true);
+    expect(r.writes).toEqual(["brain://project/p2/decisions/use-pnpm.md"]);
+    r.extractor.onTurnFinished(onProject(1, { turnId: "u3" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(r.complete).toHaveBeenCalledTimes(3);
+    finish[2]?.();
+    await r.extractor.idle();
+  });
+
+  it("drain stops, waits briefly, and says whether the work settled", async () => {
+    vi.useFakeTimers();
+    const stuck = rig({ complete: () => new Promise<string>(() => {}) });
+    stuck.extractor.onTurnFinished(input());
+    await vi.advanceTimersByTimeAsync(0);
+    const drained = stuck.extractor.drain(500);
+    await vi.advanceTimersByTimeAsync(501);
+    await expect(drained).resolves.toBe(false);
+
+    const polite = rig({
+      complete: (_prompt, { signal }) =>
+        new Promise<string>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    });
+    polite.extractor.onTurnFinished(input());
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(polite.extractor.drain(500)).resolves.toBe(true);
+    polite.extractor.onTurnFinished(input({ threadId: "t2", projectId: "p2" }));
+    expect(polite.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("never starts queued work after stop", async () => {
+    const release: (() => void)[] = [];
+    const r = rig({
+      complete: () =>
+        new Promise<string>((resolve) => {
+          release.push(() => resolve(candidate));
+        }),
+    });
+    r.extractor.onTurnFinished(onProject(1));
+    r.extractor.onTurnFinished(onProject(2));
+    await vi.waitFor(() => expect(r.complete).toHaveBeenCalledTimes(1));
+    r.extractor.stop();
+    release[0]?.();
+    await r.extractor.idle();
+    expect(r.complete).toHaveBeenCalledTimes(1);
+    expect(r.writes).toEqual([]);
   });
 });
 
@@ -302,6 +485,48 @@ describe("inputForFinishedTurn", () => {
     );
     expect(inputForFinishedTurn(queued, "t1", "t1-u1")).toBeNull();
   });
+
+  const fleet = (reports: Record<string, string>) =>
+    modelWith(
+      [
+        baseThread({ role: "coordinator" }),
+        ...Object.entries(reports).map(([id, turnId]) =>
+          baseThread({
+            id,
+            role: "worker",
+            parentThreadId: "t1",
+            title: `Worker ${id}`,
+            report: { turnId, summary: `Report of ${id}`, at: "2026-11-23T10:00:30.000Z" },
+          }),
+        ),
+      ],
+      {
+        t1: [baseTurn("t1")],
+        ...Object.fromEntries(
+          Object.keys(reports).map((id) => [
+            id,
+            [baseTurn(id, { changedFiles: [`src/${id}.ts`] })],
+          ]),
+        ),
+      },
+    );
+
+  it("passes only worker reports not yet extracted, with their files", () => {
+    const model = fleet({ w1: "w1-u1", w2: "w2-u1" });
+    const found = inputForFinishedTurn(model, "t1", "t1-u1", new Set(["w1:w1-u1"]));
+    expect(found?.kind).toBe("fleet");
+    expect(found?.input.workerReports?.map((report) => report.title)).toEqual(["Worker w2"]);
+    expect(found?.input.changedFiles).toEqual(["src/a.ts", "src/w2.ts"]);
+    expect(found?.reportKeys).toEqual(["w2:w2-u1"]);
+  });
+
+  it("falls back to a plain turn when every report was already extracted", () => {
+    const model = fleet({ w1: "w1-u1" });
+    const found = inputForFinishedTurn(model, "t1", "t1-u1", new Set(["w1:w1-u1"]));
+    expect(found?.kind).toBe("turn");
+    expect(found?.input.workerReports).toBeUndefined();
+    expect(found?.reportKeys).toEqual([]);
+  });
 });
 
 describe("createFinishHook", () => {
@@ -309,6 +534,7 @@ describe("createFinishHook", () => {
     onTurnFinished: vi.fn<(input: ExtractInput) => void>(),
     onFleetRunFinished: vi.fn<(input: ExtractInput) => void>(),
     idle: async () => {},
+    drain: async () => true,
     stop: () => {},
   });
 
@@ -330,6 +556,48 @@ describe("createFinishHook", () => {
     expect(() => hook({ threadId: "t1", turnId: "t1-u1" })).not.toThrow();
     expect(logs.join("")).toContain("model gone");
   });
+
+  it("extracts a fleet run once, then only reports it has not seen", () => {
+    const worker = (turnId: string) =>
+      baseThread({
+        id: "w1",
+        role: "worker",
+        parentThreadId: "t1",
+        title: "Worker one",
+        report: { turnId, summary: `Report ${turnId}`, at: "2026-11-23T10:00:30.000Z" },
+      });
+    let model = modelWith([baseThread({ role: "coordinator" }), worker("w1-u1")], {
+      t1: [baseTurn("t1")],
+      w1: [baseTurn("w1")],
+    });
+    const sink = extractor();
+    const hook = createFinishHook({ extractor: sink, model: () => model });
+
+    hook({ threadId: "t1", turnId: "t1-u1" });
+    hook({ threadId: "t1", turnId: "t1-u1" });
+    expect(sink.onFleetRunFinished).toHaveBeenCalledTimes(1);
+    expect(sink.onTurnFinished).not.toHaveBeenCalled();
+    expect(sink.onFleetRunFinished.mock.calls[0]?.[0].workerReports).toHaveLength(1);
+
+    model = modelWith([baseThread({ role: "coordinator" }), worker("w1-u1")], {
+      t1: [baseTurn("t1"), baseTurn("t1", { id: "t1-u2" })],
+      w1: [baseTurn("w1")],
+    });
+    hook({ threadId: "t1", turnId: "t1-u2" });
+    expect(sink.onFleetRunFinished).toHaveBeenCalledTimes(1);
+    expect(sink.onTurnFinished).toHaveBeenCalledTimes(1);
+    expect(sink.onTurnFinished.mock.calls[0]?.[0].workerReports).toBeUndefined();
+
+    model = modelWith([baseThread({ role: "coordinator" }), worker("w1-u2")], {
+      t1: [baseTurn("t1"), baseTurn("t1", { id: "t1-u2" }), baseTurn("t1", { id: "t1-u3" })],
+      w1: [baseTurn("w1")],
+    });
+    hook({ threadId: "t1", turnId: "t1-u3" });
+    expect(sink.onFleetRunFinished).toHaveBeenCalledTimes(2);
+    expect(sink.onFleetRunFinished.mock.calls[1]?.[0].workerReports).toEqual([
+      { title: "Worker one", status: "done", summary: "Report w1-u2" },
+    ]);
+  });
 });
 
 describe("createProviderComplete", () => {
@@ -339,9 +607,14 @@ describe("createProviderComplete", () => {
       brain: { extractProject: true, extractGlobal: true, ...patch },
     }) as unknown as DeviceSettings;
 
-  function adapter(events: ProviderEvent[], seen: TurnInput[] = []): ProviderAdapter {
+  function adapter(
+    events: ProviderEvent[],
+    seen: TurnInput[] = [],
+    supportsToolless = true,
+  ): ProviderAdapter {
     return {
       kind: "claude",
+      ...(supportsToolless ? { supportsToolless: true } : {}),
       probe: async () => {
         throw new Error("not used");
       },
@@ -390,6 +663,7 @@ describe("createProviderComplete", () => {
       resumeSessionId: null,
       handoffContext: null,
       prompt: "prompt",
+      toolless: true,
     });
     await expect(
       seen[0]?.requestApproval({ requestId: "r", tool: "command", title: "x", detail: "y" }),
@@ -424,9 +698,43 @@ describe("createProviderComplete", () => {
     await expect(disabled("p", { signal })).rejects.toThrow(/No model/);
   });
 
-  it("prefers the model the user chose", () => {
+  it("prefers the model the user chose, among providers that can run without tools", () => {
     expect(
-      extractionModel(settings({ extractModel: { provider: "codex", model: "mini" } })),
-    ).toEqual({ provider: "codex", model: "mini" });
+      extractionModel(settings({ extractModel: { provider: "claude", model: "sonnet" } })),
+    ).toEqual({ provider: "claude", model: "sonnet" });
+  });
+
+  it("fails closed for a provider that cannot guarantee no tools", async () => {
+    for (const provider of ["codex", "cursor", "opencode", "acp", "demo"] as const) {
+      const chosen = settings({ extractModel: { provider, model: "m" } });
+      expect([provider, extractionModel(chosen)]).toEqual([provider, null]);
+      expect(extractionModelProblem(chosen)).toMatch(new RegExp(`${provider}.*tool`, "i"));
+    }
+    const seen: TurnInput[] = [];
+    const refused = createProviderComplete({
+      providers: { get: () => adapter([msg("a", "x"), done], seen) },
+      settings: () => settings({ extractModel: { provider: "codex", model: "mini" } }),
+      home,
+    });
+    await expect(refused("p", { signal })).rejects.toThrow(/codex.*tool/i);
+    expect(seen).toEqual([]);
+  });
+
+  it("refuses an adapter that does not declare it honours the toolless flag", async () => {
+    const seen: TurnInput[] = [];
+    const complete = createProviderComplete({
+      providers: { get: () => adapter([msg("a", "{}"), done], seen, false) },
+      settings: () => settings(),
+      home,
+    });
+    await expect(complete("p", { signal })).rejects.toThrow(/tool/i);
+    expect(seen).toEqual([]);
+  });
+
+  it("is usable by default only through Claude, and not when Claude is disabled", () => {
+    expect(extractionModel(settings())).toEqual({ provider: "claude", model: "haiku" });
+    expect(extractionModelProblem(settings())).toBeNull();
+    expect(extractionModel(settings({}, ["claude"]))).toBeNull();
+    expect(extractionModelProblem(settings({}, ["claude"]))).toMatch(/claude/i);
   });
 });
