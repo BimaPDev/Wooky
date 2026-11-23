@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { fuzzyFilter } from "../lib/fuzzy.ts";
 import {
   configureThread,
+  openBrain,
   openDialog,
   openFanoutFromComposer,
   openFleetBoard,
@@ -82,6 +83,15 @@ function PaletteDialog() {
         },
       },
       {
+        id: "brain",
+        label: "Open brain",
+        hint: "Shared memories",
+        run: () => {
+          close();
+          openBrain();
+        },
+      },
+      {
         id: "jump",
         label: "Jump to thread",
         shortcut: shortcut("J"),
@@ -107,7 +117,7 @@ function PaletteDialog() {
         label: "Open current thread in split",
         run: () => {
           close();
-          useStore.setState({ fleetBoardOpen: false, compareGroupId: null });
+          useStore.setState({ fleetBoardOpen: false, brainOpen: false, compareGroupId: null });
           openInSplit(selected);
         },
       });

@@ -17,6 +17,7 @@ import { CoordinatorStrip } from "./fleet/CoordinatorStrip.tsx";
 import { FanoutDialog } from "./fleet/FanoutDialog.tsx";
 import { FleetBoard } from "./fleet/FleetBoard.tsx";
 import { JumpSwitcher } from "./fleet/JumpSwitcher.tsx";
+import { BrainPanel } from "./brain/BrainPanel.tsx";
 import { NewThreadView } from "./NewThreadView.tsx";
 import { Dialogs } from "./Dialogs.tsx";
 import { PaneDock } from "./panes/PaneRow.tsx";
@@ -65,6 +66,7 @@ export function App() {
     (state) => splitLayout(state.panes, (id) => Boolean(state.model.threads[id])) !== null,
   );
   const fleetBoardOpen = useStore((state) => state.fleetBoardOpen);
+  const brainOpen = useStore((state) => state.brainOpen);
   const compareGroupId = useStore((state) => state.compareGroupId);
   const replicaView = useAnywhereHistory((state) => state.replicaView !== null);
   const waiting = useWaitingCount();
@@ -158,6 +160,7 @@ export function App() {
               <main className="main">
                 {mainView({
                   fleetBoardOpen,
+                  brainOpen,
                   compareGroupId,
                   splitActive,
                   threadId,
@@ -201,6 +204,7 @@ export function App() {
 
 function mainView({
   fleetBoardOpen,
+  brainOpen,
   compareGroupId,
   splitActive,
   threadId,
@@ -208,12 +212,14 @@ function mainView({
   replicaView,
 }: {
   fleetBoardOpen: boolean;
+  brainOpen: boolean;
   compareGroupId: string | null;
   splitActive: boolean;
   threadId: string | null;
   draftView: boolean;
   replicaView: boolean;
 }): ReactNode {
+  if (brainOpen) return <BrainPanel />;
   if (fleetBoardOpen) return <FleetBoard />;
   if (compareGroupId) return <CompareView groupId={compareGroupId} />;
   if (replicaView) {

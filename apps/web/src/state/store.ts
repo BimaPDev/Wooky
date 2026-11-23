@@ -63,6 +63,8 @@ export interface AppState {
   /** Project, agent and runtime mode of the last thread started from the draft screen. */
   draftPrefs: DraftPrefs;
   fleetBoardOpen: boolean;
+  brainOpen: boolean;
+  brainInboxCount: number;
   jumpOpen: boolean;
   compareGroupId: string | null;
   fanoutDialog: {
@@ -122,6 +124,8 @@ export const useStore = create<AppState>(() => ({
   newThread: null,
   draftPrefs: loadDraftPrefs(),
   fleetBoardOpen: false,
+  brainOpen: false,
+  brainInboxCount: 0,
   jumpOpen: false,
   compareGroupId: null,
   fanoutDialog: null,

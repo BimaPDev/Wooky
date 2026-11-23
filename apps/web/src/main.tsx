@@ -11,6 +11,7 @@ import { loadTerminalOpen } from "./lib/shell.ts";
 import { loadTheme } from "./state/theme.ts";
 import "./styles/tokens.css";
 import "./styles/app.css";
+import "./styles/brain.css";
 import "./styles/anywhere.css";
 import "./styles/anywhere-history.css";
 import "./styles/phone.css";
