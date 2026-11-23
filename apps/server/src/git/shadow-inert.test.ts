@@ -11,12 +11,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { tempDir } from "../testing.ts";
 import { createShadowGit } from "./shadow.ts";
 
 const homes: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
@@ -108,5 +109,22 @@ describe("inert git files", () => {
     chmodSync(join(home, "run"), 0o777);
     await shadow.version();
     expect(statSync(join(home, "run")).mode & 0o022).toBe(0);
+  });
+});
+
+describe("a run directory that belongs to someone else", () => {
+  it.skipIf(!posix)("says to chown it to the current user", async () => {
+    const { home, shadow } = await setup();
+    const run = join(home, "run");
+    mkdirSync(run, { recursive: true });
+    // As after a run with sudo: the directory is owned by another uid.
+    const uid = process.getuid?.() ?? 0;
+    vi.spyOn(process, "getuid").mockReturnValue(uid + 1);
+    const failure = await shadow.run(null, ["--version"]).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(String(failure)).toContain(`chown -R`);
+    expect(String(failure)).toContain(run);
   });
 });

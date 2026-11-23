@@ -34,7 +34,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import type { FileDiff } from "@wooky/contracts";
@@ -75,6 +75,14 @@ function isInertDir(path: string, empty: boolean): boolean {
 
 let fallbackInertDir: string | null = null;
 
+function currentUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return String(process.getuid?.() ?? "$USER");
+  }
+}
+
 /**
  * The `run` directory the inert files live in must itself be ours: if it were a symlink or
  * writable by others, the checks on `git-inert` below would be checking a place someone else
@@ -102,7 +110,11 @@ function ensurePrivateRunDir(path: string): void {
     return;
   }
   if (!info.isDirectory() || !ownedByUs(info)) {
-    throw new Error(`${path} must be a directory owned by the current user`);
+    throw new Error(
+      info.isDirectory()
+        ? `${path} belongs to another user (usually left behind by a run with sudo). Give it back with: sudo chown -R ${currentUser()} "${path}"`
+        : `${path} must be a directory, not a file. Remove it and Wooky will create the directory.`,
+    );
   }
   if ((info.mode & 0o022) !== 0) chmodSync(path, info.mode & 0o755 & ~0o022);
 }
