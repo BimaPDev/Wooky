@@ -9,6 +9,7 @@ import { fleetRunId, type RunCoordination, type RunSnapshot } from "./claims.ts"
 import type { BrainLog } from "./paths.ts";
 import type { BrainStore } from "./store.ts";
 import { sanitizeText } from "./text.ts";
+import { effectiveTrust } from "./trust.ts";
 
 /**
  * The "brain context" block put in front of a turn's prompt: L0 summaries of pinned and relevant
@@ -92,6 +93,9 @@ const attr = (value: string) => sanitize(value).replaceAll('"', "&quot;");
 const clip = (text: string, max: number) =>
   text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
 
+const hitTrust = (hit: Pick<BrainSearchHit, "trust" | "source">) =>
+  effectiveTrust({ trust: hit.trust, frontmatter: { source: hit.source } });
+
 function queryWords(prompt: string): string {
   const words =
     prompt
@@ -125,11 +129,11 @@ const groupOf = (part: Part): Group =>
   part === "run" ? "run" : part === "hit" ? "hits" : "context";
 
 const memoryLine = (
-  hit: Pick<BrainSearchHit, "uri" | "summary" | "trust">,
+  hit: Pick<BrainSearchHit, "uri" | "summary" | "trust" | "source">,
   part: Part,
 ): Candidate => {
   const summary = sanitize(hit.summary);
-  return hit.trust === "user"
+  return hitTrust(hit) === "user"
     ? { section: "user", part, line: `- ${sanitize(hit.uri)}: ${summary}`, key: hit.uri }
     : {
         section: "repo",
@@ -363,7 +367,7 @@ export function createBrainHooks(deps: BrainHooksDeps): BrainTurnHooks {
       for (const candidate of attempt("pinned memories", () =>
         deps.store
           .pinned([global], GLOBAL_PINNED, { skipSync: true })
-          .map((hit) => memoryLine(hit, hit.trust === "user" ? "userPinned" : "repoPinned")),
+          .map((hit) => memoryLine(hit, hitTrust(hit) === "user" ? "userPinned" : "repoPinned")),
       )) {
         if (candidate.part === "userPinned") userPinned.push(candidate);
         else repoPinned.push(candidate);
@@ -386,7 +390,15 @@ export function createBrainHooks(deps: BrainHooksDeps): BrainTurnHooks {
           // Only the counts Wooky wrote: a person can edit the file, and the line is no place for prose.
           if (EMPTY_OVERVIEW.test(line) || !COUNTS_ONLY.test(line)) return [];
           return [
-            memoryLine({ uri: summary.uri, summary: line, trust: summary.trust }, "overview"),
+            memoryLine(
+              {
+                uri: summary.uri,
+                summary: line,
+                trust: summary.trust,
+                source: summary.frontmatter.source,
+              },
+              "overview",
+            ),
           ];
         }),
       );

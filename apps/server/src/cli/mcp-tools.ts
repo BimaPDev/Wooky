@@ -13,6 +13,7 @@ import {
   WOOKY_WS_PATH,
   type AgeEventOf,
   type BrainTier,
+  type BrainSource,
   type ProviderKind as ProviderKindName,
   type ProviderStatus,
   type ReadModel,
@@ -24,6 +25,7 @@ import {
 import { activeTurn, fleetRows } from "@wooky/domain";
 import { WebSocket, type RawData } from "ws";
 import { sanitizeText } from "../brain/text.ts";
+import { effectiveTrust } from "../brain/trust.ts";
 import { discoverServerUrl, SERVER_DOWN } from "../presence.ts";
 
 const TEXT_LIMIT = 20_000;
@@ -617,14 +619,18 @@ export function fenceWorkerOutput(
 interface FencedBlock {
   uri?: string;
   trust: "user" | "repo";
+  source?: BrainSource;
   content: string;
 }
 
-function truncateFencedText(blocks: readonly FencedBlock[]): string {
+const untrustedBlock = (block: FencedBlock) =>
+  effectiveTrust({ trust: block.trust, frontmatter: { source: block.source } }) === "repo";
+
+export function truncateFencedText(blocks: readonly FencedBlock[]): string {
   const nonce = newFenceNonce();
   const tag = fenceTag(nonce);
   const renderBlock = (block: FencedBlock) =>
-    block.trust === "repo" && block.uri !== undefined
+    untrustedBlock(block) && block.uri !== undefined
       ? fenceRepoEntry(block.uri, block.content, nonce)
       : block.content;
 
@@ -646,7 +652,7 @@ function truncateFencedText(blocks: readonly FencedBlock[]): string {
     }
     const remaining = budget - used - sep.length;
     if (remaining <= 0) break;
-    if (block.trust === "repo" && block.uri !== undefined) {
+    if (untrustedBlock(block) && block.uri !== undefined) {
       const open = `${REPO_DATA_NOTICE}\n<${tag} uri="${escapeAttr(block.uri)}" untrusted="true">\n`;
       const close = `\n</${tag}>`;
       const innerBudget = remaining - open.length - close.length;
@@ -949,17 +955,13 @@ async function brainLs(args: Record<string, unknown>, ctx: ToolContext): Promise
       ...(includeArchived ? { includeArchived } : {}),
       ...agentAuth(ctx.env),
     });
-    if (nodes.some((node) => node.trust === "repo")) {
-      return rawText(
-        truncateFencedText(
-          nodes.map((node) => ({
-            uri: node.uri,
-            trust: node.trust,
-            content: JSON.stringify(node, null, 2),
-          })),
-        ),
-      );
-    }
+    const blocks = nodes.map((node) => ({
+      uri: node.uri,
+      trust: node.trust,
+      source: node.source,
+      content: JSON.stringify(node, null, 2),
+    }));
+    if (blocks.some(untrustedBlock)) return rawText(truncateFencedText(blocks));
     return { uri, entries: nodes };
   });
 }
@@ -975,13 +977,13 @@ async function brainRead(args: Record<string, unknown>, ctx: ToolContext): Promi
       tier,
       ...agentAuth(ctx.env),
     });
-    if (entry.trust === "repo") {
-      return rawText(
-        truncateFencedText([
-          { uri: entry.uri, trust: "repo", content: JSON.stringify(entry, null, 2) },
-        ]),
-      );
-    }
+    const block = {
+      uri: entry.uri,
+      trust: entry.trust,
+      source: entry.frontmatter.source,
+      content: JSON.stringify(entry, null, 2),
+    };
+    if (untrustedBlock(block)) return rawText(truncateFencedText([block]));
     return entry;
   });
 }
@@ -1031,17 +1033,13 @@ async function brainSearch(args: Record<string, unknown>, ctx: ToolContext): Pro
       ...(includeArchived ? { includeArchived } : {}),
       ...auth,
     });
-    if (hits.some((hit) => hit.trust === "repo")) {
-      return rawText(
-        truncateFencedText(
-          hits.map((hit) => ({
-            uri: hit.uri,
-            trust: hit.trust,
-            content: JSON.stringify(hit, null, 2),
-          })),
-        ),
-      );
-    }
+    const blocks = hits.map((hit) => ({
+      uri: hit.uri,
+      trust: hit.trust,
+      source: hit.source,
+      content: JSON.stringify(hit, null, 2),
+    }));
+    if (blocks.some(untrustedBlock)) return rawText(truncateFencedText(blocks));
     return { query, hits };
   });
 }

@@ -366,6 +366,7 @@ function collectSummaries(brain: ExtractDeps["brain"], root: string): string[] {
 }
 
 const isNotFound = (error: unknown) => error instanceof ServiceError && error.code === "not_found";
+const isConflict = (error: unknown) => error instanceof ServiceError && error.code === "conflict";
 
 /** `a/b/foo.md` -> `a/b/foo-2.md`, keeping the segment within its length limit. */
 function withSuffix(path: string, attempt: number): string {
@@ -467,8 +468,9 @@ function frontmatterFor(
 /**
  * Never updates a memory, the extractor's own included: a pinned or hand-edited file would lose
  * its flag or its text, and two facts under one stem would overwrite each other. Every write takes
- * the first path that is free, and an exact repeat is dropped before it gets here. Nothing the
- * extractor writes is pinned.
+ * the first path that is free, writing create-only after the read so a racing writer cannot be
+ * overwritten. A conflict moves to the next path. An exact repeat is dropped before it gets here.
+ * Nothing the extractor writes is pinned.
  */
 function writeProject(
   brain: ExtractDeps["brain"],
@@ -478,16 +480,25 @@ function writeProject(
 ): string | null {
   for (let attempt = 1; attempt <= PATH_ATTEMPTS; attempt += 1) {
     const uri = formatBrainUri(scope, withSuffix(candidate.path, attempt));
+    let updatedAt: string | null = null;
     try {
-      brain.read(uri, 0);
-      continue;
+      updatedAt = brain.read(uri, 0).frontmatter.updatedAt;
     } catch (error) {
       if (!isNotFound(error)) throw error;
     }
-    return brain.write(uri, {
-      frontmatter: frontmatterFor(candidate, "active", source),
-      body: candidate.body,
-    }).uri;
+    if (updatedAt !== null) continue;
+    try {
+      return brain.write(
+        uri,
+        {
+          frontmatter: frontmatterFor(candidate, "active", source),
+          body: candidate.body,
+        },
+        { expectedUpdatedAt: updatedAt },
+      ).uri;
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+    }
   }
   return null;
 }

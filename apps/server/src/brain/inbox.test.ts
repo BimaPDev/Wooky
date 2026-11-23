@@ -278,6 +278,54 @@ describe("M1: approve is conditional on the target it was proposed against", () 
   });
 });
 
+describe("L5: a proposal can pin the state it was proposed against", () => {
+  it("records a create-only stamp even when the target exists, then conflicts on approval", () => {
+    const { store, inbox } = setup();
+    const uri = "brain://global/c1.md";
+    store.write(uri, {
+      frontmatter: { summary: "Already here", kind: "note" },
+      body: "original",
+    });
+    const proposal = inbox.propose(
+      uri,
+      { frontmatter: { summary: "Agent version", kind: "note" }, body: "agent" },
+      { expectedUpdatedAt: null },
+    );
+    expect(proposal.baseUpdatedAt).toBeNull();
+    expect(codeOf(() => inbox.approve(proposal.id))).toBe("conflict");
+    expect(store.read(uri, 0).frontmatter.summary).toBe("Already here");
+    expect(inbox.list()).toHaveLength(1);
+  });
+
+  it("records a supplied stamp, and reads the current stamp when none is supplied", () => {
+    const { store, inbox } = setup();
+    const uri = "brain://global/c2.md";
+    const first = store.write(uri, {
+      frontmatter: { summary: "First", kind: "note" },
+      body: "first",
+    });
+    const second = store.write(uri, {
+      frontmatter: { summary: "Second", kind: "note" },
+      body: "second",
+    });
+    const pinned = inbox.propose(
+      uri,
+      { frontmatter: { summary: "Pinned", kind: "note" }, body: "pinned" },
+      { expectedUpdatedAt: first.updatedAt },
+    );
+    expect(pinned.baseUpdatedAt).toBe(first.updatedAt);
+    expect(codeOf(() => inbox.approve(pinned.id))).toBe("conflict");
+
+    const unpinned = inbox.propose(uri, {
+      frontmatter: { summary: "Current", kind: "note" },
+      body: "current",
+    });
+    expect(unpinned.baseUpdatedAt).toBe(second.updatedAt);
+    expect(inbox.approve(unpinned.id)).toMatchObject({ created: false });
+    expect(store.read(uri, 0).frontmatter.summary).toBe("Current");
+  });
+});
+
 describe("M1: approve with edits is one atomic step", () => {
   it("writes the edited memory as active and deletes the proposal", () => {
     const { store, inbox } = setup();
@@ -297,6 +345,22 @@ describe("M1: approve with edits is one atomic step", () => {
     });
     expect(entry.body).toBe("edited body\n");
     expect(inbox.list()).toEqual([]);
+  });
+
+  it("keeps the proposal's agent source when edits try to replace it", () => {
+    const { store, inbox } = setup();
+    const proposal = proposeFrom(inbox, "brain://global/g2.md", "t1", "Agent summary");
+    inbox.approve(proposal.id, {
+      frontmatter: {
+        summary: "Edited summary",
+        kind: "note",
+        source: { threadId: "spoofed", agent: "user" },
+      },
+      body: "edited",
+    });
+    const entry = store.read("brain://global/g2.md", 2);
+    expect(entry.frontmatter.source).toEqual({ threadId: "t1", agent: "claude" });
+    expect(entry.trust).toBe("repo");
   });
 
   it("validates the edits and leaves the proposal and the target untouched on failure", () => {
