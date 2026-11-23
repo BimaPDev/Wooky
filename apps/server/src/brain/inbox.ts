@@ -31,6 +31,7 @@ export interface BrainInbox {
   propose(
     targetUri: string,
     input: { frontmatter: Record<string, unknown>; body: string },
+    options?: { rejectExistingTarget?: boolean },
   ): BrainInboxProposal;
   list(): BrainInboxItem[];
   /** With `edits`, the user's version is validated and written in this one step. */
@@ -146,7 +147,7 @@ export function createBrainInbox(options: BrainInboxOptions): BrainInbox {
   }
 
   return {
-    propose(targetUri, input) {
+    propose(targetUri, input, proposeOptions = {}) {
       return guard("propose", () => {
         const target = parseBrainUri(targetUri);
         if (target === null) {
@@ -189,6 +190,12 @@ export function createBrainInbox(options: BrainInboxOptions): BrainInbox {
             existing = null;
           }
           if (existing === null || existing.consumedAt !== undefined) continue;
+          if (proposeOptions.rejectExistingTarget && existing.targetUri === targetCanonical) {
+            throw new ServiceError(
+              "conflict",
+              `A proposal for ${targetCanonical} is already waiting in the brain inbox.`,
+            );
+          }
           if ((existing.frontmatter.source?.threadId ?? null) !== proposer) continue;
           if (existing.targetUri === targetCanonical) replaced.push(name);
           else fromThread += 1;

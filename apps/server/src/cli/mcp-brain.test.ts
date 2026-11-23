@@ -102,7 +102,7 @@ async function hostCall(
 }
 
 describe("brain MCP tools", () => {
-  it("exposes brain_ls, brain_read, brain_search, brain_write with URI scheme descriptions", () => {
+  it("exposes brain tools with URI scheme descriptions where applicable", () => {
     const tools = listTools(DEFAULT_FLAGS);
     const brainTools = tools.filter((t) => t.name.startsWith("brain_"));
     expect(brainTools.map((t) => t.name)).toEqual([
@@ -110,11 +110,153 @@ describe("brain MCP tools", () => {
       "brain_read",
       "brain_search",
       "brain_write",
+      "brain_claim",
+      "brain_release",
+      "brain_handoff",
+      "brain_finding",
     ]);
-    for (const tool of brainTools) {
-      expect(tool.description).toContain("brain://global/");
-      expect(tool.description).toContain("brain://project/<projectId>/");
+    for (const name of ["brain_ls", "brain_read", "brain_search", "brain_write"]) {
+      const tool = brainTools.find((t) => t.name === name);
+      expect(tool?.description).toContain("brain://global/");
+      expect(tool?.description).toContain("brain://project/<projectId>/");
     }
+  });
+
+  it("exposes claim tools and enforces read-only, token, and project allowlist rules", async () => {
+    const roFlags: McpFlags = { ...DEFAULT_FLAGS, readOnly: true };
+    const names = listTools(roFlags).map((t) => t.name);
+    for (const n of ["brain_claim", "brain_release", "brain_handoff", "brain_finding"]) {
+      expect(names).not.toContain(n);
+      const blocked = await callTool(
+        n,
+        { target: "x", claimId: "c", summary: "s", text: "t" },
+        { env: {}, flags: roFlags },
+      );
+      expect(blocked.isError).toBe(true);
+      expect(blocked.content[0]?.text).toContain("read-only");
+    }
+
+    const { env, projectIds, agentTokens, url } = await boot(2);
+    const [allowed, other] = projectIds;
+    if (!allowed || !other) throw new Error("Two projects were not created.");
+    const restricted: McpFlags = { ...DEFAULT_FLAGS, projects: new Set([allowed]) };
+
+    const noToken = await callTool(
+      "brain_claim",
+      { target: "src/a.ts" },
+      { env, flags: DEFAULT_FLAGS },
+    );
+    expect(noToken.isError).toBe(true);
+    expect(noToken.content[0]?.text).toContain("agent token");
+
+    // Agent token for a thread outside --projects must be rejected before claim executes.
+
+    // create a thread in other project
+    await rpcCall(url, "dispatch", {
+      commandId: randomUUID(),
+      type: "thread.create",
+      projectId: other,
+      provider: "demo",
+      model: "demo",
+      runtimeMode: "approve",
+      isolate: false,
+    });
+    const snap2 = await rpcCall(url, "snapshot", {});
+    const otherThread = Object.values(snap2.threads).find((t) => t.projectId === other)?.id;
+    if (!otherThread) throw new Error("The thread in the other project was not created.");
+    const otherToken = agentTokens.issue(otherThread);
+    const denied = await callTool(
+      "brain_claim",
+      { target: "src/a.ts" },
+      { env: { ...env, WOOKY_AGENT_TOKEN: otherToken }, flags: restricted },
+    );
+    expect(denied.isError).toBe(true);
+    expect(denied.content[0]?.text).toContain("outside");
+  });
+
+  it("runs claim tools through real server and fences held worker output", async () => {
+    const { env, projectIds, agentTokens, url } = await boot(1);
+    const projectId = projectIds[0] ?? "";
+    await rpcCall(url, "dispatch", {
+      commandId: randomUUID(),
+      type: "thread.create",
+      projectId,
+      provider: "demo",
+      model: "demo",
+      runtimeMode: "approve",
+      isolate: false,
+    });
+    const snap = await rpcCall(url, "snapshot", {});
+    const threads = Object.values(snap.threads).filter((t) => t.projectId === projectId);
+    const coord = threads[0]?.id;
+    if (!coord) throw new Error("The coordinator thread was not created.");
+    await rpcCall(url, "dispatch", {
+      commandId: randomUUID(),
+      type: "thread.spawn",
+      parentThreadId: coord,
+      provider: "demo",
+      model: "demo",
+      prompt: "worker one",
+      title: "worker one",
+    });
+    await rpcCall(url, "dispatch", {
+      commandId: randomUUID(),
+      type: "thread.spawn",
+      parentThreadId: coord,
+      provider: "demo",
+      model: "demo",
+      prompt: "worker two",
+      title: "worker two",
+    });
+    const snapWithWorkers = await rpcCall(url, "snapshot", {});
+    const workers = Object.values(snapWithWorkers.threads).filter(
+      (t) => t.parentThreadId === coord,
+    );
+    expect(workers.length).toBeGreaterThanOrEqual(2);
+    const [w1, w2] = workers;
+    if (!w1 || !w2) throw new Error("The workers were not created.");
+    const t1 = agentTokens.issue(w1.id);
+    const t2 = agentTokens.issue(w2.id);
+
+    const claimed = await callTool(
+      "brain_claim",
+      { target: "src/a.ts", note: "mine" },
+      { env: { ...env, WOOKY_AGENT_TOKEN: t1 }, flags: DEFAULT_FLAGS },
+    );
+    expect(claimed.isError).toBeUndefined();
+    expect(claimed.content[0]?.text ?? "").toContain('"claimed"');
+
+    const held = await callTool(
+      "brain_claim",
+      { target: "src/a.ts" },
+      { env: { ...env, WOOKY_AGENT_TOKEN: t2 }, flags: DEFAULT_FLAGS },
+    );
+    expect(held.isError).toBeUndefined();
+    const heldText = held.content[0]?.text ?? "";
+    expect(heldText).toContain("untrusted worker output");
+    expect(heldText).toMatch(/<worker-output-[0-9a-f]{16} [^>]*untrusted="true">/);
+    expect(heldText).toContain('"held"');
+
+    const handoff = await callTool(
+      "brain_handoff",
+      { summary: "picked up" },
+      { env: { ...env, WOOKY_AGENT_TOKEN: t1 }, flags: DEFAULT_FLAGS },
+    );
+    expect(handoff.isError).toBeUndefined();
+    const finding = await callTool(
+      "brain_finding",
+      { text: "found issue" },
+      { env: { ...env, WOOKY_AGENT_TOKEN: t1 }, flags: DEFAULT_FLAGS },
+    );
+    expect(finding.isError).toBeUndefined();
+
+    const claimId = JSON.parse(claimed.content[0]?.text ?? "{}").claimId;
+    const released = await callTool(
+      "brain_release",
+      { claimId },
+      { env: { ...env, WOOKY_AGENT_TOKEN: t1 }, flags: DEFAULT_FLAGS },
+    );
+    expect(released.isError).toBeUndefined();
   });
 
   it("hides and blocks brain_write in read-only mode while allowing read tools", async () => {

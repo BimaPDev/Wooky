@@ -116,6 +116,25 @@ describe("what goes in the block", () => {
     expect(count(block, "Deploy runbook")).toBe(1);
   });
 
+  it("keeps agent-authored global memories out of <user-memory>", () => {
+    const { hooks, store, input } = setup();
+    store.write(
+      g("prefs/agent.md"),
+      memory("Prefer pnpm from agent", { source: { agent: "claude" }, pinned: true }),
+    );
+    store.write(g("prefs/user.md"), memory("Prefer tabs", { pinned: true }));
+    const block = hooks.contextFor(input({ prompt: "preferences" })) ?? "";
+    expect(block).toContain("<user-memory>");
+    expect(block).toContain("Prefer tabs");
+    expect(block).toContain("brain://global/prefs/agent.md");
+    expect(block).toMatch(
+      /<repo-memory [^>]*brain:\/\/global\/prefs\/agent\.md[^>]*>[^<]*Prefer pnpm from agent<\/repo-memory>/,
+    );
+    const userBlock = block.match(/<user-memory>[\s\S]*?<\/user-memory>/)?.[0] ?? "";
+    expect(userBlock).toContain("Prefer tabs");
+    expect(userBlock).not.toContain("Prefer pnpm from agent");
+  });
+
   it("always includes the project's root overview", () => {
     const { hooks, store, input } = setup();
     store.write(p("a/one.md"), memory("Something quite unrelated"));

@@ -10,8 +10,11 @@ import {
 } from "@wooky/contracts";
 import { z } from "zod";
 import { ServiceError } from "../errors.ts";
+import type { BrainInbox } from "./inbox.ts";
 import type { BrainStore, BrainWriteInput } from "./store.ts";
 import { findSecret } from "./safety.ts";
+import { sanitizeText, stripInvisible } from "./text.ts";
+import { isAgentAuthored, sanitizeAgentFrontmatter } from "./trust.ts";
 
 /**
  * B4: a cheap model proposes memories after a turn or a fleet run. The model is untrusted and so
@@ -45,22 +48,24 @@ export type SubmitGlobalProposal = (
 ) => void | "dropped" | Promise<void | "dropped">;
 
 /**
- * Global proposals are off until B2's inbox exists: a candidate is logged and dropped, once per
- * process, rather than written anywhere.
- * TODO(integration): replace this with B2's `propose` in server.ts and delete it.
+ * Sends extracted global candidates to the B2 inbox. Rejects with `conflict` when a proposal for
+ * the same target is already waiting so the extractor tries its next numbered path, strips
+ * `pinned`, stamps agent provenance, and enforces per-thread and global inbox caps.
  */
-export function createDisabledGlobalProposals(
-  log: (message: string) => void,
+export function createInboxGlobalProposals(
+  inbox: BrainInbox,
+  clock: () => string = () => new Date().toISOString(),
 ): SubmitGlobalProposal {
-  let warned = false;
-  return () => {
-    if (!warned) {
-      warned = true;
-      log(
-        "brain: global proposals need the B2 inbox; extracted global memories are dropped until it is wired",
-      );
-    }
-    return "dropped";
+  return (target, memory) => {
+    const clean = sanitizeAgentFrontmatter(memory.frontmatter);
+    const source = isAgentAuthored({ source: clean.source })
+      ? clean.source
+      : { ...(clean.source ?? {}), agent: "extractor", at: clock() };
+    inbox.propose(
+      target,
+      { frontmatter: { ...clean, source }, body: memory.body },
+      { rejectExistingTarget: true },
+    );
   };
 }
 
@@ -105,21 +110,20 @@ export interface ExtractReport {
 
 /* ---------------------------------- digest ---------------------------------- */
 
-/** Stops transcript text from closing the data fence the prompt opens. */
-const neutralize = (text: string) => text.replace(/<\s*\/?\s*(transcript|existing)/gi, "‹$1");
-
 /**
  * Redaction is dropping: a segment that trips the secret scan, whole or after truncation, is left
- * out entirely, never masked. Everything that reaches the model goes through here, labels
- * included, so the label is fixed text and anything variable belongs to `text`.
+ * out entirely, never masked. Everything that reaches the model goes through `text.ts` sanitization
+ * so invisible characters are stripped and `<`/`>` cannot close the data fence.
  */
 function segment(label: string, text: string, max: number): string | null {
-  const clean = text.replace(/\r\n?/g, "\n").trim();
+  const raw = text.replace(/\r\n?/g, "\n").trim();
+  const clean = stripInvisible(raw, true).trim();
   if (clean === "" || max < 40) return null;
-  if (findSecret(clean) !== null) return null;
-  const cut = clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
-  if (cut !== clean && findSecret(cut) !== null) return null;
-  return `[${label}]\n${neutralize(cut)}`;
+  if (findSecret(raw) !== null || findSecret(clean) !== null) return null;
+  const safe = sanitizeText(clean, true);
+  const cut = safe.length > max ? `${safe.slice(0, max - 1)}…` : safe;
+  if (cut !== safe && findSecret(cut) !== null) return null;
+  return `[${label}]\n${cut}`;
 }
 
 /**
@@ -128,8 +132,12 @@ function segment(label: string, text: string, max: number): string | null {
  * space or nothing) does not hide it.
  */
 function splitSecret(texts: readonly string[]): boolean {
-  const parts = texts.map((text) => text.replace(/\r\n?/g, "\n").trim()).filter((t) => t !== "");
-  return ["\n\n", " ", ""].some((glue) => findSecret(parts.join(glue)) !== null);
+  const rawParts = texts.map((text) => text.replace(/\r\n?/g, "\n").trim()).filter((t) => t !== "");
+  const cleanParts = texts.map((text) => stripInvisible(text, true).trim()).filter((t) => t !== "");
+  return ["\n\n", " ", ""].some(
+    (glue) =>
+      findSecret(rawParts.join(glue)) !== null || findSecret(cleanParts.join(glue)) !== null,
+  );
 }
 
 /** At most EXTRACT_DIGEST_MAX characters, secret-free by construction. */
@@ -186,7 +194,7 @@ export function digestHasContent(digest: string): boolean {
 export function buildExtractionPrompt(digest: string, existing: readonly string[]): string {
   const known = existing
     .slice(0, EXISTING_PROMPT_MAX)
-    .map((summary) => `- ${neutralize(summary).replace(/\s+/g, " ").slice(0, BRAIN_SUMMARY_MAX)}`)
+    .map((summary) => `- ${sanitizeText(summary).replace(/\s+/g, " ").slice(0, BRAIN_SUMMARY_MAX)}`)
     .join("\n");
   return [
     "You curate the long-term memory of a coding assistant. Below is a digest of one finished piece of work.",
@@ -264,9 +272,9 @@ function parseLoose(raw: string): unknown {
 function toCandidate(item: unknown): Candidate | null {
   const parsed = RawCandidate.safeParse(item);
   if (!parsed.success) return null;
-  const summary = parsed.data.summary.replace(/\s+/g, " ").trim();
+  const summary = stripInvisible(parsed.data.summary, false).replace(/\s+/g, " ").trim();
   const path = parsed.data.path.trim();
-  const body = parsed.data.body.trim();
+  const body = stripInvisible(parsed.data.body, true).trim();
   if (summary === "" || summary.length > BRAIN_SUMMARY_MAX) return null;
   if (!isBrainMemoryPath(path) || body.length > BODY_MAX_CHARS) return null;
   const tags = [

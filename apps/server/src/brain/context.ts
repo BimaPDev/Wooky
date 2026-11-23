@@ -8,7 +8,7 @@ import {
 import { fleetRunId, type RunCoordination, type RunSnapshot } from "./claims.ts";
 import type { BrainLog } from "./paths.ts";
 import type { BrainStore } from "./store.ts";
-import { INVISIBLE_ALL } from "./text.ts";
+import { sanitizeText } from "./text.ts";
 
 /**
  * The "brain context" block put in front of a turn's prompt: L0 summaries of pinned and relevant
@@ -79,27 +79,12 @@ export interface BrainTurnHooks {
   turnEnded(threadId: string): void;
 }
 
-/** Look-alikes of `<` and `>` that NFKC leaves alone. */
-const OPENING = /[\u2039\u2329\u3008\u27e8\u02c2\u1438]/g;
-const CLOSING = /[\u203a\u232a\u3009\u27e9\u02c3\u1433]/g;
-
 /**
  * Makes text safe to put inside a tag: invisible and control characters are dropped, Unicode is
  * folded (NFKC, then look-alike angle brackets), and `&`, `<` and `>` are escaped, so an escape
  * Wooky wrote can be told from one the content forged.
  */
-export function sanitize(text: string, multiline = false): string {
-  const strip = (value: string) =>
-    value.replace(INVISIBLE_ALL, (char) =>
-      char === "\n" || char === "\t" ? (multiline ? char : " ") : "",
-    );
-  return strip(strip(text.replace(/\r\n?/g, "\n")).normalize("NFKC"))
-    .replace(OPENING, "<")
-    .replace(CLOSING, ">")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
+export const sanitize = sanitizeText;
 
 /** An attribute value: single line, and no way out of the quotes. */
 const attr = (value: string) => sanitize(value).replaceAll('"', "&quot;");
@@ -375,13 +360,14 @@ export function createBrainHooks(deps: BrainHooksDeps): BrainTurnHooks {
     // The index queries below are bounded and take a few milliseconds, so they run even when the
     // deadline passed in `refresh`: a partly synced index still answers with what it has.
     if (isUsable(global)) {
-      userPinned.push(
-        ...attempt("pinned memories", () =>
-          deps.store
-            .pinned([global], GLOBAL_PINNED, { skipSync: true })
-            .map((hit) => memoryLine(hit, "userPinned")),
-        ),
-      );
+      for (const candidate of attempt("pinned memories", () =>
+        deps.store
+          .pinned([global], GLOBAL_PINNED, { skipSync: true })
+          .map((hit) => memoryLine(hit, hit.trust === "user" ? "userPinned" : "repoPinned")),
+      )) {
+        if (candidate.part === "userPinned") userPinned.push(candidate);
+        else repoPinned.push(candidate);
+      }
     }
     if (isUsable(project)) {
       repoPinned.push(

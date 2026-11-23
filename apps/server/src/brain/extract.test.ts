@@ -8,16 +8,16 @@ import {
   buildDigest,
   buildExtractionPrompt,
   digestHasContent,
-  createDisabledGlobalProposals,
+  createInboxGlobalProposals,
   isDuplicate,
   parseCandidates,
   runExtraction,
   type CompleteFn,
   type ExtractDeps,
   type ExtractInput,
-  type SubmitGlobalProposal,
 } from "./extract.ts";
-import { createBrainStore, type BrainStore, type BrainWriteInput } from "./store.ts";
+import { createBrainInbox } from "./inbox.ts";
+import { createBrainStore, type BrainStore } from "./store.ts";
 
 const SECRET = ["ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
 const proj = (path: string) => `brain://project/p1/${path}`;
@@ -33,8 +33,7 @@ interface Fixture {
   root: string;
   store: BrainStore;
   prompts: string[];
-  /** What reached the global proposal sink. */
-  proposals: { target: string; memory: BrainWriteInput }[];
+  inbox: ReturnType<typeof createBrainInbox>;
   deps: (reply: string | ((prompt: string) => string), extra?: Partial<ExtractDeps>) => ExtractDeps;
 }
 
@@ -49,17 +48,19 @@ function fixture(): Fixture {
     home,
     resolveProjectRoot: (id) => (id === "p1" ? root : null),
   });
+  const inbox = createBrainInbox({
+    home,
+    store,
+    clock: () => "2026-11-23T10:00:00.000Z",
+    log: () => {},
+  });
   const prompts: string[] = [];
-  const proposals: Fixture["proposals"] = [];
-  const submitGlobalProposal: SubmitGlobalProposal = (target, memory) => {
-    proposals.push({ target, memory });
-  };
   return {
     home,
     root,
     store,
     prompts,
-    proposals,
+    inbox,
     deps: (reply, extra = {}) => {
       const complete: CompleteFn = async (prompt) => {
         prompts.push(prompt);
@@ -68,7 +69,8 @@ function fixture(): Fixture {
       return {
         complete,
         brain: store,
-        submitGlobalProposal,
+        submitGlobalProposal: createInboxGlobalProposals(inbox, () => "2026-11-23T10:00:00.000Z"),
+        inboxSummaries: () => inbox.list().map((item) => item.frontmatter.summary),
         now: () => "2026-11-23T10:00:00.000Z",
         ...extra,
       };
@@ -354,7 +356,7 @@ describe("runExtraction", () => {
     );
   });
 
-  it("hands a global candidate to the proposal sink as proposed and never to the global brain", async () => {
+  it("sends a global candidate to the inbox and never touches the global brain", async () => {
     const f = fixture();
     const report = await runExtraction(
       f.deps(
@@ -374,46 +376,13 @@ describe("runExtraction", () => {
     expect(report.proposed).toEqual([glob("preferences/small-commits.md")]);
     expect(report.written).toEqual([]);
     expect(existsSync(join(f.home, "brain", "global"))).toBe(false);
-    expect(existsSync(join(f.home, "brain", "inbox"))).toBe(false);
     expect(() => f.store.read(glob("preferences/small-commits.md"), 0)).toThrow(/No such memory/);
-    expect(f.proposals).toHaveLength(1);
-    expect(f.proposals[0]?.target).toBe(glob("preferences/small-commits.md"));
-    expect(f.proposals[0]?.memory.frontmatter.status).toBe("proposed");
-    expect(f.proposals[0]?.memory.frontmatter.tags).toContain(EXTRACT_TAG);
-  });
-
-  it("neither writes nor silently loses a global candidate while the B2 inbox is not wired", async () => {
-    const f = fixture();
-    const logs: string[] = [];
-    const sink = createDisabledGlobalProposals((message) => logs.push(message));
-    const report = await runExtraction(
-      f.deps(
-        reply(
-          candidate({
-            scope: "global",
-            path: "preferences/a.md",
-            summary: "Prefers small commits",
-          }),
-          candidate({
-            scope: "global",
-            path: "preferences/b.md",
-            summary: "Prefers short answers",
-          }),
-        ),
-        { submitGlobalProposal: sink, log: (message) => logs.push(message) },
-      ),
-      input(),
-      both,
-      signal(),
-    );
-    expect(report.proposed).toEqual([]);
-    expect(report.written).toEqual([]);
-    expect(report.rejected).toBe(2);
-    expect(existsSync(join(f.home, "brain"))).toBe(false);
-    expect(logs.filter((line) => line.includes("global proposals need the B2 inbox"))).toHaveLength(
-      1,
-    );
-    expect(logs.join("\n")).toMatch(/dropped/);
+    const inbox = f.inbox.list();
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]?.targetUri).toBe(glob("preferences/small-commits.md"));
+    expect(inbox[0]?.frontmatter.status).toBe("proposed");
+    expect(inbox[0]?.frontmatter.tags).toContain(EXTRACT_TAG);
+    expect(inbox[0]?.frontmatter.source?.agent).toBe("claude");
   });
 
   it("keeps the global scope out of reach even when a project candidate claims a global path", async () => {
@@ -441,7 +410,7 @@ describe("runExtraction", () => {
     );
     expect(globalOff.written).toHaveLength(1);
     expect(globalOff.proposed).toEqual([]);
-    expect(f.proposals).toEqual([]);
+    expect(f.inbox.list()).toHaveLength(0);
     const projectOff = await runExtraction(
       fixture().deps(two),
       input(),

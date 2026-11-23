@@ -353,6 +353,10 @@ function createHandlers(
     "brain.inbox.list": (params) => brain.inboxList(params),
     "brain.inbox.approve": (params) => brain.inboxApprove(params),
     "brain.inbox.reject": (params) => brain.inboxReject(params),
+    "brain.claim": (params) => brain.claim(params),
+    "brain.release": (params) => brain.release(params),
+    "brain.handoff": (params) => brain.handoff(params),
+    "brain.finding": (params) => brain.finding(params),
   };
 }
 

@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { RpcResponse, WOOKY_WS_PATH, type RpcError } from "@wooky/contracts";
+import { RpcResponse, WOOKY_WS_PATH, type RpcError, type RpcResult } from "@wooky/contracts";
 import { createAgentTokenService } from "../fleet/agent-token.ts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer } from "../server.ts";
@@ -106,7 +106,7 @@ async function boot() {
   const threadA = Object.values(snap2.threads).find((t) => t.projectId === projectA)?.id ?? "";
   const tokenA = agentTokens.issue(threadA);
 
-  return { server, client, home, rootA, rootB, projectA, projectB, threadA, tokenA };
+  return { server, client, home, rootA, rootB, projectA, projectB, threadA, tokenA, agentTokens };
 }
 
 describe("brain RPC round-trips and permissions", () => {
@@ -505,5 +505,123 @@ describe("brain RPC round-trips and permissions", () => {
       await client.call("brain.list", { uri: `brain://project/${projectB}/` }),
     );
     expect(removedErr.code).toBe("not_found");
+  });
+});
+
+it("queues global agent propose, then user approves into memory through real server", async () => {
+  const { client, tokenA } = await boot();
+  const uri = "brain://global/lessons/from-agent.md";
+  const queued = expectOk<RpcResult<"brain.write">>(
+    await client.call("brain.write", {
+      agentToken: tokenA,
+      uri,
+      frontmatter: { summary: "Agent lesson", kind: "lesson" },
+      body: "Use pnpm",
+    }),
+  );
+  expect(queued.queued).toBe(true);
+  expect(queued.proposalId).toEqual(expect.any(String));
+  expectErr(await client.call("brain.read", { uri, tier: 0 }));
+  if (!queued.proposalId) throw new Error("The write did not return a proposal id.");
+
+  const inbox = expectOk<RpcResult<"brain.inbox.list">>(await client.call("brain.inbox.list", {}));
+  const item = inbox.find((x) => x.id === queued.proposalId);
+  expect(item?.targetUri).toBe(uri);
+  expect(item?.frontmatter?.source?.agent).toBeTruthy();
+
+  const approved = expectOk<RpcResult<"brain.inbox.approve">>(
+    await client.call("brain.inbox.approve", { id: queued.proposalId }),
+  );
+  expect(approved.uri).toBe(uri);
+  const read = expectOk<RpcResult<"brain.read">>(await client.call("brain.read", { uri, tier: 2 }));
+  expect(read.trust).toBe("repo");
+  expect(read.frontmatter.source?.agent).toBeTruthy();
+});
+
+it("enforces brain permission rules through real server RPC", async () => {
+  const { client, projectB, tokenA } = await boot();
+  const otherUri = `brain://project/${projectB}/notes/nope.md`;
+  const deniedRead = expectErr(
+    await client.call("brain.read", { agentToken: tokenA, uri: otherUri, tier: 0 }),
+  );
+  expect(deniedRead.code).toBe("forbidden");
+
+  const queuedGlobal = expectOk<RpcResult<"brain.write">>(
+    await client.call("brain.write", {
+      agentToken: tokenA,
+      uri: "brain://global/prefs/nope.md",
+      frontmatter: { summary: "Nope", kind: "note" },
+      body: "x",
+    }),
+  );
+  expect(queuedGlobal.queued).toBe(true);
+});
+
+describe("brain claim RPC and MCP rules", () => {
+  it("allows fleet workers to claim/release/handoff/find and enforces owner-only release", async () => {
+    const { client, threadA, tokenA, agentTokens } = await boot();
+    const solo = expectErr(
+      await client.call("brain.claim", { agentToken: tokenA, target: "src/solo.ts" }),
+    );
+    expect(solo.code).toBe("bad_request");
+
+    for (const title of ["worker one", "worker two"]) {
+      await client.call("dispatch", {
+        commandId: randomUUID(),
+        type: "thread.spawn",
+        parentThreadId: threadA,
+        provider: "demo",
+        model: "demo",
+        prompt: title,
+        title,
+      });
+    }
+    const snap = expectOk<RpcResult<"snapshot">>(await client.call("snapshot"));
+    const workers = Object.values(snap.threads).filter((t) => t.parentThreadId === threadA);
+    expect(workers).toHaveLength(2);
+    const [w1, w2] = workers;
+    if (!w1 || !w2) throw new Error("The workers were not created.");
+    const token1 = agentTokens.issue(w1.id);
+    const token2 = agentTokens.issue(w2.id);
+
+    const claim = expectOk<RpcResult<"brain.claim">>(
+      await client.call("brain.claim", { agentToken: token1, target: "src/a.ts", note: "mine" }),
+    );
+    expect(claim.status).toBe("claimed");
+    if (claim.status !== "claimed") throw new Error("The first worker did not claim the target.");
+    expect(claim.claimId).toEqual(expect.any(String));
+
+    const held = expectOk<RpcResult<"brain.claim">>(
+      await client.call("brain.claim", { agentToken: token2, target: "src/a.ts" }),
+    );
+    expect(held.status).toBe("held");
+    if (held.status !== "held") throw new Error("The second worker did not get a held claim.");
+    expect(held.holder.threadId).toBe(w1.id);
+
+    const releaseForbidden = expectErr(
+      await client.call("brain.release", { agentToken: token2, claimId: claim.claimId }),
+    );
+    expect(releaseForbidden.code).toBe("forbidden");
+
+    const released = expectOk<RpcResult<"brain.release">>(
+      await client.call("brain.release", { agentToken: token1, claimId: claim.claimId }),
+    );
+    expect(released.released).toBe(true);
+
+    const handoff = expectOk<RpcResult<"brain.handoff">>(
+      await client.call("brain.handoff", {
+        agentToken: token1,
+        summary: "picked up",
+        toThreadId: w2.id,
+      }),
+    );
+    expect(handoff.handoffId).toEqual(expect.any(String));
+    const finding = expectOk<RpcResult<"brain.finding">>(
+      await client.call("brain.finding", { agentToken: token1, text: "found X" }),
+    );
+    expect(finding.findingId).toEqual(expect.any(String));
+
+    const noToken = expectErr(await client.call("brain.claim", { target: "src/b.ts" }));
+    expect(noToken.code).toBe("forbidden");
   });
 });

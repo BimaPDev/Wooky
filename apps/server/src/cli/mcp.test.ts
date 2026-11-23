@@ -279,6 +279,10 @@ describe("wooky mcp", () => {
       "brain_read",
       "brain_search",
       "brain_write",
+      "brain_claim",
+      "brain_release",
+      "brain_handoff",
+      "brain_finding",
     ]);
     for (const entry of tools) expect(entry.inputSchema.type).toBe("object");
 

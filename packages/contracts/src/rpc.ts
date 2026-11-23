@@ -603,6 +603,58 @@ export const RpcMethods = {
       ok: z.literal(true),
     }),
   },
+  "brain.claim": {
+    params: z.object({
+      target: z.string().min(1).max(200),
+      note: z.string().max(2048).optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("claimed"),
+        claimId: z.string().min(1),
+        expiresAt: IsoTime,
+      }),
+      z.object({
+        status: z.literal("held"),
+        holder: z.object({
+          threadId: Id,
+          agent: z.string().min(1),
+          target: z.string().min(1),
+          note: z.string(),
+          expiresAt: IsoTime,
+        }),
+      }),
+    ]),
+  },
+  "brain.release": {
+    params: z.object({
+      claimId: z.string().min(1).max(128),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      released: z.boolean(),
+    }),
+  },
+  "brain.handoff": {
+    params: z.object({
+      summary: z.string().min(1).max(2048),
+      toThreadId: Id.optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      handoffId: z.string().min(1),
+    }),
+  },
+  "brain.finding": {
+    params: z.object({
+      text: z.string().min(1).max(2048),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      findingId: z.string().min(1),
+    }),
+  },
 } as const;
 
 export type RpcMethod = keyof typeof RpcMethods;

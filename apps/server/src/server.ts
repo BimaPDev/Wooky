@@ -9,9 +9,10 @@ import {
 } from "@wooky/contracts";
 import { createRunStore } from "./brain/claims.ts";
 import { createBrainHooks } from "./brain/context.ts";
-import { createDisabledGlobalProposals } from "./brain/extract.ts";
+import { createInboxGlobalProposals } from "./brain/extract.ts";
 import { createExtractor, createFinishHook } from "./brain/extract-hook.ts";
 import { createProviderComplete, extractionModelProblem } from "./brain/extract-model.ts";
+import { createBrainInbox } from "./brain/inbox.ts";
 import { createBrainService } from "./brain/service.ts";
 import { createBrainStore } from "./brain/store.ts";
 import { createEffectRunner } from "./effects/runner.ts";
@@ -162,7 +163,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     clock: ctx.now,
     log: brainLog,
   });
-  const brainRuns = createRunStore({ home: options.home });
+  const brainInbox = createBrainInbox({
+    home: options.home,
+    store: brainStore,
+    clock: ctx.now,
+    log: brainLog,
+  });
+  const brainRuns = createRunStore({ home: options.home, log: brainLog });
   // Every claim belongs to a turn, and no turn is running yet: whatever is left is from a crash.
   try {
     brainRuns.releaseAll();
@@ -172,15 +179,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const brain = createBrainService({
     home: options.home,
     brainStore,
+    inbox: brainInbox,
+    runs: brainRuns,
     eventStore: store,
     tokens: agentTokens,
     clock: ctx.now,
     log: brainLog,
   });
+  let storesClosed = false;
   const closeStore = () => {
+    if (storesClosed) return;
+    storesClosed = true;
     unwatchHeldNotices();
     brainRuns.close();
-    brain.close();
+    brainStore.close();
     store.close();
   };
   const git = options.git ?? createGitService();
@@ -267,9 +279,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         home: options.home,
       }),
       brain: brainStore,
-      // TODO(integration): B2 owns the global inbox. Until its `propose` is wired here, extracted
-      // global memories are logged and dropped, never written to the global brain or elsewhere.
-      submitGlobalProposal: createDisabledGlobalProposals((message) => console.warn(message)),
+      submitGlobalProposal: createInboxGlobalProposals(brainInbox, ctx.now),
+      inboxSummaries: () => brainInbox.list().map((item) => item.frontmatter.summary),
       log: (message) => console.warn(message),
     },
     settings: () => themes.getSettings().brain,
@@ -372,11 +383,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
     stopShipPolling();
+    extractor.stop();
     transfer.stop();
     sockets.close();
     remote.closeTunnels();
     await remote.closeServers();
     await sync.close();
+    await extractor.drain(EXTRACT_SHUTDOWN_WAIT_MS);
     closeStore();
     throw error;
   }
