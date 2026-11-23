@@ -390,7 +390,7 @@ export function ProjectSettingsDialog({ projectId }: { projectId: string }) {
           >
             Cancel
           </button>
-          <button type="submit" className="primary-button" disabled={busy}>
+          <button type="submit" className="button primary" disabled={busy}>
             Save
           </button>
         </div>
