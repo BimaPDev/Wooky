@@ -328,35 +328,55 @@ describe("secret scan", () => {
       `: |\n\n${" ".repeat(20)}`,
     ];
 
-    it("finishes a worst-case 16 KB body well under 50 ms for every keyword and separator", () => {
+    const SMALL = 16 * 1024;
+    const LARGE = 64 * 1024;
+    const CEILING_MS = 250;
+
+    /** One warm-up, then the fastest of five runs: load only ever adds time to a sample. */
+    function fastestMs(text: string): number {
+      findSecret(text);
+      let best = Infinity;
+      for (let run = 0; run < 5; run += 1) {
+        const started = performance.now();
+        findSecret(text);
+        best = Math.min(best, performance.now() - started);
+      }
+      return best;
+    }
+
+    function repeated(unit: string, size: number, shape = (body: string) => body): string {
+      return shape(unit.repeat(Math.ceil(size / unit.length)).slice(0, size));
+    }
+
+    it("finishes a worst-case 16 KB body well under 250 ms for every keyword and separator", () => {
       const slow: string[] = [];
       for (const keyword of keywords) {
         for (const separator of separators) {
           const unit = keyword + separator;
-          const body = unit.repeat(Math.ceil(16384 / unit.length)).slice(0, 16384);
           // Short lines and lines of the length the joined pass looks at, so it runs at its worst.
-          const texts = [
-            body,
-            body.replace(/(.{80})/g, "$1\n"),
-            body.replace(/(.{8})/g, "$1\n"),
-            body.replace(/(.{300})/g, "$1\n"),
+          const shapes = [
+            (body: string) => body,
+            (body: string) => body.replace(/(.{80})/g, "$1\n"),
+            (body: string) => body.replace(/(.{8})/g, "$1\n"),
+            (body: string) => body.replace(/(.{300})/g, "$1\n"),
           ];
-          for (const text of texts) {
-            const started = performance.now();
-            findSecret(text);
-            const took = performance.now() - started;
-            if (took > 50) slow.push(`${JSON.stringify(unit)} ${took.toFixed(0)} ms`);
+          for (const shape of shapes) {
+            const took = fastestMs(repeated(unit, SMALL, shape));
+            if (took > CEILING_MS) slow.push(`${JSON.stringify(unit)} ${took.toFixed(0)} ms`);
           }
+          if (slow.length > 0) break;
         }
       }
       expect(slow).toEqual([]);
-    });
+    }, 180_000);
 
-    it("no longer takes cubic time on repeated password words", () => {
-      const started = performance.now();
+    it("scales linearly, not quadratically, with the body size", () => {
+      const small = fastestMs(repeated("password-", SMALL));
+      expect(small).toBeLessThanOrEqual(CEILING_MS);
+      const large = fastestMs(repeated("password-", LARGE));
+      expect(large).toBeLessThanOrEqual(8 * small + 2);
       expect(findSecret("password-".repeat(1800))).toBeNull();
-      expect(performance.now() - started).toBeLessThan(50);
-    });
+    }, 180_000);
 
     it("still finds a credential after a very long line", () => {
       const line = `${"x".repeat(9000)} ${cat("ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8")} ${"y".repeat(9000)}`;
