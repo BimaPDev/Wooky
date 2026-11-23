@@ -59,15 +59,17 @@ function plainLabel(label: string): string {
 
 /**
  * What the model chip shows. An alias such as "default" or "opus" shows the model it maps to when
- * the provider status says so; "default" without that answer shows "Default".
+ * the provider status says so; "default" without that answer shows "Default". An empty id returns
+ * "" so callers can distinguish a missing model from the "default" alias.
  */
 export function chipModelName(
   status: Pick<ProviderStatus, "models"> | undefined,
   modelId: string,
 ): string {
+  if (!modelId.trim()) return "";
   const entry = modelEntry(status, modelId);
   if (entry?.resolvedModel) return shortModelName(entry.resolvedModel);
-  if (!modelId.trim() || modelId === "default") return "Default";
+  if (modelId === "default") return "Default";
   if (isAlias(modelId) && !modelId.includes("[")) return shortModelName(modelId);
   const label = entry ? plainLabel(entry.label) : "";
   if (label && label.toLowerCase() !== modelId.toLowerCase() && label.length <= 28) return label;

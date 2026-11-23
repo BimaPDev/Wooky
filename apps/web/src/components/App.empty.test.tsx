@@ -54,6 +54,9 @@ describe("App on a fresh install (no projects, no threads)", () => {
     await act(async () => {
       useStore.setState({ newThread: { projectId: null } as never });
     });
+    const chip = document.body.querySelector(".composer-model-chip");
+    expect(chip?.textContent).toBe("Select model");
+    expect(chip?.querySelector(".provider-glyph")).toBeNull();
     expect(errors.mock.calls.map((call) => String(call[0]))).toEqual([]);
   });
 
