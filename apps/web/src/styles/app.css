@@ -2883,7 +2883,7 @@ button.tool-line:active {
   box-shadow: 0 8px 28px -18px #000000cc;
 }
 
-.settings-card > p:not(.settings-help) {
+.settings-card > p:not(.settings-help, .anywhere-warn, .notify-note) {
   margin: 0;
   padding: var(--space-4);
 }
@@ -5894,7 +5894,7 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  column-gap: var(--space-2);
+  gap: 2px var(--space-2);
   min-width: 0;
   color: var(--text-4);
   font-size: var(--text-xs);
