@@ -6,4 +6,6 @@
     "apps/desktop": { "entry": ["src/main.ts", "src/preload.ts"] },
   },
   "ignoreExportsUsedInFile": true,
+  // The brain hardening test makes a FIFO with the system mkfifo; Node has no API for it.
+  "ignoreBinaries": ["mkfifo"],
 }

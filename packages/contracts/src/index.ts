@@ -1,3 +1,4 @@
+export * from "./brain.ts";
 export * from "./failover.ts";
 export * from "./model.ts";
 export * from "./remote.ts";
