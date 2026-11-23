@@ -24,7 +24,15 @@ const hasLetterAndDigit = (value: string) => /[A-Za-z]/.test(value) && /[0-9]/.t
 const hasMixedCaseAndDigit = (value: string) =>
   /[a-z]/.test(value) && /[A-Z]/.test(value) && /[0-9]/.test(value);
 
-const PLACEHOLDER_PASSWORD = /^(?:[$<{%]|\*+$|x+$|\.+$)/i;
+/**
+ * What a template or an example puts where a password goes: `${DB_PASS}`, `$DB_PASS`,
+ * `<password>`, `{{DB_PASS}}`, `%(db_pass)s`, `%DB_PASS%`, or a run of `*`, `x` or `.`. A leading
+ * `%` or `$` alone is not enough: `%40Xq7m…` is a percent-encoded real password.
+ */
+const PLACEHOLDER_PASSWORD =
+  /^(?:\$\{[^}]{1,64}\}|<[^>]{1,64}>|\{\{[^}]{1,64}\}\}|%\([A-Za-z_][A-Za-z0-9_]{0,63}\)[sdi]|\*+|x+|\.+)$/i;
+/** `$DB_PASS`, `%DB_PASS%`: an environment variable name, which a random secret is not. */
+const VARIABLE_PASSWORD = /^(?:\$[A-Za-z_][A-Za-z0-9_]{0,63}|%[A-Za-z_][A-Za-z0-9_]{0,63}%)$/;
 /** Passwords people put in examples and local dev setups, compared in lowercase. */
 const PLACEHOLDER_WORDS = new Set([
   "password",
@@ -97,10 +105,22 @@ const SECRET_PATTERNS: SecretPattern[] = [
       const user = (match[1] ?? "").toLowerCase();
       const password = match[2] ?? "";
       const lower = password.toLowerCase();
+      const authority = match[3] ?? "";
       if (PLACEHOLDER_PASSWORD.test(password)) return false;
-      if (PLACEHOLDER_WORDS.has(lower) || lower === user) return false;
-      // A password to a local service is a dev default unless it looks like a real secret.
-      if (LOCAL_HOSTS.has(hostName(match[3] ?? "")) && !looksRandom(password)) return false;
+      if (VARIABLE_PASSWORD.test(password) && !looksRandom(password)) return false;
+      if (PLACEHOLDER_WORDS.has(lower)) return false;
+      // `user:user@host` is an example; a long random string used twice is a real secret.
+      if (lower === user && !looksRandom(password)) return false;
+      // A password to a local service is a dev default unless it looks like a real secret. A
+      // second `@` means the real host comes after it (`app:pw@localhost:1@db.prod`: URL
+      // parsers take the host after the last `@`), so `localhost` here is just part of a password.
+      if (
+        !authority.includes("@") &&
+        LOCAL_HOSTS.has(hostName(authority)) &&
+        !looksRandom(password)
+      ) {
+        return false;
+      }
       return true;
     },
   },
@@ -116,7 +136,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   {
     name: "credential assignment",
     pattern:
-      /(?:password|passwd|secret|token|api[_ -]?key)[A-Za-z0-9_-]{0,32}["']?\s{0,16}[:=]\s{0,16}["']?([A-Za-z0-9+/_=.!@#$%^&*~-]{16,256})/gi,
+      /(?:password|passwd|secret|token|api[_ -]?key)[A-Za-z0-9_-]{0,32}["']?\s{0,16}[:=]\s{0,16}(?:[|>][-+]?\s{0,16})?["']?([A-Za-z0-9+/_=.!@#$%^&*~-]{16,256})/gi,
     accept: (match) => {
       const value = match[1] ?? "";
       return hasLetterAndDigit(value) && entropy(value) >= 3.5;
@@ -125,7 +145,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   {
     name: "API key assignment",
     pattern:
-      /api[_ -]?key[A-Za-z0-9_-]{0,32}["']?\s{0,16}[:=]\s{0,16}["']?([A-Za-z]{16,256})(?![A-Za-z0-9+/_=.-])/gi,
+      /api[_ -]?key[A-Za-z0-9_-]{0,32}["']?\s{0,16}[:=]\s{0,16}(?:[|>][-+]?\s{0,16})?["']?([A-Za-z]{16,256})(?![A-Za-z0-9+/_=.-])/gi,
     accept: (match) => {
       const value = match[1] ?? "";
       return entropy(value) >= 3.5 && !CAMEL_CASE_IDENTIFIER.test(value);
@@ -155,11 +175,27 @@ function* windows(line: string): Generator<string> {
 }
 
 /**
- * A key at the end of one line and its value at the start of the next (`password:\n  <value>`).
- * Only this much of each line is joined, so the text a pattern sees stays small.
+ * A key at the end of one line and its value at the start of a later one (`password:\n  <value>`,
+ * also `password: |` and `password: >-` blocks). Up to `JOIN_BLANK_LINES` blank lines may sit
+ * between them and the value may be indented by up to `JOIN_INDENT` characters; the newlines and
+ * the indentation collapse to one space. Only this much of each line is joined, so the text a
+ * pattern sees stays small and the pass stays linear in the text.
  */
 const JOIN_TAIL = 128;
 const JOIN_HEAD = 320;
+const JOIN_BLANK_LINES = 2;
+const JOIN_INDENT = 64;
+
+/** The next line with text on it, within `JOIN_BLANK_LINES` blank lines of `index`, indentation removed. */
+function nextValueLine(lines: readonly string[], index: number): string | null {
+  for (let at = index + 1; at <= index + 1 + JOIN_BLANK_LINES; at += 1) {
+    const candidate = lines[at];
+    if (candidate === undefined) return null;
+    const trimmed = candidate.slice(0, JOIN_INDENT + JOIN_HEAD).trimStart();
+    if (trimmed.length > 0) return trimmed.slice(0, JOIN_HEAD);
+  }
+  return null;
+}
 
 /** `startsBefore`: ignore a match that starts at or after this offset (it belongs to a later line). */
 function firstMatch(piece: string, startsBefore = Number.POSITIVE_INFINITY): string | null {
@@ -182,10 +218,10 @@ export function findSecret(text: string): { name: string; line: number } | null 
       const name = firstMatch(piece);
       if (name !== null) return { name, line: index + 1 };
     }
-    const next = lines[index + 1];
-    if (next !== undefined && line.length > 0 && next.length > 0) {
+    const next = line.length > 0 ? nextValueLine(lines, index) : null;
+    if (next !== null) {
       const tail = line.slice(-JOIN_TAIL);
-      const name = firstMatch(`${tail}\n${next.slice(0, JOIN_HEAD)}`, tail.length);
+      const name = firstMatch(`${tail} ${next}`, tail.length);
       if (name !== null) return { name, line: index + 1 };
     }
   }

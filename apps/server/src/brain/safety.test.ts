@@ -145,6 +145,17 @@ describe("secret scan", () => {
     it.each([
       ["YAML value on the next line", `password:\n  ${value}`],
       ["YAML value indented deeper", `db:\n  secret:\n      ${value}\n`],
+      ["a YAML literal block", `password: |\n  ${value}`],
+      ["a YAML folded block with a chomp marker", `password: >-\n  ${value}`],
+      ["a YAML keep block", `token: |+\n    ${value}`],
+      ["a blank line between key and value", `password:\n\n  ${value}`],
+      ["two blank lines between key and value", `secret:\n\n\n  ${value}`],
+      ["an indentation of 16 spaces", `password:\n${" ".repeat(16)}${value}`],
+      ["an indentation of 40 spaces", `password:\n${" ".repeat(40)}${value}`],
+      [
+        "a block marker, a blank line and deep indentation",
+        `password: >\n\n${" ".repeat(20)}${value}`,
+      ],
       ["a key at the end of one line", `${"x".repeat(300)} token:\n${value}`],
       [".env padded with many spaces", `API_TOKEN${" ".repeat(10)}=${" ".repeat(10)}${value}`],
       ["a password with symbols", cat("password=", "Xq7m!Z2pL9@vR4tK")],
@@ -167,6 +178,65 @@ describe("secret scan", () => {
       cat("amqp://svc:", "Xq7mZ2pL9vR4tK8w", "@[::1]:5672"),
     ])("flags the URL %s", (text) => {
       expect(findSecret(text)).toEqual({ name: "URL with credentials", line: 1 });
+    });
+
+    it("does not look past more than two blank lines for a value", () => {
+      expect(findSecret(`password:\n\n\n\n  ${value}`)).toBeNull();
+    });
+
+    it.each([
+      [
+        "an @ after a localhost authority",
+        cat("postgres://app:", "Summer2026Prod!", "@localhost:1@db.prod.example.com"),
+      ],
+      [
+        "an @ after a bare localhost",
+        cat("postgres://app:", "Summer2026Prod!", "@localhost@db.prod.example.com"),
+      ],
+      [
+        "an @ after an IPv6 loopback authority",
+        cat("postgres://app:", "Summer2026Prod!", "@[::1]:5432@db.prod.example.com"),
+      ],
+      [
+        "a password equal to a random user name",
+        cat(
+          "https://",
+          "Xq7mZ2pL9vR4tK8wQ3zB",
+          ":",
+          "Xq7mZ2pL9vR4tK8wQ3zB",
+          "@api.prod.example.com",
+        ),
+      ],
+      [
+        "a percent-encoded password",
+        cat("postgres://app:", "%40Xq7mZ2pL9vR4tK8wQ3zB", "@db.prod.example.com"),
+      ],
+      [
+        "a percent-encoded password with a short body",
+        cat("postgres://app:", "%2Fp4ssW0rdX", "@db.prod.example.com"),
+      ],
+      [
+        "a dollar sign before a random password",
+        cat("postgres://app:", "$Xq7mZ2pL9vR4tK8wQ3zB", "@db.prod.example.com"),
+      ],
+      ["a half placeholder", cat("postgres://app:", "${Xq7mZ2pL9vR4tK8w", "@db.prod.example.com")],
+    ])("flags a URL with %s", (_name, text) => {
+      expect(findSecret(text)).toEqual({ name: "URL with credentials", line: 1 });
+    });
+
+    it.each([
+      "postgres://app:${DB_PASSWORD}@db.prod.example.com/x",
+      "postgres://app:$DB_PASSWORD@db.prod.example.com/x",
+      "postgres://app:$dbpass@db.prod.example.com/x",
+      "postgres://app:<password>@db.prod.example.com/x",
+      "postgres://app:<your-db-password>@db.prod.example.com/x",
+      "postgres://app:{{DB_PASSWORD}}@db.prod.example.com/x",
+      "postgres://app:%(db_password)s@db.prod.example.com/x",
+      "postgres://app:%DB_PASSWORD%@db.prod.example.com/x",
+      "https://abc:abc@api.prod.example.com",
+      "https://ci-bot:ci-bot@api.prod.example.com",
+    ])("leaves the placeholder URL %s alone", (text) => {
+      expect(findSecret(text)).toBeNull();
     });
 
     it("does not join a key to a harmless next line", () => {
@@ -251,6 +321,11 @@ describe("secret scan", () => {
       ":\n  ",
       " ".repeat(20),
       `=${" ".repeat(16)}`,
+      ": |\n  ",
+      ": >-\n  ",
+      ":\n\n\n  ",
+      `:\n${" ".repeat(40)}`,
+      `: |\n\n${" ".repeat(20)}`,
     ];
 
     it("finishes a worst-case 16 KB body well under 50 ms for every keyword and separator", () => {
