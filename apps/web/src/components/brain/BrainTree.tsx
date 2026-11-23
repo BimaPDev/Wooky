@@ -312,7 +312,9 @@ export function BrainTree({
                         <span className="brain-scope-pill">{scopeLabel(hit.scope)}</span>
                         <span className="mono brain-hit-path">{hit.path}</span>
                         {hit.trust === "repo" ? (
-                          <span className="brain-trust-badge">from this repo</span>
+                          <span className="brain-trust-badge">
+                            {hit.scope.kind === "global" ? "from an agent" : "from this repo"}
+                          </span>
                         ) : null}
                         {hit.status === "archived" ? (
                           <span className="brain-archived-badge">archived</span>
@@ -409,6 +411,9 @@ export function BrainTree({
                             ) : null}
                             {isArchived ? (
                               <span className="brain-archived-badge">archived</span>
+                            ) : null}
+                            {!isFolder && node.scope.kind === "global" && node.trust === "repo" ? (
+                              <span className="brain-trust-badge">from an agent</span>
                             ) : null}
                             {isFolder && node.count !== undefined ? (
                               <span className="brain-folder-count">

@@ -4,7 +4,6 @@ import {
   parentFolderUri,
   validateBrainMemoryPath,
   validateBrainTags,
-  validateGlobalTargetUri,
   validateMemoryDraft,
 } from "./validation.ts";
 
@@ -84,11 +83,7 @@ describe("brain validation", () => {
     ).toContain("16 KB");
   });
 
-  it("validates global target URIs and computes parent folder URIs", () => {
-    expect(validateGlobalTargetUri("brain://global/lessons/sqlite.md")).toBeNull();
-    expect(validateGlobalTargetUri("brain://project/p1/lessons/sqlite.md")).toContain(
-      "brain://global/",
-    );
+  it("computes parent folder URIs", () => {
     expect(parentFolderUri("brain://global/lessons/sqlite.md")).toBe("brain://global/lessons");
     expect(parentFolderUri("brain://global/note.md")).toBe("brain://global/");
     expect(parentFolderUri("brain://project/p1/a/b.md")).toBe("brain://project/p1/a");

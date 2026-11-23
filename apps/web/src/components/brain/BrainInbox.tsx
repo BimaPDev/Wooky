@@ -1,16 +1,11 @@
-import type { BrainEntry, BrainKind, MemoryFrontmatterInput, Thread } from "@wooky/contracts";
+import type { BrainInboxItem, BrainKind, BrainWriteFrontmatter, Thread } from "@wooky/contracts";
 import { useState } from "react";
-import {
-  brainErrorMessage,
-  type BrainInboxEditOverrides,
-  type BrainInboxProposal,
-} from "../../brain/client.ts";
+import type { BrainInboxApproveEdits } from "../../brain/client.ts";
 import {
   BRAIN_KINDS,
   brainKindLabel,
   formatBrainTime,
   validateBrainTags,
-  validateGlobalTargetUri,
   validateMemoryDraft,
 } from "../../brain/validation.ts";
 import { selectThread } from "../../state/actions.ts";
@@ -19,14 +14,12 @@ import { Markdown } from "../Markdown.tsx";
 import { BrainKindIcon, IconPin } from "./BrainIcons.tsx";
 
 export interface BrainInboxProps {
-  proposals: readonly BrainInboxProposal[];
+  proposals: readonly BrainInboxItem[];
   loading: boolean;
   error: string | null;
   threads: Readonly<Record<string, Thread>>;
-  savedProposalIds?: ReadonlySet<string>;
-  onCheckTarget?: (uri: string) => Promise<BrainEntry | null>;
   onRetry: () => void;
-  onApprove: (id: string, edits?: BrainInboxEditOverrides) => Promise<string | null>;
+  onApprove: (id: string, edits?: BrainInboxApproveEdits) => Promise<string | null>;
   onReject: (id: string) => Promise<string | null>;
 }
 
@@ -35,8 +28,6 @@ export function BrainInbox({
   loading,
   error,
   threads,
-  savedProposalIds,
-  onCheckTarget,
   onRetry,
   onApprove,
   onReject,
@@ -83,8 +74,6 @@ export function BrainInbox({
             key={proposal.id}
             proposal={proposal}
             threads={threads}
-            saved={savedProposalIds?.has(proposal.id) ?? false}
-            onCheckTarget={onCheckTarget}
             onApprove={onApprove}
             onReject={onReject}
           />
@@ -97,34 +86,26 @@ export function BrainInbox({
 function InboxCard({
   proposal,
   threads,
-  saved,
-  onCheckTarget,
   onApprove,
   onReject,
 }: {
-  proposal: BrainInboxProposal;
+  proposal: BrainInboxItem;
   threads: Readonly<Record<string, Thread>>;
-  saved: boolean;
-  onCheckTarget?: (uri: string) => Promise<BrainEntry | null>;
-  onApprove: (id: string, edits?: BrainInboxEditOverrides) => Promise<string | null>;
+  onApprove: (id: string, edits?: BrainInboxApproveEdits) => Promise<string | null>;
   onReject: (id: string) => Promise<string | null>;
 }) {
+  const fm = proposal.frontmatter;
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [cardError, setCardError] = useState<string | null>(null);
-  const [confirmOverwrite, setConfirmOverwrite] = useState<{
-    existing: BrainEntry;
-    edits: BrainInboxEditOverrides;
-  } | null>(null);
 
-  const [targetUri, setTargetUri] = useState(proposal.targetUri);
-  const [summary, setSummary] = useState(proposal.summary);
-  const [kind, setKind] = useState<BrainKind>(proposal.kind);
-  const [tagsRaw, setTagsRaw] = useState(proposal.tags.join(", "));
-  const [pinned, setPinned] = useState(proposal.pinned ?? false);
+  const [summary, setSummary] = useState(fm.summary);
+  const [kind, setKind] = useState<BrainKind>(fm.kind);
+  const [tagsRaw, setTagsRaw] = useState(fm.tags.join(", "));
+  const [pinned, setPinned] = useState(fm.pinned ?? false);
   const [body, setBody] = useState(proposal.body);
 
-  const source = proposal.source;
+  const source = fm.source;
   const thread = source?.threadId ? threads[source.threadId] : undefined;
   const when = source?.at ?? proposal.createdAt;
 
@@ -145,11 +126,6 @@ function InboxCard({
   };
 
   const handleApproveEdited = async () => {
-    const uriErr = validateGlobalTargetUri(targetUri);
-    if (uriErr) {
-      setCardError(uriErr);
-      return;
-    }
     const draftErr = validateMemoryDraft({
       summary,
       kind,
@@ -161,7 +137,7 @@ function InboxCard({
       return;
     }
     const { tags } = validateBrainTags(tagsRaw);
-    const frontmatter: MemoryFrontmatterInput = {
+    const frontmatter: BrainWriteFrontmatter = {
       summary: summary.trim(),
       kind,
       tags,
@@ -169,62 +145,24 @@ function InboxCard({
       ...(pinned ? { pinned: true } : {}),
       ...(source ? { source } : {}),
     };
-    const edits: BrainInboxEditOverrides = {
-      targetUri: targetUri.trim(),
-      frontmatter,
-      body,
-    };
     setBusy(true);
     setCardError(null);
-    setConfirmOverwrite(null);
-    if (onCheckTarget) {
-      try {
-        const existing = await onCheckTarget(edits.targetUri);
-        if (existing) {
-          setBusy(false);
-          setConfirmOverwrite({ existing, edits });
-          return;
-        }
-      } catch (error) {
-        setBusy(false);
-        setCardError(brainErrorMessage(error, "Could not verify target memory."));
-        return;
-      }
-    }
-    const err = await onApprove(proposal.id, edits);
+    const err = await onApprove(proposal.id, { frontmatter, body });
     setBusy(false);
-    if (err) {
-      setEditing(false);
-      setCardError(err);
-    }
-  };
-
-  const handleConfirmOverwrite = async () => {
-    if (!confirmOverwrite) return;
-    setBusy(true);
-    setCardError(null);
-    const err = await onApprove(proposal.id, {
-      ...confirmOverwrite.edits,
-      expectedUpdatedAt: confirmOverwrite.existing.frontmatter.updatedAt,
-    });
-    setBusy(false);
-    setConfirmOverwrite(null);
-    if (err) {
-      setEditing(false);
-      setCardError(err);
-    }
+    if (err) setCardError(err);
   };
 
   return (
     <li className="brain-inbox-card">
       <div className="brain-inbox-head">
         <span className="brain-fm-kind">
-          <BrainKindIcon kind={proposal.kind} />
-          <span>{brainKindLabel(proposal.kind)}</span>
+          <BrainKindIcon kind={fm.kind} />
+          <span>{brainKindLabel(fm.kind)}</span>
         </span>
         <span className="mono brain-inbox-uri">{proposal.targetUri}</span>
-        {saved ? <span className="brain-status-pill">Saved</span> : null}
-        {proposal.pinned ? (
+        {proposal.stale ? <span className="brain-status-pill">Stale</span> : null}
+        {proposal.overwrites ? <span className="brain-status-pill">Overwrites</span> : null}
+        {fm.pinned ? (
           <span className="brain-pin-pill">
             <IconPin filled /> Pinned
           </span>
@@ -251,7 +189,29 @@ function InboxCard({
         </div>
       ) : null}
 
-      {(proposal.pinned || (editing && pinned)) && !saved ? (
+      {proposal.stale ? (
+        <div className="brain-conflict-box" role="note">
+          <p className="brain-conflict-title">Stale proposal</p>
+          <p>
+            {proposal.overwrites
+              ? `The target memory changed since this proposal was made${
+                  proposal.existingSummary ? ` (current summary: ${proposal.existingSummary})` : ""
+                }. Approving will return a conflict.`
+              : "The target memory was removed since this proposal was made. Approving will return a conflict."}
+          </p>
+        </div>
+      ) : proposal.overwrites ? (
+        <div className="brain-conflict-box" role="note">
+          <p className="brain-conflict-title">Overwrites existing memory</p>
+          <p>
+            Approving will replace the existing memory at{" "}
+            <span className="mono">{proposal.targetUri}</span>
+            {proposal.existingSummary ? ` (${proposal.existingSummary})` : ""}.
+          </p>
+        </div>
+      ) : null}
+
+      {fm.pinned || (editing && pinned) ? (
         <div className="brain-conflict-box" role="note">
           <p className="brain-conflict-title">Pinned proposal</p>
           <p>
@@ -261,49 +221,8 @@ function InboxCard({
         </div>
       ) : null}
 
-      {confirmOverwrite ? (
-        <div className="brain-conflict-box" role="alertdialog" aria-label="Confirm overwrite">
-          <p className="brain-conflict-title">Target memory already exists</p>
-          <p>
-            A memory already exists at{" "}
-            <span className="mono">{confirmOverwrite.edits.targetUri}</span> (
-            {formatBrainTime(confirmOverwrite.existing.frontmatter.updatedAt)}:{" "}
-            {confirmOverwrite.existing.frontmatter.summary}). Overwrite it with your edits?
-          </p>
-          <div className="brain-conflict-actions">
-            <button
-              type="button"
-              className="button primary"
-              disabled={busy}
-              onClick={() => void handleConfirmOverwrite()}
-            >
-              {busy ? "Saving…" : "Overwrite and approve"}
-            </button>
-            <button
-              type="button"
-              className="button"
-              disabled={busy}
-              onClick={() => setConfirmOverwrite(null)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {editing && !saved ? (
+      {editing ? (
         <div className="brain-inbox-edit">
-          <label className="field">
-            <span>Target URI</span>
-            <input
-              className="mono"
-              value={targetUri}
-              onChange={(event) => {
-                setTargetUri(event.target.value);
-                setCardError(null);
-              }}
-            />
-          </label>
           <div className="brain-form-grid">
             <label className="field">
               <span>Kind</span>
@@ -383,10 +302,10 @@ function InboxCard({
         </div>
       ) : (
         <>
-          <p className="brain-fm-summary">{proposal.summary}</p>
-          {proposal.tags.length > 0 ? (
+          <p className="brain-fm-summary">{fm.summary}</p>
+          {fm.tags.length > 0 ? (
             <div className="brain-tags">
-              {proposal.tags.map((tag) => (
+              {fm.tags.map((tag) => (
                 <span key={tag} className="brain-tag">
                   {tag}
                 </span>
@@ -399,32 +318,27 @@ function InboxCard({
             </div>
           ) : null}
           <div className="brain-inbox-actions">
-            {!saved ? (
-              <>
-                <button
-                  type="button"
-                  className="button primary"
-                  disabled={busy}
-                  onClick={() => void handleApproveDirect()}
-                >
-                  <IconCheck />
-                  <span>Approve</span>
-                </button>
-                <button
-                  type="button"
-                  className="button"
-                  disabled={busy}
-                  onClick={() => {
-                    setEditing(true);
-                    setCardError(null);
-                    setConfirmOverwrite(null);
-                  }}
-                >
-                  <IconEdit />
-                  <span>Edit</span>
-                </button>
-              </>
-            ) : null}
+            <button
+              type="button"
+              className="button primary"
+              disabled={busy}
+              onClick={() => void handleApproveDirect()}
+            >
+              <IconCheck />
+              <span>Approve</span>
+            </button>
+            <button
+              type="button"
+              className="button"
+              disabled={busy}
+              onClick={() => {
+                setEditing(true);
+                setCardError(null);
+              }}
+            >
+              <IconEdit />
+              <span>Edit</span>
+            </button>
             <button
               type="button"
               className="button danger"

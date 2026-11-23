@@ -2,13 +2,15 @@ import {
   formatBrainUri,
   parseBrainUri,
   type BrainEntry,
+  type BrainInboxItem,
+  type BrainInboxProposal,
   type BrainScope,
   type BrainSearchHit,
   type BrainTier,
   type BrainTreeNode,
+  type BrainTrust,
   type MemoryFrontmatter,
 } from "@wooky/contracts";
-import type { BrainInboxProposal } from "../brain/client.ts";
 import { RpcCallError } from "../rpc/client.ts";
 
 interface StoredMemory {
@@ -20,6 +22,21 @@ interface StoredMemory {
 }
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+function trustOf(scope: BrainScope, frontmatter?: Pick<MemoryFrontmatter, "source">): BrainTrust {
+  if (scope.kind === "project") return "repo";
+  const source = frontmatter?.source;
+  if (
+    source &&
+    (source.threadId !== undefined ||
+      source.agent !== undefined ||
+      source.fleetRunId !== undefined ||
+      source.turnId !== undefined)
+  ) {
+    return "repo";
+  }
+  return "user";
+}
 
 const memories = new Map<string, StoredMemory>([
   [
@@ -78,12 +95,17 @@ let proposals: BrainInboxProposal[] = [
   {
     id: "prop-1",
     targetUri: "brain://global/lessons/sqlite-busy.md",
-    summary: "Set busy_timeout before BEGIN IMMEDIATE on shared SQLite caches",
-    kind: "gotcha",
-    tags: ["sqlite"],
+    frontmatter: {
+      summary: "Set busy_timeout before BEGIN IMMEDIATE on shared SQLite caches",
+      kind: "gotcha",
+      tags: ["sqlite"],
+      status: "proposed",
+      updatedAt: ago(15),
+      source: { threadId: "t1", agent: "claude", at: ago(15) },
+    },
     body: "Wait up to 2000ms for locks before failing with SQLITE_BUSY.",
-    source: { threadId: "t1", agent: "claude", at: ago(15) },
     createdAt: ago(15),
+    baseUpdatedAt: null,
   },
 ];
 
@@ -115,7 +137,7 @@ function listFolder(uri: string, includeArchived: boolean): BrainTreeNode[] {
         path: item.path,
         name: rest,
         type: "memory",
-        trust: item.scope.kind === "global" ? "user" : "repo",
+        trust: trustOf(item.scope, item.frontmatter),
         summary: item.frontmatter.summary,
         kind: item.frontmatter.kind,
         status: item.frontmatter.status,
@@ -161,7 +183,7 @@ export function brainRespond(method: string, params: unknown): unknown {
           scope: item.scope,
           path: item.path,
           type: "memory",
-          trust: item.scope.kind === "global" ? "user" : "repo",
+          trust: trustOf(item.scope, item.frontmatter),
           tier,
           frontmatter: item.frontmatter,
           body: tier === 0 ? "" : item.body,
@@ -220,7 +242,7 @@ export function brainRespond(method: string, params: unknown): unknown {
           uri: item.uri,
           scope: item.scope,
           path: item.path,
-          trust: item.scope.kind === "global" ? "user" : "repo",
+          trust: trustOf(item.scope, item.frontmatter),
           summary: item.frontmatter.summary,
           kind: item.frontmatter.kind,
           tags: item.frontmatter.tags,
@@ -238,8 +260,11 @@ export function brainRespond(method: string, params: unknown): unknown {
         throw new RpcCallError("bad_request", "Invalid memory URI.");
       }
       const existing = memories.get(uri);
-      const expected = p.expectedUpdatedAt as string | undefined;
-      if (expected !== undefined && existing?.frontmatter.updatedAt !== expected) {
+      const expected = p.expectedUpdatedAt as string | null | undefined;
+      if (expected === null && existing !== undefined) {
+        throw new RpcCallError("conflict", `${uri} already exists.`);
+      }
+      if (typeof expected === "string" && existing?.frontmatter.updatedAt !== expected) {
         throw new RpcCallError("conflict", `${uri} changed since ${expected}.`);
       }
       const fm = p.frontmatter as Omit<MemoryFrontmatter, "updatedAt">;
@@ -256,7 +281,7 @@ export function brainRespond(method: string, params: unknown): unknown {
         },
         body: String(p.body ?? ""),
       });
-      return { uri, updatedAt, created: !existing };
+      return { uri, updatedAt, created: !existing, queued: false };
     }
     case "brain.archive": {
       const uri = String(p.uri ?? "");
@@ -272,38 +297,56 @@ export function brainRespond(method: string, params: unknown): unknown {
       return { ok: true };
     }
     case "brain.reindex":
-      return { indexed: memories.size };
+      return { added: 0, updated: 0, removed: 0, unchanged: memories.size, scopes: 1 };
     case "brain.inbox.list":
-      return [...proposals];
+      return proposals.map((proposal): BrainInboxItem => {
+        const existing = memories.get(proposal.targetUri);
+        return {
+          ...proposal,
+          overwrites: existing !== undefined,
+          ...(existing ? { existingSummary: existing.frontmatter.summary } : {}),
+          stale: (existing?.frontmatter.updatedAt ?? null) !== proposal.baseUpdatedAt,
+        };
+      });
     case "brain.inbox.approve": {
       const id = String(p.id ?? "");
       const found = proposals.find((item) => item.id === id);
       if (!found) throw new RpcCallError("not_found", `No such proposal: ${id}`);
+      const existing = memories.get(found.targetUri);
+      if ((existing?.frontmatter.updatedAt ?? null) !== found.baseUpdatedAt) {
+        throw new RpcCallError("conflict", `${found.targetUri} changed since this proposal.`);
+      }
+      const edits = p.edits as
+        { frontmatter: Omit<MemoryFrontmatter, "updatedAt">; body: string } | undefined;
       const parsed = parseBrainUri(found.targetUri);
+      const updatedAt = new Date().toISOString();
       if (parsed) {
+        const fm = edits
+          ? {
+              ...edits.frontmatter,
+              tags: edits.frontmatter.tags ?? [],
+              status: "active" as const,
+              ...(edits.frontmatter.source === undefined && found.frontmatter.source
+                ? { source: found.frontmatter.source }
+                : {}),
+              updatedAt,
+            }
+          : { ...found.frontmatter, status: "active" as const, updatedAt };
         memories.set(found.targetUri, {
           uri: found.targetUri,
           scope: parsed.scope,
           path: parsed.path,
-          frontmatter: {
-            summary: found.summary,
-            kind: found.kind,
-            tags: found.tags,
-            status: "active",
-            ...(found.pinned ? { pinned: true } : {}),
-            ...(found.source ? { source: found.source } : {}),
-            updatedAt: new Date().toISOString(),
-          },
-          body: found.body,
+          frontmatter: fm,
+          body: edits ? edits.body : found.body,
         });
       }
       proposals = proposals.filter((item) => item.id !== id);
-      return { ok: true };
+      return { id, uri: found.targetUri, updatedAt, created: !existing };
     }
     case "brain.inbox.reject": {
       const id = String(p.id ?? "");
       proposals = proposals.filter((item) => item.id !== id);
-      return { ok: true };
+      return { id, ok: true };
     }
     default:
       return undefined;

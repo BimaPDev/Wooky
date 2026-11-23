@@ -1,6 +1,7 @@
 import {
   formatBrainUri,
   type BrainEntry,
+  type BrainInboxItem,
   type BrainScope,
   type BrainSearchHit,
   type BrainTier,
@@ -10,12 +11,10 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   brainErrorMessage,
-  BrainInboxSavedRejectFailedError,
   createBrainClient,
   isBrainErrorCode,
   type BrainClient,
-  type BrainInboxEditOverrides,
-  type BrainInboxProposal,
+  type BrainInboxApproveEdits,
 } from "../../brain/client.ts";
 import { ancestorFolderUris, parentFolderUri } from "../../brain/validation.ts";
 import { useStore } from "../../state/store.ts";
@@ -81,10 +80,9 @@ export function BrainPanel({
   const [mobilePane, setMobilePane] = useState<"list" | "detail">("list");
   const [reindexing, setReindexing] = useState(false);
 
-  const [inboxProposals, setInboxProposals] = useState<BrainInboxProposal[]>([]);
+  const [inboxProposals, setInboxProposals] = useState<BrainInboxItem[]>([]);
   const [inboxLoading, setInboxLoading] = useState(false);
   const [inboxError, setInboxError] = useState<string | null>(null);
-  const [savedProposalIds, setSavedProposalIds] = useState<Set<string>>(() => new Set());
 
   const readSeqRef = useRef(0);
   const searchSeqRef = useRef(0);
@@ -575,39 +573,11 @@ export function BrainPanel({
     setBusy(true);
     setActionError(null);
     try {
-      // Guard recreate the same way as create: re-check disk so we never send expectedUpdatedAt: undefined over an existing memory.
-      // TODO(B2): Replace with create-only mode in `brain.write`.
-      let existing: BrainEntry | null = null;
-      try {
-        existing = await client.read({ uri, tier: 2 });
-      } catch (readErr) {
-        if (navToken !== navTokenRef.current) return;
-        if (!isBrainErrorCode(readErr, "not_found")) {
-          setConflict({
-            uri,
-            message: conflict?.message ?? "Conflict while saving memory.",
-            latest: null,
-            missing: false,
-            readError: brainErrorMessage(readErr, "Could not verify whether memory exists."),
-          });
-          return;
-        }
-      }
-      if (navToken !== navTokenRef.current) return;
-      if (existing) {
-        setConflict({
-          uri,
-          message: "This memory now exists on disk. Reload or overwrite with the latest version.",
-          latest: existing,
-          missing: false,
-          readError: null,
-        });
-        return;
-      }
       await client.write({
         uri,
         frontmatter: input.frontmatter,
         body: input.body,
+        expectedUpdatedAt: null,
       });
       setPinnedUris((prev) => ({ ...prev, [uri]: input.frontmatter.pinned === true }));
       await refreshAncestorsOf(uri);
@@ -620,7 +590,26 @@ export function BrainPanel({
       await readEntry(uri, 2, true);
     } catch (error) {
       if (navToken !== navTokenRef.current) return;
-      setActionError(brainErrorMessage(error, "Could not recreate memory."));
+      if (isBrainErrorCode(error, "conflict")) {
+        const message =
+          "This memory now exists on disk. Reload or overwrite with the latest version.";
+        try {
+          const latest = await client.read({ uri, tier: 2 });
+          if (navToken !== navTokenRef.current) return;
+          setConflict({ uri, message, latest, missing: false, readError: null });
+        } catch (readErr) {
+          if (navToken !== navTokenRef.current) return;
+          setConflict({
+            uri,
+            message,
+            latest: null,
+            missing: false,
+            readError: brainErrorMessage(readErr, "Could not load the latest version."),
+          });
+        }
+      } else {
+        setActionError(brainErrorMessage(error, "Could not recreate memory."));
+      }
     } finally {
       if (navToken === navTokenRef.current) setBusy(false);
     }
@@ -648,31 +637,11 @@ export function BrainPanel({
     setActionError(null);
     setCreateExistsUri(null);
     try {
-      // TODO(B2): Replace this read-before-write check with a create-only mode in `brain.write`
-      // so creation is atomic on the server without a TOCTOU window.
-      let exists = false;
-      try {
-        await client.read({ uri, tier: 0 });
-        exists = true;
-      } catch (readErr) {
-        if (navToken !== navTokenRef.current) return;
-        if (!isBrainErrorCode(readErr, "not_found")) {
-          setActionError(
-            brainErrorMessage(readErr, "Could not verify whether that memory already exists."),
-          );
-          return;
-        }
-      }
-      if (navToken !== navTokenRef.current) return;
-      if (exists) {
-        setCreateExistsUri({ uri, scope: input.scope });
-        setActionError("That memory already exists; open it and edit it instead");
-        return;
-      }
       await client.write({
         uri,
         frontmatter: input.frontmatter,
         body: input.body,
+        expectedUpdatedAt: null,
       });
       if (input.scope.kind === "project") {
         const { projectId } = input.scope;
@@ -689,7 +658,12 @@ export function BrainPanel({
       await readEntry(uri, 2, true);
     } catch (error) {
       if (navToken !== navTokenRef.current) return;
-      setActionError(brainErrorMessage(error, "Could not create memory."));
+      if (isBrainErrorCode(error, "conflict")) {
+        setCreateExistsUri({ uri, scope: input.scope });
+        setActionError("That memory already exists; open it and edit it instead");
+      } else {
+        setActionError(brainErrorMessage(error, "Could not create memory."));
+      }
     } finally {
       if (navToken === navTokenRef.current) setBusy(false);
     }
@@ -854,22 +828,12 @@ export function BrainPanel({
     }
   };
 
-  const handleCheckInboxTarget = async (uri: string): Promise<BrainEntry | null> => {
-    try {
-      return await client.read({ uri, tier: 0 });
-    } catch (error) {
-      if (isBrainErrorCode(error, "not_found")) return null;
-      throw error;
-    }
-  };
-
   const handleApproveInbox = async (
     id: string,
-    edits?: BrainInboxEditOverrides,
+    edits?: BrainInboxApproveEdits,
   ): Promise<string | null> => {
     const proposalUri =
-      edits?.targetUri ??
-      inboxProposals.find((item) => item.id === id)?.targetUri ??
+      inboxProposalsRef.current.find((item) => item.id === id)?.targetUri ??
       formatBrainUri({ kind: "global" });
     try {
       await client.approveInbox(id, edits);
@@ -880,15 +844,7 @@ export function BrainPanel({
       await refreshAncestorsOf(proposalUri);
       return null;
     } catch (error) {
-      if (error instanceof BrainInboxSavedRejectFailedError) {
-        setSavedProposalIds((prev) => {
-          const next = new Set(prev);
-          next.add(id);
-          return next;
-        });
-        await refreshAncestorsOf(proposalUri);
-        return error.message;
-      }
+      if (isBrainErrorCode(error, "conflict")) void loadInbox();
       return brainErrorMessage(error, "Could not approve proposal.");
     }
   };
@@ -896,12 +852,6 @@ export function BrainPanel({
   const handleRejectInbox = async (id: string): Promise<string | null> => {
     try {
       await client.rejectInbox(id);
-      setSavedProposalIds((prev) => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
       const next = inboxProposalsRef.current.filter((item) => item.id !== id);
       inboxProposalsRef.current = next;
       setInboxProposals(next);
@@ -971,8 +921,6 @@ export function BrainPanel({
           loading={inboxLoading}
           error={inboxError}
           threads={threadsMap}
-          savedProposalIds={savedProposalIds}
-          onCheckTarget={handleCheckInboxTarget}
           onRetry={() => void loadInbox()}
           onApprove={handleApproveInbox}
           onReject={handleRejectInbox}

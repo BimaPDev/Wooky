@@ -232,7 +232,9 @@ export function BrainDetail({
             {entry.uri}
           </span>
           {entry.trust === "repo" ? (
-            <span className="brain-trust-badge">from this repo</span>
+            <span className="brain-trust-badge">
+              {entry.scope.kind === "global" ? "from an agent" : "from this repo"}
+            </span>
           ) : null}
         </div>
         <div className="brain-detail-actions">

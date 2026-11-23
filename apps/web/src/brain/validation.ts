@@ -141,18 +141,6 @@ export function validateMemoryDraft(input: {
   return null;
 }
 
-export function validateGlobalTargetUri(uri: string): string | null {
-  const trimmed = uri.trim();
-  if (!trimmed.startsWith("brain://global/")) {
-    return "Inbox target must be a brain://global/<path>.md URI.";
-  }
-  const parsed = parseBrainUri(trimmed);
-  if (!parsed || parsed.scope.kind !== "global") {
-    return "Target URI is not a valid global brain URI.";
-  }
-  return validateBrainMemoryPath(parsed.path);
-}
-
 /** Returns the folder URI containing a memory URI, or `null` if the URI is already a folder/invalid. */
 export function parentFolderUri(uri: string): string | null {
   const parsed = parseBrainUri(uri);
