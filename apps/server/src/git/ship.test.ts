@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -162,6 +162,43 @@ describe("ship service", () => {
     expect(env.GIT_EDITOR).toBe("false");
     expect(env.GIT_PAGER).toBe("cat");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "pushes through core.sshCommand with BatchMode and no askpass",
+    async () => {
+      const root = await makeRepo();
+      const home = await tempDir("ship-ssh");
+      const log = join(home, "ssh.log");
+      const ssh = join(home, "ssh");
+      await writeFile(
+        ssh,
+        `#!/bin/sh\necho "$SSH_ASKPASS_REQUIRE $*" >> "${log}"\nexit 1\n`,
+        "utf8",
+      );
+      await chmod(ssh, 0o755);
+      await runGit(root, "remote", "add", "origin", "ssh://git@example.invalid/repo.git");
+      await runGit(root, "config", "core.sshCommand", `${ssh} -i /keys/work`);
+      const kept = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"].map(
+        (key) => [key, process.env[key]] as const,
+      );
+      for (const [key] of kept) delete process.env[key];
+      const store = openEventStore(home, () => "2026-01-01T00:00:00.000Z");
+      try {
+        seedThread(store, root, { id: "t-ssh" });
+        const ship = createShipService({ store, git: createGitService(), gh: noGh });
+        await expect(ship.push({ threadId: "t-ssh", setUpstream: true })).rejects.toBeInstanceOf(
+          ServiceError,
+        );
+        const line = (await readFile(log, "utf8")).split("\n")[0] ?? "";
+        expect(line).toContain("never");
+        expect(line).toContain("-i /keys/work");
+        expect(line).toContain("-o BatchMode=yes");
+      } finally {
+        store.close();
+        for (const [key, value] of kept) if (value !== undefined) process.env[key] = value;
+      }
+    },
+  );
 
   it("refuses commit with no changes, on detached HEAD, and while a turn runs", async () => {
     const root = await makeRepo();

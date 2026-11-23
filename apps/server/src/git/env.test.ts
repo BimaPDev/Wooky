@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { shadowGitEnv, userRepoGitEnv } from "./env.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { composeGitSshCommand, shadowGitEnv, userRepoGitEnv } from "./env.ts";
 
 const touched = new Map<string, string | undefined>();
 function setEnv(key: string, value: string): void {
@@ -68,6 +68,66 @@ describe("userRepoGitEnv", () => {
   it("does not repeat BatchMode when the user already set it", () => {
     setEnv("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -i /k");
     expect(userRepoGitEnv().GIT_SSH_COMMAND).toBe("ssh -o BatchMode=yes -i /k");
+  });
+});
+
+describe("ssh never prompts", () => {
+  beforeEach(() => {
+    for (const key of ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"]) {
+      if (!touched.has(key)) touched.set(key, process.env[key]);
+      delete process.env[key];
+    }
+  });
+
+  it("always turns SSH_ASKPASS off, in either profile", () => {
+    setEnv("SSH_ASKPASS_REQUIRE", "force");
+    setEnv("Ssh_Askpass_Require", "prefer");
+    for (const env of [userRepoGitEnv(), shadowGitEnv()]) {
+      const entries = Object.entries(env).filter(
+        ([key]) => key.toUpperCase() === "SSH_ASKPASS_REQUIRE",
+      );
+      expect(entries).toEqual([["SSH_ASKPASS_REQUIRE", "never"]]);
+    }
+  });
+
+  it("leaves a non-OpenSSH GIT_SSH_COMMAND untouched", () => {
+    setEnv("GIT_SSH_COMMAND", "plink -batch -i /k.ppk");
+    expect(userRepoGitEnv().GIT_SSH_COMMAND).toBe("plink -batch -i /k.ppk");
+    setEnv("GIT_SSH_COMMAND", "C:\\Tools\\TortoisePlink.exe -batch");
+    expect(userRepoGitEnv().GIT_SSH_COMMAND).toBe("C:\\Tools\\TortoisePlink.exe -batch");
+    setEnv("GIT_SSH_COMMAND", "/opt/wrap-ssh.sh -v");
+    expect(userRepoGitEnv().GIT_SSH_COMMAND).toBe("/opt/wrap-ssh.sh -v");
+  });
+
+  it("leaves ssh alone when GIT_SSH_VARIANT says it is not OpenSSH", () => {
+    setEnv("GIT_SSH_VARIANT", "plink");
+    setEnv("GIT_SSH_COMMAND", "ssh -batch");
+    expect(userRepoGitEnv().GIT_SSH_COMMAND).toBe("ssh -batch");
+  });
+
+  it("adds BatchMode to a quoted OpenSSH path, ssh.exe included", () => {
+    expect(composeGitSshCommand('"C:\\Program Files\\Git\\usr\\bin\\ssh.exe" -i k')).toBe(
+      '"C:\\Program Files\\Git\\usr\\bin\\ssh.exe" -i k -o BatchMode=yes',
+    );
+    expect(composeGitSshCommand("/usr/bin/ssh -p 22")).toBe("/usr/bin/ssh -p 22 -o BatchMode=yes");
+  });
+
+  it("picks up core.sshCommand, with BatchMode, as GIT_SSH_COMMAND", () => {
+    const env = userRepoGitEnv(undefined, { coreSshCommand: "ssh -i /keys/work" });
+    expect(env.GIT_SSH_COMMAND).toBe("ssh -i /keys/work -o BatchMode=yes");
+  });
+
+  it("lets GIT_SSH_COMMAND win over core.sshCommand, as git does", () => {
+    setEnv("GIT_SSH_COMMAND", "ssh -i /env");
+    const env = userRepoGitEnv(undefined, { coreSshCommand: "ssh -i /config" });
+    expect(env.GIT_SSH_COMMAND).toBe("ssh -i /env -o BatchMode=yes");
+  });
+
+  it("leaves GIT_SSH alone, and otherwise pins a non-interactive ssh", () => {
+    setEnv("GIT_SSH", "/usr/bin/plink");
+    expect(userRepoGitEnv(undefined, {}).GIT_SSH_COMMAND).toBeUndefined();
+    delete process.env.GIT_SSH;
+    expect(userRepoGitEnv(undefined, {}).GIT_SSH_COMMAND).toBe("ssh -o BatchMode=yes");
   });
 });
 

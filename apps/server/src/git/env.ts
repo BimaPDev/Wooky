@@ -37,23 +37,60 @@ function keptForUserRepo(name: string): boolean {
   return USER_REPO_KEEP.has(name) || USER_REPO_KEEP_PREFIXES.some((p) => name.startsWith(p));
 }
 
-/** Appends `-o BatchMode=yes` to the user's own ssh command so it can never wait for input. */
-export function composeGitSshCommand(existing: string): string {
+/** The program a GIT_SSH_COMMAND string runs: its first word, quoted or not, without directory or `.exe`. */
+function sshProgram(command: string): string {
+  const text = command.trim();
+  const quote = text[0];
+  const word =
+    quote === '"' || quote === "'"
+      ? text.slice(1, Math.max(text.indexOf(quote, 1), 1))
+      : (text.split(/\s/)[0] ?? "");
+  const base = word.split(/[\\/]/).pop() ?? "";
+  return base.toLowerCase().replace(/\.exe$/, "");
+}
+
+const NON_OPENSSH_VARIANTS = new Set(["plink", "putty", "tortoiseplink"]);
+
+/**
+ * Appends `-o BatchMode=yes` to an OpenSSH command so it can never wait for input. Anything else
+ * (plink, a wrapper script, a GIT_SSH_VARIANT that is not OpenSSH) is returned as it was: those
+ * would reject or misread the option.
+ */
+export function composeGitSshCommand(existing: string, variant?: string): string {
   const trimmed = existing.trim();
+  if (sshProgram(trimmed) !== "ssh") return trimmed;
+  if (variant && NON_OPENSSH_VARIANTS.has(variant.trim().toLowerCase())) return trimmed;
   if (/\bBatchMode=/i.test(trimmed)) return trimmed;
   return `${trimmed} -o BatchMode=yes`;
 }
 
-function baseEnv(keep: (name: string) => boolean, extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/**
+ * What the caller found out about ssh in the repo. Passing it makes the env pin an ssh command
+ * that cannot prompt; without it GIT_SSH_COMMAND is only touched when the user already set it.
+ */
+export interface SshResolution {
+  /** `git config core.sshCommand` in the repo, when set. */
+  coreSshCommand?: string;
+}
+
+function baseEnv(
+  keep: (name: string) => boolean,
+  extra?: NodeJS.ProcessEnv,
+  ssh?: SshResolution,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   let sshCommand: string | undefined;
+  let variant: string | undefined;
+  let hasGitSsh = false;
   for (const [key, value] of Object.entries(process.env)) {
     const name = key.toUpperCase();
-    if (name === "LC_ALL" || name === "GCM_INTERACTIVE") continue;
+    if (name === "LC_ALL" || name === "GCM_INTERACTIVE" || name === "SSH_ASKPASS_REQUIRE") continue;
     if (name === "GIT_SSH_COMMAND" && keep(name)) {
       sshCommand = value;
       continue;
     }
+    if (name === "GIT_SSH_VARIANT" && keep(name)) variant = value;
+    if (name === "GIT_SSH" && keep(name) && value?.trim()) hasGitSsh = true;
     if (name.startsWith("GIT_") && !keep(name)) continue;
     env[key] = value;
   }
@@ -62,15 +99,18 @@ function baseEnv(keep: (name: string) => boolean, extra?: NodeJS.ProcessEnv): No
   env.GCM_INTERACTIVE = "never";
   env.GIT_EDITOR = "false";
   env.GIT_PAGER = "cat";
-  // Only the user's own ssh command is touched. Setting GIT_SSH_COMMAND from nothing would
-  // override their core.sshCommand and GIT_SSH (plink); without a tty ssh cannot prompt anyway,
-  // and GIT_TERMINAL_PROMPT=0 covers https.
-  if (sshCommand?.trim()) env.GIT_SSH_COMMAND = composeGitSshCommand(sshCommand);
+  // ssh would otherwise ask for a passphrase or host key through SSH_ASKPASS (Linux with DISPLAY)
+  // or the console a Windows child inherits. Never prompt; fail fast.
+  env.SSH_ASKPASS_REQUIRE = "never";
+  // Precedence is git's own: GIT_SSH_COMMAND, then core.sshCommand, then GIT_SSH, then ssh.
+  const chosen = sshCommand?.trim() ? sshCommand : ssh?.coreSshCommand?.trim();
+  if (chosen) env.GIT_SSH_COMMAND = composeGitSshCommand(chosen, variant);
+  else if (ssh && !hasGitSsh) env.GIT_SSH_COMMAND = "ssh -o BatchMode=yes";
   return { ...env, ...extra };
 }
 
-export function userRepoGitEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return baseEnv(keptForUserRepo, extra);
+export function userRepoGitEnv(extra?: NodeJS.ProcessEnv, ssh?: SshResolution): NodeJS.ProcessEnv {
+  return baseEnv(keptForUserRepo, extra, ssh);
 }
 
 /** For Wooky's own shadow repository: no inherited `GIT_*` at all, transport included. */

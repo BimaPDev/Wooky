@@ -6,7 +6,7 @@ import type { PendingEvent, PullRequest, RpcParams, RpcResult, Thread } from "@w
 import { ServiceError } from "../errors.ts";
 import { killTree as defaultKillTree } from "../process/kill-tree.ts";
 import type { EventStore } from "../store/event-store.ts";
-import { userRepoGitEnv } from "./env.ts";
+import { userRepoGitEnv, type SshResolution } from "./env.ts";
 import { createGhClient, type GhClient, type GhPrViewJson } from "./gh.ts";
 import { redactCliError } from "./redact.ts";
 import type { GitService } from "./types.ts";
@@ -57,7 +57,7 @@ export function createShipService(deps: {
 
   async function runGit(
     args: string[],
-    opts: { cwd: string; allowFail?: boolean; timeoutMs?: number },
+    opts: { cwd: string; allowFail?: boolean; timeoutMs?: number; ssh?: SshResolution },
   ): Promise<GitRunResult> {
     const limit = opts.timeoutMs ?? 60_000;
     const timeoutSec = Math.round(limit / 1000);
@@ -73,7 +73,7 @@ export function createShipService(deps: {
 
       const child = spawn(gitBin, [...gitPrefixArgs, ...args], {
         cwd: opts.cwd,
-        env: userRepoGitEnv(),
+        env: userRepoGitEnv(undefined, opts.ssh),
         windowsHide: true,
         ...(process.platform !== "win32" ? { detached: true } : {}),
       });
@@ -358,7 +358,17 @@ export function createShipService(deps: {
       const args = needsUpstream
         ? ["push", "-u", "origin", "--", branch]
         : ["push", "origin", "--", branch];
-      const pushed = await runGit(args, { cwd, timeoutMs: pushTimeout, allowFail: true });
+      // git's own order is GIT_SSH_COMMAND, core.sshCommand, GIT_SSH; the env has to know the
+      // middle one to pin a non-interactive ssh without overriding it.
+      const configured = (
+        await runGit(["config", "--get", "core.sshCommand"], { cwd, allowFail: true })
+      ).stdout.trim();
+      const pushed = await runGit(args, {
+        cwd,
+        timeoutMs: pushTimeout,
+        allowFail: true,
+        ssh: configured ? { coreSshCommand: configured } : {},
+      });
       if (pushed.code !== 0) {
         const detail = redactCliError((pushed.stderr || pushed.stdout).trim());
         const hint = "Sign in to git or run `gh auth login`, then try again.";
