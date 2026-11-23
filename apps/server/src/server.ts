@@ -7,6 +7,10 @@ import {
   type ProviderCapabilities,
   type ProviderKind,
 } from "@wooky/contracts";
+import { createBrainStore } from "./brain/store.ts";
+import { createFileInbox } from "./brain/extract-inbox.ts";
+import { createExtractor, createFinishHook } from "./brain/extract-hook.ts";
+import { createProviderComplete } from "./brain/extract-model.ts";
 import { createEffectRunner } from "./effects/runner.ts";
 import { createAgentTokenService } from "./fleet/agent-token.ts";
 import { createFleetService } from "./fleet/service.ts";
@@ -222,7 +226,34 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     hasProvider: (kind) => knownProviders.has(kind),
     broadcastSync: (message) => broadcastSync(message),
   });
+  const brain = createBrainStore({
+    home: options.home,
+    resolveProjectRoot: (projectId) => store.model.projects[projectId]?.root ?? null,
+    log: (message) => console.warn(message),
+  });
+  const inbox = createFileInbox({ home: options.home, log: (message) => console.warn(message) });
+  const extractor = createExtractor({
+    deps: {
+      complete: createProviderComplete({
+        providers,
+        settings: () => themes.getSettings(),
+        home: options.home,
+      }),
+      brain,
+      submitGlobalProposal: (target, memory) => inbox.submit(target, memory),
+      inboxSummaries: () => inbox.summaries(),
+      log: (message) => console.warn(message),
+    },
+    settings: () => themes.getSettings().brain,
+    projectBrain: (projectId) => store.model.projects[projectId]?.scratch !== true,
+    log: (message) => console.warn(message),
+  });
   const runner = createEffectRunner({
+    onTurnFinished: createFinishHook({
+      extractor,
+      model: () => store.model,
+      log: (message) => console.warn(message),
+    }),
     store,
     providers,
     git,
@@ -343,6 +374,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           httpServers.map((http) => new Promise<void>((resolve) => http.close(() => resolve()))),
         );
         for (const http of httpServers) http.closeIdleConnections();
+        extractor.stop();
         await runner.shutdown();
         sockets.close();
         remote.closeTunnels();
@@ -351,6 +383,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         await history.close();
         transfer.stop();
         await sync.close();
+        brain.close();
         closeStore();
       })();
       return closing;

@@ -168,6 +168,17 @@ export type AppearanceThemeSummary = z.infer<typeof AppearanceThemeSummary>;
 export const ThemeImportFormat = z.enum(["wooky", "t3code", "svg"]);
 export type ThemeImportFormat = z.infer<typeof ThemeImportFormat>;
 
+/** Brain extraction after a turn or fleet run. Project memories go live; global ones wait in the inbox. */
+export const BrainSettings = z
+  .object({
+    extractProject: z.boolean().default(true),
+    extractGlobal: z.boolean().default(true),
+    /** The cheap model that proposes memories. Absent means Claude Haiku when Claude is on. */
+    extractModel: ModelTarget.optional(),
+  })
+  .default({ extractProject: true, extractGlobal: true });
+export type BrainSettings = z.infer<typeof BrainSettings>;
+
 export const DeviceSettings = z.object({
   activeThemeId: z.string().default("default"),
   /** light / dark force a mode; system follows OS (and the theme's appearance when set). */
@@ -206,6 +217,7 @@ export const DeviceSettings = z.object({
   /** Wallpaper animation. Off stops it; a hidden window and reduced motion stop it too. */
   wallpaperMotion: z.enum(["on", "off"]).default("on"),
   failover: FailoverSettings,
+  brain: BrainSettings,
   /** Models starred in the picker, in the order they were added. */
   favoriteModels: z.array(ModelTarget).max(30).default([]),
   /** User-facing name of this install. Absent until the user sets one. */
@@ -237,6 +249,12 @@ const SyncSettingsPatch = z.object({
     .optional(),
   peers: z.array(DeviceId).optional(),
   projectMap: z.record(z.string(), z.record(DeviceId, z.string())).optional(),
+});
+
+const BrainSettingsPatch = z.object({
+  extractProject: z.boolean().optional(),
+  extractGlobal: z.boolean().optional(),
+  extractModel: ModelTarget.optional(),
 });
 
 const HostingSettingsPatch = z.object({
@@ -283,6 +301,7 @@ const SettingsPatchObject = z.object({
   importLocalHistory: z.boolean().optional(),
   wallpaperMotion: z.enum(["on", "off"]).optional(),
   failover: FailoverSettingsPatch.optional(),
+  brain: BrainSettingsPatch.optional(),
   favoriteModels: z.array(ModelTarget).max(30).optional(),
   deviceName: z.string().min(1).optional(),
   hosting: HostingSettingsPatch.optional(),

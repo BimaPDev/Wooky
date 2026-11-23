@@ -7,13 +7,13 @@ files, one SQLite cache, no model and no embeddings.
 
 This page is the design for all five steps. Only B1 exists today.
 
-| Step | What                                                                                                                      | State |
-| ---- | ------------------------------------------------------------------------------------------------------------------------- | ----- |
-| B1   | Contracts, file store, path and secret safety, FTS5 index, deterministic overviews                                        | done  |
-| B2   | Server RPC and `wooky mcp` tools: `brain_ls`, `brain_read`, `brain_search`, `brain_write`, `brain_claim`, `brain_release` | next  |
-| B3   | L0 injection into turn prompts within a token budget; fleet-run claims and handoffs                                       |       |
-| B4   | Post-turn and post-fleet-run extraction by a cheap model; the inbox; LLM-written overviews                                |       |
-| B5   | Web Brain panel: tree, viewer, editor, inbox                                                                              |       |
+| Step | What                                                                                                                      | State                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| B1   | Contracts, file store, path and secret safety, FTS5 index, deterministic overviews                                        | done                     |
+| B2   | Server RPC and `wooky mcp` tools: `brain_ls`, `brain_read`, `brain_search`, `brain_write`, `brain_claim`, `brain_release` | next                     |
+| B3   | L0 injection into turn prompts within a token budget; fleet-run claims and handoffs                                       |                          |
+| B4   | Post-turn and post-fleet-run extraction by a cheap model; the inbox; LLM-written overviews                                | done (overviews pending) |
+| B5   | Web Brain panel: tree, viewer, editor, inbox                                                                              |                          |
 
 ## Two scopes
 
@@ -252,8 +252,29 @@ it lives in SQLite under `WOOKY_HOME` while the run is live; whatever is worth k
 a memory through B4.
 
 **B4, extraction.** After a turn or a fleet run a cheap model proposes memories from the
-transcript. Project proposals are written as `active` with `source`; global ones go to the inbox as
-`proposed`. The same step can write LLM-authored L1 overviews, replacing the `auto` one.
+transcript. Project proposals are written as `active` with `source` and the `extracted` tag;
+global ones go to the inbox as `proposed`. Built in `apps/server/src/brain/extract*.ts`:
+
+- **Digest.** The user prompt, the final answer, files touched, the outcome and (fleet) worker
+  reports, at most 6000 characters. A segment that trips the secret scan, whole or after
+  truncation, is dropped, never masked. The prompt says the transcript is data.
+- **Validation.** The reply is parsed tolerantly (fences, prose, a bare array) and each candidate
+  is checked on its own against the contracts. At most 5 are kept. Near-duplicates of existing
+  project, global and inbox summaries are dropped (equal after normalizing, or sharing most words).
+- **Routing.** A project candidate never overwrites: an existing path is updated (with
+  `expectedUpdatedAt`) only if it carries the `extracted` tag and a `source`, otherwise it takes a
+  numbered path. The extractor holds no way to write the global brain; global candidates go
+  through `submitGlobalProposal`.
+- **Scheduling.** The effect runner calls a small hook after a turn's finish is recorded. It runs
+  in the background, one extraction per thread (a second finish is dropped, not queued), with a
+  90 s timeout, and skips trivial, failed and cancelled turns, workers (their coordinator's run
+  covers them), the demo provider and the hidden "No project". A coordinator's run is extracted
+  once its turn completed, its queue is empty and no worker is working or waiting.
+- **Switches and model.** `brain.extractProject` and `brain.extractGlobal` in device settings,
+  both on by default. `brain.extractModel` picks the model; the default is Claude Haiku when
+  Claude is on. The call is one throwaway agent turn in an empty folder with every approval denied.
+- **Not yet.** LLM-written `_overview.md`: the store cannot write the reserved file, so this needs a
+  store method first.
 
 **B5, UI.** A Brain panel in the web app: a tree of both scopes, a viewer with the three tiers, an
 editor that sends `expectedUpdatedAt`, and the inbox with approve and reject.

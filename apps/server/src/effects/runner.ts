@@ -61,6 +61,8 @@ interface RunnerDeps {
   now?: () => string;
   runClaimThread?: (effect: Extract<Effect, { kind: "claimThread" }>) => Promise<void>;
   recoverClaims?: () => void;
+  /** After a turn's finish is recorded and any worker report is queued. Must return at once. */
+  onTurnFinished?: (finished: { threadId: string; turnId: string }) => void;
   /** After a thread worktree is bound. Must not wait for setup scripts to exit. */
   onWorktreeCreated?: (input: {
     threadId: string;
@@ -101,6 +103,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     runClaimThread,
     recoverClaims,
     onWorktreeCreated,
+    onTurnFinished,
   } = deps;
   const tails = new Map<string, Promise<void>>();
   const inflight = new Set<Promise<void>>();
@@ -668,6 +671,11 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     const recorded = store.model.turns[threadId]?.find((candidate) => candidate.id === turnId);
     if (recorded?.status === "completed") promoteHead(threadId);
     await maybeReportWorker(thread, threadId, turnId, status, error);
+    try {
+      onTurnFinished?.({ threadId, turnId });
+    } catch (cause) {
+      console.error("onTurnFinished failed", cause);
+    }
     if (deviceSettings && dispatch) {
       const committed = store
         .eventsAfter(0)
