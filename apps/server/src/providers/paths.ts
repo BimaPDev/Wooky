@@ -30,7 +30,9 @@ export function workspaceRelative(path: string, cwd: string): string {
   for (const base of new Set([cwd, realpathOf(cwd)])) {
     const rel = relative(base, path);
     if (rel === "") return ".";
-    if (!isOutsideWorkspace(rel) && !isAbsolute(rel)) return rel;
+    // Events carry forward-slash paths, the same spelling git and the UI use.
+    if (!isOutsideWorkspace(rel) && !isAbsolute(rel))
+      return sep === "\\" ? rel.replaceAll(sep, "/") : rel;
   }
   return path;
 }
