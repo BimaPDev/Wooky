@@ -104,11 +104,15 @@ describe("capture / restore round-trip", () => {
     if (!onWindows) await execFileAsync("chmod", ["755", join(root, "script.sh")]);
     await writeFile(join(root, ".gitignore"), "ignored.log\n");
     await raw(root, "add", "-A");
+    // Records 100755 even where the file system has no execute bit (core.fileMode=false).
+    await raw(root, "update-index", "--chmod=+x", "script.sh");
     await raw(root, "commit", "-qm", "work");
     await writeFile(join(root, "ignored.log"), "ignore-original\n");
 
     const ref = "refs/wooky/checkpoints/t1/u1/before";
     expect(await git.captureCheckpoint(root, ref)).toBe(ref);
+    // A capture on any host keeps the committed execute bit, so macOS/Linux peers do not lose it.
+    expect(await raw(root, "ls-tree", ref, "script.sh")).toMatch(/^100755 blob /);
 
     await writeFile(join(root, "a.txt"), "v2 changed\n");
     await writeFile(join(root, "dir/nested.txt"), "nested v2\n");
@@ -129,7 +133,8 @@ describe("capture / restore round-trip", () => {
     expect(existsSync(join(root, "deep"))).toBe(false);
     expect(await read(root, "ignored.log")).toBe("ignore-mutated\n");
     const mode = (await stat(join(root, "script.sh"))).mode;
-    expect((mode & 0o111) !== 0).toBe(!onWindows);
+    // Windows has no execute bit on disk; the tree entry above is what carries it there.
+    expect(onWindows || (mode & 0o111) !== 0).toBe(true);
   });
 });
 
