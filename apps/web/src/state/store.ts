@@ -42,6 +42,8 @@ export type SettingsPage =
 
 export interface AppState {
   model: ReadModel;
+  /** True once the current connection has delivered its initial snapshot. */
+  hasSnapshot: boolean;
   status: ConnectionStatus;
   fixture: boolean;
   providers: ProviderStatus[];
@@ -102,6 +104,7 @@ export function navTargetExists(model: ReadModel) {
 
 export const useStore = create<AppState>(() => ({
   model: emptyReadModel(),
+  hasSnapshot: false,
   status: "connecting",
   fixture: false,
   providers: [],
@@ -183,7 +186,7 @@ export function receiveSnapshot(model: ReadModel) {
       state.selectedThreadId && model.threads[state.selectedThreadId]
         ? state.selectedThreadId
         : newestThreadId(model);
-    return { model, selectedThreadId: selected };
+    return { model, hasSnapshot: true, selectedThreadId: selected };
   });
 }
 

@@ -24,6 +24,7 @@ interface PaletteAction {
   id: string;
   label: string;
   hint?: string;
+  shortcut?: string;
   run: () => void;
 }
 
@@ -83,7 +84,7 @@ function PaletteDialog() {
       {
         id: "jump",
         label: "Jump to thread",
-        hint: shortcut("J"),
+        shortcut: shortcut("J"),
         run: () => {
           close();
           setJumpOpen(true);
@@ -205,6 +206,9 @@ function PaletteDialog() {
           >
             <span>{action.label}</span>
             {action.hint ? <span className="palette-hint">{action.hint}</span> : null}
+            {action.shortcut ? (
+              <kbd className="palette-hint palette-shortcut">{action.shortcut}</kbd>
+            ) : null}
           </li>
         ))}
       </ul>

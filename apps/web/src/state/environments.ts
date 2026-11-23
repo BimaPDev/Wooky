@@ -280,7 +280,12 @@ function scheduleRetry(id: string) {
 }
 
 async function resetModel() {
-  useStore.setState({ model: emptyReadModel(), selectedThreadId: null, status: "connecting" });
+  useStore.setState({
+    model: emptyReadModel(),
+    hasSnapshot: false,
+    selectedThreadId: null,
+    status: "connecting",
+  });
   if (!useStore.getState().fixture) return;
   const model = await backend().call("snapshot", {});
   receiveSnapshot(model);
@@ -312,7 +317,12 @@ async function connectRemote(id: string, reset: boolean) {
       return;
     }
     emit({ session: { id, label, remote: true, unreachable: true } });
-    useStore.setState({ model: emptyReadModel(), selectedThreadId: null, status: "reconnecting" });
+    useStore.setState({
+      model: emptyReadModel(),
+      hasSnapshot: false,
+      selectedThreadId: null,
+      status: "reconnecting",
+    });
     scheduleRetry(id);
     return;
   }

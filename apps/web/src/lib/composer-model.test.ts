@@ -51,6 +51,12 @@ describe("chipModelName", () => {
     expect(chipModelName(undefined, "default")).toBe("Default");
   });
 
+  it("returns empty for a missing model id instead of masking it as Default", () => {
+    expect(chipModelName(undefined, "")).toBe("");
+    expect(chipModelName(claude, "")).toBe("");
+    expect(chipModelName(undefined, "   ")).toBe("");
+  });
+
   it("names plain aliases and explicit ids", () => {
     expect(chipModelName(claude, "sonnet")).toBe("Sonnet");
     expect(chipModelName(claude, "claude-opus-5-5")).toBe("Opus 5.5");

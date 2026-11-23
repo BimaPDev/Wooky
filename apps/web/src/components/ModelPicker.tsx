@@ -66,12 +66,15 @@ export function ModelChip({
     state.providers.find((entry) => entry.kind === target.provider),
   );
   const name = chipModelName(status, target.model);
-  const effort = shownEffort(status, target.model, target.effort);
+  const displayName = name || "Select model";
+  const effort = name ? shownEffort(status, target.model, target.effort) : undefined;
   return (
     <PopoverChip
       className="composer-model-chip"
       label="Model and options"
-      title={`Model: ${name}${effort ? `, ${effortLabel(effort)} effort` : ""}`}
+      title={
+        name ? `Model: ${name}${effort ? `, ${effortLabel(effort)} effort` : ""}` : "Select model"
+      }
       size="picker"
       align="end"
       minRoom={480}
@@ -86,8 +89,8 @@ export function ModelChip({
         />
       }
     >
-      <ProviderMark kind={target.provider} />
-      <span className="composer-model-name">{name}</span>
+      {name || status ? <ProviderMark kind={target.provider} /> : null}
+      <span className="composer-model-name">{displayName}</span>
       {effort ? <span className="composer-model-effort">{effortLabel(effort)}</span> : null}
       {failoverThread ? <FallbackTag thread={failoverThread} /> : null}
     </PopoverChip>

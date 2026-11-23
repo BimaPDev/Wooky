@@ -65,9 +65,11 @@ describe("environments", () => {
         ? info((params as { environmentId: string }).environmentId)
         : undefined,
     );
+    useStore.setState({ hasSnapshot: true });
     await switchEnvironment("env-home");
     expect(reconnects).toEqual([{ url: "ws://env-home/ws", token: "token-env-home" }]);
     expect(useStore.getState().model.seq).toBe(0);
+    expect(useStore.getState().hasSnapshot).toBe(false);
 
     await switchEnvironment("local");
     expect(reconnects.at(-1)).toEqual({ url: "ws://local/ws", token: null });
