@@ -9,6 +9,7 @@ import {
   type HistoryRecord,
   type HistorySourceReport,
 } from "../history-reader.ts";
+import { cursorAccountCachePaths, cursorIdeDatabasePaths, cursorProjectsDir } from "./paths.ts";
 
 /** The two calls a reader needs. A test injects an in-memory fixture behind it. */
 export interface ReadOnlyDb {
@@ -163,21 +164,6 @@ function text(value: unknown): string | null {
 const ACCOUNT_CACHE_NAME = "usage-cursor-account-cache-v2.json";
 const MAX_IDE_DB_BYTES = 64 * 1024 * 1024;
 
-function accountCachePaths(ctx: HistoryReaderContext): string[] {
-  const dirs: string[] = [];
-  const seen = new Set<string>();
-  const add = (dir: string) => {
-    if (dir === "" || seen.has(dir)) return;
-    seen.add(dir);
-    dirs.push(dir);
-  };
-  const wookyHome = ctx.env["WOOKY_HOME"]?.trim();
-  if (wookyHome && path.isAbsolute(wookyHome)) add(wookyHome);
-  add(path.join(ctx.homeDir, ".t3", "userdata"));
-  add(path.join(ctx.homeDir, ".wooky"));
-  return dirs.map((dir) => path.join(dir, ACCOUNT_CACHE_NAME));
-}
-
 function interned(strings: readonly string[], value: unknown): string | null {
   if (typeof value === "string" && value.length > 0) return value;
   if (
@@ -265,22 +251,6 @@ export function decodeCursorAccountCache(
   return records;
 }
 
-function ideDatabasePaths(homeDir: string): string[] {
-  return [
-    path.join(
-      homeDir,
-      "Library",
-      "Application Support",
-      "Cursor",
-      "User",
-      "globalStorage",
-      "state.vscdb",
-    ),
-    path.join(homeDir, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
-    path.join(homeDir, "AppData", "Roaming", "Cursor", "User", "globalStorage", "state.vscdb"),
-  ];
-}
-
 const IDE_BUBBLE_SQL =
   "SELECT key, json_extract(value, '$.tokenCount.inputTokens') AS input, json_extract(value, '$.tokenCount.outputTokens') AS output, json_extract(value, '$.tokenCount.cacheReadTokens') AS cache_read, json_extract(value, '$.tokenCount.cacheWriteTokens') AS cache_write, json_extract(value, '$.createdAt') AS created_at, json_extract(value, '$.modelInfo.modelName') AS model FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'";
 
@@ -342,7 +312,7 @@ export function createCursorHistoryReader(options: CursorReaderOptions = {}): Hi
       let drift = 0;
       let sawSource = false;
 
-      for (const cachePath of accountCachePaths(ctx)) {
+      for (const cachePath of cursorAccountCachePaths(ctx, ACCOUNT_CACHE_NAME)) {
         if (ctx.signal.aborted) break;
         let stat;
         try {
@@ -380,7 +350,7 @@ export function createCursorHistoryReader(options: CursorReaderOptions = {}): Hi
       const billedSessions = new Set(records.map((record) => record.sessionKey));
       const localNeeded = billedFingerprints.size === 0;
 
-      const root = path.join(ctx.homeDir, ".cursor", "projects");
+      const root = cursorProjectsDir(ctx);
       let found: Awaited<ReturnType<typeof findIndexDatabases>> | null = null;
       if (localNeeded) {
         try {
@@ -477,7 +447,7 @@ export function createCursorHistoryReader(options: CursorReaderOptions = {}): Hi
         }
       }
 
-      for (const idePath of localNeeded ? ideDatabasePaths(ctx.homeDir) : []) {
+      for (const idePath of localNeeded ? cursorIdeDatabasePaths(ctx) : []) {
         if (ctx.signal.aborted) break;
         let stat;
         try {

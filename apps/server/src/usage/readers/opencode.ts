@@ -15,6 +15,7 @@ import {
   type OpenDatabase,
   type ReadOnlyDb,
 } from "./cursor.ts";
+import { opencodeDataDirs } from "./paths.ts";
 
 export interface OpenCodeReaderOptions {
   openDatabase?: OpenDatabase;
@@ -22,19 +23,6 @@ export interface OpenCodeReaderOptions {
 
 const DB_NAME = /^opencode(-[A-Za-z0-9_.-]+)?\.db$/;
 const MESSAGE_TABLES = ["message", "session_message"] as const;
-
-function dataDirectories(ctx: HistoryReaderContext): string[] {
-  const explicit = ctx.env["OPENCODE_DATA_DIR"];
-  if (explicit) {
-    return explicit
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => path.isAbsolute(entry));
-  }
-  const xdg = ctx.env["XDG_DATA_HOME"];
-  const base = xdg && path.isAbsolute(xdg) ? xdg : path.join(ctx.homeDir, ".local", "share");
-  return [path.join(base, "opencode")];
-}
 
 function columnNames(db: ReadOnlyDb, table: string): Set<string> {
   const names = new Set<string>();
@@ -90,7 +78,7 @@ export function createOpenCodeHistoryReader(options: OpenCodeReaderOptions = {})
       const databases: string[] = [];
       let listed = false;
       let listFailed = false;
-      for (const dir of dataDirectories(ctx)) {
+      for (const dir of opencodeDataDirs(ctx)) {
         try {
           const names = await ctx.fs.readdir(dir);
           listed = true;

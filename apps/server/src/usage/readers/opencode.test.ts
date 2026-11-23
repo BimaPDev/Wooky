@@ -15,12 +15,16 @@ const SECRET_KEY = "FAKE-CREDENTIAL-oc-key-000";
 const SECRET_SYSTEM = "FAKE-SYSTEM-you-are-a-leak-bot";
 const SECRET_SUMMARY = "FAKE-SUMMARY-internal-quarter-plans";
 
+const norm = (value: string) => value.replaceAll("\\", "/");
+
 function fakeFs(dirs: Record<string, string[]>): HistoryFs {
+  const byDir = new Map<string, string[]>();
+  for (const [raw, names] of Object.entries(dirs)) byDir.set(norm(raw), names);
   return {
     readFile: async () => new Uint8Array(),
     stat: async () => ({ size: 1, mtimeMs: NOW, isFile: () => true, isDirectory: () => false }),
     readdir: async (dir) => {
-      const names = dirs[dir];
+      const names = byDir.get(norm(dir));
       if (!names) throw Object.assign(new Error("gone"), { code: "ENOENT" });
       return names;
     },
@@ -110,7 +114,7 @@ describe("opencode history reader", () => {
       openDatabase: (target) => (opened.push(target), db),
     });
     const result = await reader.read(ctx(files));
-    expect(opened).toEqual([DB]);
+    expect(opened.map(norm)).toEqual([DB]);
     expect(result.report).toEqual({ origin: "opencode", status: "ok", files: 1 });
     expect(result.records).toEqual([
       {
@@ -174,7 +178,19 @@ describe("opencode history reader", () => {
     });
     const fs = fakeFs({ "/xdg/opencode": ["opencode-work.db"] });
     const result = await reader.read(ctx(fs, { env: { XDG_DATA_HOME: "/xdg" } }));
-    expect(opened).toEqual(["/xdg/opencode/opencode-work.db"]);
+    expect(opened.map(norm)).toEqual(["/xdg/opencode/opencode-work.db"]);
+    expect(result.report.status).toBe("ok");
+  });
+
+  it("honours LOCALAPPDATA when XDG_DATA_HOME is unset", async () => {
+    const opened: string[] = [];
+    const { db } = openCodeDb("message", []);
+    const reader = createOpenCodeHistoryReader({
+      openDatabase: (target) => (opened.push(target), db),
+    });
+    const fs = fakeFs({ "/local/opencode": ["opencode.db"] });
+    const result = await reader.read(ctx(fs, { env: { LOCALAPPDATA: "/local" } }));
+    expect(opened.map(norm)).toEqual(["/local/opencode/opencode.db"]);
     expect(result.report.status).toBe("ok");
   });
 

@@ -5,16 +5,11 @@ import {
   type HistoryReaderContext,
   type HistorySourceReport,
 } from "../history-reader.ts";
+import { claudeConfigDir } from "./paths.ts";
 
 const SYNTHETIC_MODEL = "<synthetic>";
 const USAGE_MARKER = '"usage"';
 const READ_CHUNK_BYTES = 256 * 1024;
-
-function claudeConfigDir(ctx: HistoryReaderContext): string {
-  const configured = ctx.env.CLAUDE_CONFIG_DIR?.trim();
-  if (configured) return configured;
-  return `${ctx.homeDir}/.claude`;
-}
 
 function tokenCount(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
