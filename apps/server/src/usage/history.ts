@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import {
@@ -18,6 +17,7 @@ import type {
   WorkerRequest,
 } from "./history-worker.ts";
 import { createPricingService, type PricingService, type PricingSnapshot } from "./pricing.ts";
+import { resolveUserHome } from "./readers/paths.ts";
 
 const AWAIT_REFRESH_MS = 60_000;
 /** A call that does not ask to wait starts a rescan only when the last one is this old. */
@@ -194,7 +194,7 @@ export function createHistoryService(options: HistoryServiceOptions): HistorySer
     options.host ??
     createWorkerHost({
       home: options.home,
-      userHome: options.userHome ?? homedir(),
+      userHome: options.userHome ?? resolveUserHome(options.env ?? process.env),
       ...(options.env === undefined ? {} : { env: options.env }),
     });
   const pricing =

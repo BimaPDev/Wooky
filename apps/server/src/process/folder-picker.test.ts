@@ -47,10 +47,11 @@ async function tempDir(): Promise<string> {
 
 describe("pickFolder", () => {
   it("parses a macOS folder, dropping the trailing slash but keeping /", async () => {
-    const dir = await tempDir();
+    const dir = "/home/ada/project";
     const seen: Array<{ command: string; args: readonly string[] }> = [];
     const picker = createFolderPicker({
       platform: "darwin",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: (command, args) => {
         seen.push({ command, args });
         const child = fakeChild();
@@ -73,10 +74,11 @@ describe("pickFolder", () => {
   });
 
   it("keeps a quoted prompt inside the osascript argument", async () => {
-    const dir = await tempDir();
+    const dir = "/home/ada/project";
     let script = "";
     const picker = createFolderPicker({
       platform: "darwin",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: (_command, args) => {
         script = args[1] ?? "";
         const child = fakeChild();
@@ -112,10 +114,11 @@ describe("pickFolder", () => {
   });
 
   it("tries zenity, then kdialog, and stops when zenity answers", async () => {
-    const dir = await tempDir();
+    const dir = "/home/ada/project";
     const commands: string[] = [];
     const picker = createFolderPicker({
       platform: "linux",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: (command, args) => {
         commands.push(`${command} ${args.join(" ")}`);
         if (command === "zenity") return missingProcess();
@@ -140,6 +143,7 @@ describe("pickFolder", () => {
     commands.length = 0;
     const cancel = createFolderPicker({
       platform: "linux",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: (command) => {
         commands.push(command);
         const child = fakeChild();
@@ -172,11 +176,12 @@ describe("pickFolder", () => {
   });
 
   it("shares one promise per connection and conflicts for another", async () => {
-    const dir = await tempDir();
+    const dir = "/home/ada/project";
     const child = fakeChild(77);
     let spawns = 0;
     const picker = createFolderPicker({
       platform: "darwin",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: () => {
         spawns += 1;
         return asProcess(child);
@@ -308,10 +313,11 @@ describe("pickFolder", () => {
   });
 
   it("reads stdout that arrives after exit and before close", async () => {
-    const dir = await tempDir();
+    const dir = "/home/ada/project";
     const child = fakeChild();
     const picker = createFolderPicker({
       platform: "darwin",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: () => asProcess(child),
     });
 
@@ -348,7 +354,7 @@ describe("pickFolder", () => {
   });
 
   it("keeps spaces in a chosen path and only drops the line break and slashes", async () => {
-    const dir = await tempDir();
+    const dir = "/home/ada/project";
     const spaced = `${dir} `;
     const seen: string[] = [];
     const picker = createFolderPicker({
@@ -372,6 +378,7 @@ describe("pickFolder", () => {
 
     const leading = createFolderPicker({
       platform: "darwin",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: () => {
         const child = fakeChild();
         queueMicrotask(() => {
@@ -385,10 +392,11 @@ describe("pickFolder", () => {
   });
 
   it("falls through zenity when it cannot open a display, then gives up", async () => {
-    const dir = await tempDir();
+    const dir = "/home/ada/project";
     const commands: string[] = [];
     const picker = createFolderPicker({
       platform: "linux",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: (command) => {
         commands.push(command);
         const child = fakeChild();
@@ -410,6 +418,7 @@ describe("pickFolder", () => {
     const failed: string[] = [];
     const neither = createFolderPicker({
       platform: "linux",
+      stat: async () => ({ isDirectory: () => true }),
       spawn: (command) => {
         failed.push(command);
         const child = fakeChild();

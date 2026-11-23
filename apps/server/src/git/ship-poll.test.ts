@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PullRequest, Thread } from "@wooky/contracts";
 import { openEventStore } from "../store/event-store.ts";
@@ -76,7 +77,7 @@ describe("ship PR poll", () => {
         project: {
           id: "p1",
           name: "demo",
-          root: "/tmp",
+          root: home,
           createdAt: "2026-01-01T00:00:00.000Z",
           settings: { scripts: [], sharedPaths: [], prompts: [] },
         },
@@ -125,7 +126,7 @@ describe("ship PR poll", () => {
         project: {
           id: "p1",
           name: "demo",
-          root: "/tmp",
+          root: home,
           createdAt: "2026-01-01T00:00:00.000Z",
           settings: { scripts: [], sharedPaths: [], prompts: [] },
         },
@@ -184,7 +185,7 @@ describe("ship PR poll", () => {
         project: {
           id: "p1",
           name: "demo",
-          root: "/tmp",
+          root: home,
           createdAt: "2026-01-01T00:00:00.000Z",
           settings: { scripts: [], sharedPaths: [], prompts: [] },
         },
@@ -209,6 +210,54 @@ describe("ship PR poll", () => {
     await hang;
     await Promise.resolve();
     expect(store.model.seq).toBe(before);
+    store.close();
+  });
+
+  it("falls back to github.com when the project directory is missing", async () => {
+    const home = await tempDir("poll-missing-dir");
+    const store = openEventStore(home, () => "2026-01-01");
+    const seenHosts: string[] = [];
+    const gh: GhClient = {
+      available: () => true,
+      authStatus: async (host) => {
+        seenHosts.push(host);
+        return false;
+      },
+      async run() {
+        return { stdout: "", stderr: "", code: 0 };
+      },
+      mapPrView(json) {
+        return { url: json.url, number: json.number, state: "open", branch: json.headRefName };
+      },
+    };
+    store.appendInternal([
+      {
+        type: "project.added",
+        commandId: null,
+        project: {
+          id: "p1",
+          name: "demo",
+          root: join(home, "missing-dir"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          settings: { scripts: [], sharedPaths: [], prompts: [] },
+        },
+      },
+      {
+        type: "thread.created",
+        commandId: null,
+        thread: openThread("t1", {
+          url: "https://github.com/x/y/pull/1",
+          number: 1,
+          state: "open",
+          branch: "main",
+        }),
+      },
+    ]);
+    const ship = createShipService({ store, git: createGitService(), gh, pollMs: 100 });
+    const stop = ship.startPolling();
+    await vi.advanceTimersByTimeAsync(150);
+    stop();
+    expect(seenHosts).toEqual(["github.com"]);
     store.close();
   });
 });

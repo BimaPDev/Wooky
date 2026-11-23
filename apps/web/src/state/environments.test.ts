@@ -37,15 +37,16 @@ function setup(reply: Reply = () => undefined) {
     localUrl: () => "ws://local/ws",
   });
   const calls: string[] = [];
+  const settings: DeviceSettings = DeviceSettingsSchema.parse({ environments: [home, lab] });
   setBackend({
     call: async <M extends RpcMethod>(method: M, params: RpcParams<M>) => {
       calls.push(method);
       const answer = reply(method, params);
       if (answer instanceof Error) throw answer;
+      if (answer === undefined && method === "settings.get") return settings as RpcResult<M>;
       return answer as RpcResult<M>;
     },
   });
-  const settings: DeviceSettings = DeviceSettingsSchema.parse({ environments: [home, lab] });
   useStore.setState({ deviceSettings: settings, fixture: false, notice: null });
   return { reconnects, calls };
 }

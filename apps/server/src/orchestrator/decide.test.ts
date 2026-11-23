@@ -1,3 +1,4 @@
+import { normalize } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgeEvent, Command, PendingEvent, ReadModel, Thread } from "@wooky/contracts";
 import { applyEvents, emptyReadModel } from "@wooky/domain";
@@ -57,7 +58,7 @@ function seed(threadFields: Partial<Thread> = {}): ReadModel {
       project: {
         id: "p1",
         name: "demo",
-        root: "/work/demo",
+        root: normalize("/work/demo"),
         createdAt: at,
         settings: { scripts: [], sharedPaths: [], prompts: [] },
       },
@@ -148,7 +149,7 @@ describe("decide project.add", () => {
         project: {
           id: "project-1",
           name: "app",
-          root: "/work/app",
+          root: normalize("/work/app"),
           createdAt: at,
           settings: { scripts: [], sharedPaths: [], prompts: [] },
         },
@@ -161,7 +162,7 @@ describe("decide project.add", () => {
     const { events } = accepted(
       run(emptyReadModel(), command("project.add", { root: "/work/x/../app/", name: "App" })),
     );
-    expect(events[0]).toMatchObject({ project: { root: "/work/app", name: "App" } });
+    expect(events[0]).toMatchObject({ project: { root: normalize("/work/app"), name: "App" } });
   });
 
   it("rejects a relative root", () => {
@@ -229,7 +230,12 @@ describe("decide project.remove", () => {
     );
     expect(events).toMatchObject([{ type: "project.removed", projectId: "p1" }]);
     expect(effects).toEqual([
-      { kind: "worktree.remove", threadId: "t1", projectRoot: "/work/demo", worktree },
+      {
+        kind: "worktree.remove",
+        threadId: "t1",
+        projectRoot: normalize("/work/demo"),
+        worktree,
+      },
     ]);
   });
 });
@@ -264,7 +270,7 @@ describe("decide thread.create", () => {
   it("asks for a worktree when isolated", () => {
     const { effects } = accepted(run(seed(), create({ isolate: true, title: "Spike" })));
     expect(effects).toEqual([
-      { kind: "worktree.create", threadId: "thread-1", projectRoot: "/work/demo" },
+      { kind: "worktree.create", threadId: "thread-1", projectRoot: normalize("/work/demo") },
     ]);
   });
 });

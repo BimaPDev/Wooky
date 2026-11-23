@@ -8,6 +8,7 @@ import {
   type HistoryRecord,
   type HistorySourceReport,
 } from "../history-reader.ts";
+import { codexSessionsDir } from "./paths.ts";
 
 const MAX_WALK_DEPTH = 6;
 const NEWLINE = 10;
@@ -287,11 +288,6 @@ async function listRollouts(
   return { files, failed };
 }
 
-function codexHome(ctx: HistoryReaderContext): string {
-  const configured = ctx.env["CODEX_HOME"];
-  return configured && path.isAbsolute(configured) ? configured : path.join(ctx.homeDir, ".codex");
-}
-
 function isMissing(error: unknown): boolean {
   const code =
     typeof error === "object" && error !== null && "code" in error
@@ -305,7 +301,7 @@ export const codexHistoryReader: HistoryReader = {
   async read(ctx: HistoryReaderContext) {
     let found: Awaited<ReturnType<typeof listRollouts>>;
     try {
-      found = await listRollouts(ctx.fs, path.join(codexHome(ctx), "sessions"), ctx.signal);
+      found = await listRollouts(ctx.fs, codexSessionsDir(ctx), ctx.signal);
     } catch (error) {
       const missing = isMissing(error);
       return {

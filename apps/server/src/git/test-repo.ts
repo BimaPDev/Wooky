@@ -12,7 +12,7 @@ export async function cleanupTestRepos(): Promise<void> {
     const base = bases.pop();
     if (base) {
       const { rm } = await import("node:fs/promises");
-      await rm(base, { recursive: true, force: true });
+      await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }
 }

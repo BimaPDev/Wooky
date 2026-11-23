@@ -13,9 +13,14 @@ const SECRET_SUMMARY = "FAKE-TURN-SUMMARY-leaked-roadmap-notes";
 
 type FileSpec = { body: string; mtimeMs?: number };
 
+const norm = (value: string) => value.replaceAll("\\", "/");
+
 function fakeFs(files: Record<string, FileSpec>): HistoryFs {
+  const byPath = new Map<string, FileSpec>();
   const dirs = new Map<string, Set<string>>();
-  for (const file of Object.keys(files)) {
+  for (const [raw, spec] of Object.entries(files)) {
+    const file = norm(raw);
+    byPath.set(file, spec);
     const parts = file.split("/").filter(Boolean);
     for (let i = 0; i < parts.length; i += 1) {
       const parent = "/" + parts.slice(0, i).join("/");
@@ -29,12 +34,13 @@ function fakeFs(files: Record<string, FileSpec>): HistoryFs {
   };
   return {
     readFile: async (target) => {
-      const spec = files[target];
+      const spec = byPath.get(norm(target));
       return spec ? new TextEncoder().encode(spec.body) : gone();
     },
-    readdir: async (dir) => [...(dirs.get(dir) ?? gone())],
+    readdir: async (dir) => [...(dirs.get(norm(dir)) ?? gone())],
     stat: async (target) => {
-      const spec = files[target];
+      const key = norm(target);
+      const spec = byPath.get(key);
       if (spec) {
         return {
           size: spec.body.length,
@@ -43,7 +49,7 @@ function fakeFs(files: Record<string, FileSpec>): HistoryFs {
           isDirectory: () => false,
         };
       }
-      return dirs.has(target)
+      return dirs.has(key)
         ? { size: 0, mtimeMs: NOW, isFile: () => false, isDirectory: () => true }
         : gone();
     },

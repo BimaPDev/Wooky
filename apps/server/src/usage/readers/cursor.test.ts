@@ -16,17 +16,26 @@ const NOW = Date.parse("2026-06-10T12:00:00.000Z");
 const SECRET_PROMPT = "FAKE-PROMPT-please-refactor-the-billing-module";
 const SECRET_KEY = "FAKE-CREDENTIAL-sk-live-000";
 
+const norm = (value: string) => value.replaceAll("\\", "/");
+
 function fakeFs(
   files: Record<string, number>,
   extras: { bodies?: Record<string, string | Uint8Array>; sizes?: Record<string, number> } = {},
 ): HistoryFs {
+  const byPath = new Map<string, number>();
+  const bodies = new Map<string, string | Uint8Array>();
+  const sizes = new Map<string, number>();
+  for (const [raw, body] of Object.entries(extras.bodies ?? {})) bodies.set(norm(raw), body);
+  for (const [raw, size] of Object.entries(extras.sizes ?? {})) sizes.set(norm(raw), size);
   const dirs = new Map<string, Set<string>>();
   const add = (parent: string, child: string) => {
     const names = dirs.get(parent) ?? new Set<string>();
     names.add(child);
     dirs.set(parent, names);
   };
-  for (const file of Object.keys(files)) {
+  for (const [raw, mtimeMs] of Object.entries(files)) {
+    const file = norm(raw);
+    byPath.set(file, mtimeMs);
     const parts = file.split("/").filter(Boolean);
     for (let i = 0; i < parts.length; i += 1) {
       add("/" + parts.slice(0, i).join("/"), parts[i] ?? "");
@@ -37,29 +46,30 @@ function fakeFs(
   };
   return {
     readFile: async (target) => {
-      const body = extras.bodies?.[target];
+      const body = bodies.get(norm(target));
       if (typeof body === "string") return new TextEncoder().encode(body);
       if (body !== undefined) return body;
       return new Uint8Array();
     },
     readdir: async (dir) => {
-      const names = dirs.get(dir);
+      const names = dirs.get(norm(dir));
       return names ? [...names] : missing();
     },
     stat: async (target) => {
-      const mtimeMs = files[target];
+      const key = norm(target);
+      const mtimeMs = byPath.get(key);
       if (mtimeMs !== undefined) {
-        const body = extras.bodies?.[target];
+        const body = bodies.get(key);
         const fromBody =
           typeof body === "string" ? body.length : body !== undefined ? body.byteLength : 1;
         return {
-          size: extras.sizes?.[target] ?? fromBody,
+          size: sizes.get(key) ?? fromBody,
           mtimeMs,
           isFile: () => true,
           isDirectory: () => false,
         };
       }
-      if (dirs.has(target)) {
+      if (dirs.has(key)) {
         return { size: 0, mtimeMs: NOW, isFile: () => false, isDirectory: () => true };
       }
       return missing();
@@ -244,8 +254,9 @@ describe("cursor history reader", () => {
     const third = `${HOME}/.cursor/projects/gamma/index.db`;
     const reader = createCursorHistoryReader({
       openDatabase: (target) => {
-        if (target === DB) return db;
-        if (target === other) throw new Error("locked");
+        const key = norm(target);
+        if (key === DB) return db;
+        if (key === other) throw new Error("locked");
         return {
           all: (q) => lacking.prepare(q).all() as Record<string, unknown>[],
           close: () => lacking.close(),
@@ -436,6 +447,15 @@ describe("cursor history reader", () => {
     );
     expect(result.records).toEqual([]);
     expect(result.report.status).toBe("ok");
+  });
+
+  it("finds the IDE database under APPDATA", async () => {
+    const ide = "/roaming/Cursor/User/globalStorage/state.vscdb";
+    const reader = createCursorHistoryReader({
+      openDatabase: () => ({ all: () => [], close: () => {} }),
+    });
+    const result = await reader.read(ctx(fakeFs({ [ide]: NOW }), { env: { APPDATA: "/roaming" } }));
+    expect(result.report).toEqual({ origin: "cursor", status: "ok", files: 1 });
   });
 });
 

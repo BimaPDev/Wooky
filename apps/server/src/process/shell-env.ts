@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { userInfo } from "node:os";
-import { basename, delimiter, isAbsolute } from "node:path";
+import { basename, posix } from "node:path";
 
 export const PATH_CAPTURE_START = "__AGE_PATH_START__";
 export const PATH_CAPTURE_END = "__AGE_PATH_END__";
@@ -93,7 +93,7 @@ export function normalizeShellPathEntry(entry: string, home: string): string | n
   if (expanded === "~" || expanded.startsWith("~/")) {
     expanded = home + expanded.slice(1);
   }
-  return isAbsolute(expanded) ? expanded : null;
+  return posix.isAbsolute(expanded) ? expanded : null;
 }
 
 export function mergeLoginShellPath(
@@ -104,8 +104,8 @@ export function mergeLoginShellPath(
   path: string;
   added: string[];
 } {
-  const existing = existingPath.split(delimiter).filter(Boolean);
-  const fromShell = shellPath.split(delimiter);
+  const existing = existingPath.split(posix.delimiter).filter(Boolean);
+  const fromShell = shellPath.split(posix.delimiter);
   const existingSet = new Set(existing);
   const seen = new Set<string>();
   const ordered: string[] = [];
@@ -124,7 +124,7 @@ export function mergeLoginShellPath(
     ordered.push(entry);
   }
 
-  return { path: ordered.join(delimiter), added };
+  return { path: ordered.join(posix.delimiter), added };
 }
 
 function defaultShell(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string {

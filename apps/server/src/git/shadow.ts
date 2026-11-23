@@ -7,7 +7,19 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, constants as fsConstants } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  constants as fsConstants,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  type Stats,
+} from "node:fs";
 import {
   lstat,
   mkdir,
@@ -17,17 +29,141 @@ import {
   rename,
   rm,
   rmdir,
+  stat as statAsync,
   unlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
-import { devNull } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import type { FileDiff } from "@wooky/contracts";
-import { gitChildEnv } from "./env.ts";
+import { shadowGitEnv } from "./env.ts";
 
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const ZERO_SHA = "0".repeat(40);
+
+const onWindows = process.platform === "win32";
+
+function ownedByUs(info: Stats): boolean {
+  return onWindows || typeof process.getuid !== "function" || info.uid === process.getuid();
+}
+
+/** A real, private entry: not a symlink, ours on POSIX, not writable by group or others. */
+function trusted(info: Stats): boolean {
+  if (info.isSymbolicLink() || !ownedByUs(info)) return false;
+  return onWindows || (info.mode & 0o022) === 0;
+}
+
+function isInertConfig(path: string): boolean {
+  try {
+    const info = lstatSync(path);
+    return info.isFile() && trusted(info) && info.size === 0;
+  } catch {
+    return false;
+  }
+}
+
+function isInertDir(path: string, empty: boolean): boolean {
+  try {
+    const info = lstatSync(path);
+    return info.isDirectory() && trusted(info) && (!empty || readdirSync(path).length === 0);
+  } catch {
+    return false;
+  }
+}
+
+let fallbackInertDir: string | null = null;
+
+function currentUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return String(process.getuid?.() ?? "$USER");
+  }
+}
+
+/**
+ * The `run` directory the inert files live in must itself be ours: if it were a symlink or
+ * writable by others, the checks on `git-inert` below would be checking a place someone else
+ * controls. A symlink is replaced, a loose mode is tightened, and anything not ours is refused.
+ * Windows has no uid or mode bits to check; it relies on WOOKY_HOME sitting under the user's
+ * profile (`%USERPROFILE%`), whose ACLs already keep other users out.
+ */
+function ensurePrivateRunDir(path: string): void {
+  if (onWindows) {
+    mkdirSync(path, { recursive: true });
+    return;
+  }
+  let info: Stats | null = null;
+  try {
+    info = lstatSync(path);
+  } catch {
+    // Missing: created below.
+  }
+  if (info?.isSymbolicLink()) {
+    unlinkSync(path);
+    info = null;
+  }
+  if (!info) {
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    return;
+  }
+  if (!info.isDirectory() || !ownedByUs(info)) {
+    throw new Error(
+      info.isDirectory()
+        ? `${path} belongs to another user (usually left behind by a run with sudo). Give it back with: sudo chown -R ${currentUser()} "${path}"`
+        : `${path} must be a directory, not a file. Remove it and Wooky will create the directory.`,
+    );
+  }
+  if ((info.mode & 0o022) !== 0) chmodSync(path, info.mode & 0o755 & ~0o022);
+}
+
+/**
+ * An empty git config file and an empty hooks directory. Calls that have no shadow repo yet
+ * (init, --version, plumbing on a project) still need "no global config, no hooks"; the null
+ * device cannot stand in, because git on Windows opens `\\.\nul` as a path and fails with
+ * "Invalid argument".
+ *
+ * They live under the Wooky home (`run/git-inert`), not a shared temp directory, where
+ * another local user could replace them after a cleaner removed them. Every use re-checks
+ * that they are still ours and empty, and rebuilds them if not: a planted config or hook
+ * would otherwise run for every git call.
+ */
+function inertGitFiles(home: string | undefined): { config: string; hooks: string } {
+  let dir: string;
+  if (home) {
+    const runDir = join(home, "run");
+    ensurePrivateRunDir(runDir);
+    dir = join(runDir, "git-inert");
+  } else {
+    // No home (tests, tools): a private per-process directory instead.
+    if (!fallbackInertDir) {
+      const created = mkdtempSync(join(tmpdir(), "wooky-git-"));
+      fallbackInertDir = created;
+      process.once("exit", () => {
+        try {
+          rmSync(created, { recursive: true, force: true });
+        } catch {
+          // Best effort: Windows may still hold the directory open.
+        }
+      });
+    }
+    dir = fallbackInertDir;
+  }
+  const config = join(dir, "empty.config");
+  const hooks = join(dir, "no-hooks");
+  if (isInertDir(dir, false) && isInertConfig(config) && isInertDir(hooks, true)) {
+    return { config, hooks };
+  }
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!onWindows) chmodSync(dir, 0o700);
+  writeFileSync(config, "", { mode: 0o600 });
+  mkdirSync(hooks, { mode: 0o700 });
+  if (!onWindows) chmodSync(hooks, 0o700);
+  return { config, hooks };
+}
 
 export class ShadowGitError extends Error {
   constructor(
@@ -78,6 +214,9 @@ const CONFIG_OVERRIDES = [
   "transfer.fsckObjects=true",
   "core.protectNTFS=true",
   "core.protectHFS=true",
+  // The shadow never talks to a remote. Only a local file (a sync bundle) may be fetched.
+  "protocol.allow=never",
+  "protocol.file.allow=always",
 ].flatMap((entry) => ["-c", entry]);
 
 const EMPTY_BASE_REF = "refs/wooky/empty-base";
@@ -137,6 +276,18 @@ export interface ScanResult {
   add: string[];
   remove: string[];
   skipped: Array<{ path: string; bytes: number }>;
+  stamps: ReadonlyMap<string, string>;
+  /** Wall-clock ms at which the scan began, before it looked at any file. */
+  startedMs: number;
+}
+
+/** File clocks are coarse (up to ~16 ms on Windows); date the index this much before the scan began. */
+export const INDEX_CLOCK_MARGIN_MS = 50;
+
+/** The ctime (ns) inside a scan stamp (`mtime:ctime:size:mode:ino`), or null if it has none. */
+function ctimeOfStamp(stamp: string | undefined): bigint | null {
+  const field = stamp?.split(":")[1];
+  return field && /^\d+$/.test(field) ? BigInt(field) : null;
 }
 
 /** HFS+ and NTFS fold format characters away; a zero-width spelling must not slip past. */
@@ -197,28 +348,27 @@ async function retryBusy<T>(fn: () => Promise<T>): Promise<T> {
 export function createShadowGit(
   options: {
     gitBin?: string;
+    /** WOOKY_HOME: where the inert git config and hooks directory live. */
+    home?: string;
     /** Test seam: runs after the temporary file is written and before the final checks. */
     beforeCommit?: (finalPath: string) => Promise<void>;
   } = {},
 ) {
   const beforeCommit = options.beforeCommit;
   const gitBin = options.gitBin ?? "git";
+  const home = options.home;
 
-  function environment(repo: ShadowRepo | null, extra?: Record<string, string>) {
-    const env = gitChildEnv();
+  function environment(
+    repo: ShadowRepo | null,
+    inert: { config: string } | null,
+    extra?: Record<string, string>,
+  ) {
     // Nothing from the user's ambient git setup may reach the shadow repo: no dates, no
-    // global or system config, no hooks.
-    for (const key of [
-      "GIT_AUTHOR_DATE",
-      "GIT_COMMITTER_DATE",
-      "GIT_CONFIG_GLOBAL",
-      "GIT_CONFIG_SYSTEM",
-    ]) {
-      delete env[key];
-    }
+    // identity, no transport, no global or system config, no hooks. shadowGitEnv drops every GIT_*.
+    const env = shadowGitEnv();
     env.GIT_CONFIG_NOSYSTEM = "1";
     env.GIT_ATTR_NOSYSTEM = "1";
-    env.GIT_CONFIG_GLOBAL = repo ? join(repo.gitDir, "wooky-empty.config") : devNull;
+    env.GIT_CONFIG_GLOBAL = repo ? join(repo.gitDir, "wooky-empty.config") : (inert?.config ?? "");
     if (repo) {
       env.GIT_DIR = repo.gitDir;
       env.GIT_WORK_TREE = repo.workTree;
@@ -240,11 +390,16 @@ export function createShadowGit(
   }
 
   function launch(repo: ShadowRepo | null, args: string[], opts: RunOptions): ChildProcess {
-    const hooks = ["-c", `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : devNull}`];
+    // Without a repo the inert files stand in for its config and hooks. Checked once per launch.
+    const inert = repo ? null : inertGitFiles(home);
+    const hooks = [
+      "-c",
+      `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : (inert?.hooks ?? "")}`,
+    ];
     return spawn(gitBin, [...CONFIG_OVERRIDES, ...hooks, ...args], {
       // The work tree, so git never computes a prefix when the shadow dir sits inside the project.
       cwd: repo?.workTree ?? process.cwd(),
-      env: environment(repo, opts.env),
+      env: environment(repo, inert, opts.env),
       windowsHide: true,
     });
   }
@@ -371,6 +526,7 @@ export function createShadowGit(
 
   /** Lists what a snapshot would hold, applying the cap, the exclusions and the ignore rules. */
   async function scan(repo: ShadowRepo, opts: ScanOptions): Promise<ScanResult> {
+    const startedMs = Date.now();
     const args = ["ls-files", "-z", "-t", "-c", "-o"];
     if (!opts.includeIgnored) {
       args.push("--exclude-standard");
@@ -414,29 +570,61 @@ export function createShadowGit(
             if (cached) removed.push(path);
             return;
           }
-          add.push({ path, stamp: `${info.mtimeNs}:${info.ctimeNs}:${info.size}:${info.mode}` });
+          add.push({
+            path,
+            stamp: `${info.mtimeNs}:${info.ctimeNs}:${info.size}:${info.mode}:${info.ino}`,
+          });
         }),
       );
     }
     add.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     const hash = createHash("sha1");
-    for (const item of add) hash.update(`${item.path}\0${item.stamp}\n`);
+    const stamps = new Map<string, string>();
+    for (const item of add) {
+      hash.update(`${item.path}\0${item.stamp}\n`);
+      stamps.set(item.path, item.stamp);
+    }
     skipped.sort((a, b) => (a.path < b.path ? -1 : 1));
     return {
       fingerprint: hash.digest("hex"),
       add: add.map((item) => item.path),
       remove: removed,
       skipped,
+      stamps,
+      startedMs,
     };
   }
 
   /** Brings the private index in line with a scan. Returns the tree sha. */
   async function stage(repo: ShadowRepo, result: ScanResult): Promise<string> {
-    const env = withIndex(indexOf(repo));
-    if (result.remove.length > 0) {
+    const index = indexOf(repo);
+    const env = withIndex(index);
+    // Git on Windows maps st_ctime to creation time and compares mtime at 1s resolution, so
+    // update-index trusts stale entries after a same-size rewrite with a restored mtime. Node's
+    // ctime is the NTFS ChangeTime, which moves on every write: any file whose ctime is not older
+    // than the index's mtime was written after the last staged scan began, so evict it and git
+    // must re-hash. The index's mtime is set back to that scan's start (below) rather than left
+    // at the moment it was written: a write landing between a scan and its stage is then still
+    // newer than the index. It lives in the file, so it also holds after a restart without
+    // re-hashing everything.
+    const rehash: string[] = [];
+    let indexWrittenNs: bigint | null = null;
+    try {
+      indexWrittenNs = (await statAsync(index, { bigint: true })).mtimeNs;
+    } catch {
+      // No index yet: update-index builds one from scratch.
+    }
+    if (indexWrittenNs !== null) {
+      for (const path of result.add) {
+        const ctimeNs = ctimeOfStamp(result.stamps.get(path));
+        if (ctimeNs !== null && ctimeNs >= indexWrittenNs) rehash.push(path);
+      }
+    }
+    const toRemove = rehash.length > 0 ? [...result.remove, ...rehash] : result.remove;
+    if (toRemove.length > 0) {
       await run(repo, ["update-index", "--force-remove", "-z", "--stdin"], {
         env,
-        input: result.remove.join("\0") + "\0",
+        input: toRemove.join("\0") + "\0",
       });
     }
     if (result.add.length > 0) {
@@ -446,6 +634,13 @@ export function createShadowGit(
       });
     }
     const tree = await run(repo, ["write-tree"], { env });
+    // Date the index at the start of this scan (less a margin for coarse file clocks), not at the
+    // moment git wrote it. A file written after the scan looked at it, but before the index was
+    // written, has a ctime between the two: left alone, the next scan would take that ctime for
+    // older than the index and trust a stale entry for good. Git only ever treats a back-dated
+    // index as more suspicious, so this costs a re-hash of recent files and nothing else.
+    const dated = new Date(Math.max(0, result.startedMs - INDEX_CLOCK_MARGIN_MS));
+    await utimes(index, dated, dated).catch(() => undefined);
     return tree.text.trim();
   }
 

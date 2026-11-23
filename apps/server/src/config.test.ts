@@ -29,9 +29,9 @@ describe("resolveConfig", () => {
   it("prefers flags over environment variables", () => {
     const env = { WOOKY_HOME: "/env/home", WOOKY_PORT: "5000", WOOKY_WEB_DIST: "/env/web" };
     expect(resolveConfig([], env)).toMatchObject({
-      home: "/env/home",
+      home: resolve("/env/home"),
       port: 5000,
-      webDist: "/env/web",
+      webDist: resolve("/env/web"),
     });
     expect(
       resolveConfig(["--port", "0", "--home", "rel", "--host", "::1", "--web-dist", "/w"], env),
@@ -39,7 +39,7 @@ describe("resolveConfig", () => {
       home: resolve("rel"),
       port: 0,
       host: "::1",
-      webDist: "/w",
+      webDist: resolve("/w"),
       allowedHosts: [],
       hostExplicit: true,
       portExplicit: true,

@@ -14,6 +14,7 @@ import {
   type OpenDatabase,
   type ReadOnlyDb,
 } from "./cursor.ts";
+import { antigravityDataDirs } from "./paths.ts";
 
 export interface AntigravityReaderOptions {
   openDatabase?: OpenDatabase;
@@ -468,28 +469,6 @@ export function readAntigravityDatabase(
   return mergeCandidates(candidates);
 }
 
-function antigravityRoots(ctx: HistoryReaderContext): string[] {
-  const configured = ctx.env["ANTIGRAVITY_DATA_DIR"]
-    ?.split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => path.isAbsolute(entry));
-  if (configured && configured.length > 0) return configured;
-  const roots = [
-    path.join(ctx.homeDir, ".gemini", "antigravity"),
-    path.join(ctx.homeDir, ".gemini", "antigravity-cli"),
-    path.join(ctx.homeDir, ".gemini", "antigravity-ide"),
-    path.join(ctx.homeDir, ".gemini", "antigravity-backup"),
-    path.join(ctx.homeDir, ".config", "antigravity"),
-    path.join(ctx.homeDir, ".t3", "userdata", "providers", "antigravity"),
-    path.join(ctx.homeDir, ".wooky", "providers", "antigravity"),
-  ];
-  const wookyHome = ctx.env["WOOKY_HOME"]?.trim();
-  if (wookyHome && path.isAbsolute(wookyHome)) {
-    roots.push(path.join(wookyHome, "providers", "antigravity"));
-  }
-  return roots;
-}
-
 async function directoryExists(fs: HistoryFs, dir: string): Promise<boolean> {
   try {
     return (await fs.stat(dir)).isDirectory();
@@ -557,7 +536,7 @@ export function createAntigravityHistoryReader(
   return {
     origin: "antigravity",
     async read(ctx: HistoryReaderContext) {
-      const dirs = await conversationDirs(ctx.fs, antigravityRoots(ctx));
+      const dirs = await conversationDirs(ctx.fs, antigravityDataDirs(ctx));
       let found: Awaited<ReturnType<typeof findDatabases>>;
       try {
         found = await findDatabases(ctx.fs, dirs, ctx.signal);

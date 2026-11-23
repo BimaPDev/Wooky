@@ -16,14 +16,19 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-06-10T12:00:00.000Z");
 const AT_SEC = Math.floor((NOW - DAY) / 1000);
 
+const norm = (value: string) => value.replaceAll("\\", "/");
+
 function fakeFs(files: Record<string, number>): HistoryFs {
+  const byPath = new Map<string, number>();
   const dirs = new Map<string, Set<string>>();
   const add = (parent: string, child: string) => {
     const names = dirs.get(parent) ?? new Set<string>();
     names.add(child);
     dirs.set(parent, names);
   };
-  for (const file of Object.keys(files)) {
+  for (const [raw, mtimeMs] of Object.entries(files)) {
+    const file = norm(raw);
+    byPath.set(file, mtimeMs);
     const parts = file.split("/").filter(Boolean);
     for (let i = 0; i < parts.length; i += 1) {
       add("/" + parts.slice(0, i).join("/"), parts[i] ?? "");
@@ -35,15 +40,16 @@ function fakeFs(files: Record<string, number>): HistoryFs {
   return {
     readFile: async () => new Uint8Array(),
     readdir: async (dir) => {
-      const names = dirs.get(dir);
+      const names = dirs.get(norm(dir));
       return names ? [...names] : missing();
     },
     stat: async (target) => {
-      const mtimeMs = files[target];
+      const normalized = norm(target);
+      const mtimeMs = byPath.get(normalized);
       if (mtimeMs !== undefined) {
         return { size: 1, mtimeMs, isFile: () => true, isDirectory: () => false };
       }
-      if (dirs.has(target)) {
+      if (dirs.has(normalized)) {
         return { size: 0, mtimeMs: NOW, isFile: () => false, isDirectory: () => true };
       }
       return missing();

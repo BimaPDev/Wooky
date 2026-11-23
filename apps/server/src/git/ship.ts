@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PendingEvent, PullRequest, RpcParams, RpcResult, Thread } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
-import { killTree } from "../process/kill-tree.ts";
+import { killTree as defaultKillTree } from "../process/kill-tree.ts";
 import type { EventStore } from "../store/event-store.ts";
-import { gitChildEnv } from "./env.ts";
+import { userRepoGitEnv, type SshResolution } from "./env.ts";
 import { createGhClient, type GhClient, type GhPrViewJson } from "./gh.ts";
 import { redactCliError } from "./redact.ts";
 import type { GitService } from "./types.ts";
@@ -14,6 +14,8 @@ import type { GitService } from "./types.ts";
 const PUSH_TIMEOUT_MS = 120_000;
 const DEFAULT_PR_POLL_MS = 5 * 60_000;
 const PR_POLL_CAP = 25;
+/** How long a timed-out git run waits for the tree kill before it gives up on it and rejects. */
+const KILL_WAIT_MS = 5_000;
 
 type GitRunResult = { stdout: string; stderr: string; code: number | null };
 
@@ -34,6 +36,9 @@ export function createShipService(deps: {
   gh?: GhClient;
   pollMs?: number;
   pushTimeoutMs?: number;
+  /** Test seams for a kill that never settles. */
+  killTree?: typeof defaultKillTree;
+  killWaitMs?: number;
 }): ShipService {
   const { store, git } = deps;
   const gitBin = deps.gitBin ?? "git";
@@ -41,6 +46,8 @@ export function createShipService(deps: {
   const pushTimeout = deps.pushTimeoutMs ?? PUSH_TIMEOUT_MS;
   const gh = deps.gh ?? createGhClient();
   const pollMs = deps.pollMs ?? DEFAULT_PR_POLL_MS;
+  const killTree = deps.killTree ?? defaultKillTree;
+  const killWaitMs = deps.killWaitMs ?? KILL_WAIT_MS;
   let pollStopped = false;
 
   function failGit(args: string[], stderr: string, stdout: string, fallback?: string): never {
@@ -50,12 +57,13 @@ export function createShipService(deps: {
 
   async function runGit(
     args: string[],
-    opts: { cwd: string; allowFail?: boolean; timeoutMs?: number },
+    opts: { cwd: string; allowFail?: boolean; timeoutMs?: number; ssh?: SshResolution },
   ): Promise<GitRunResult> {
     const limit = opts.timeoutMs ?? 60_000;
     const timeoutSec = Math.round(limit / 1000);
     return new Promise((resolvePromise, reject) => {
       let settled = false;
+      let timedOut = false;
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
@@ -65,7 +73,7 @@ export function createShipService(deps: {
 
       const child = spawn(gitBin, [...gitPrefixArgs, ...args], {
         cwd: opts.cwd,
-        env: gitChildEnv(),
+        env: userRepoGitEnv(undefined, opts.ssh),
         windowsHide: true,
         ...(process.platform !== "win32" ? { detached: true } : {}),
       });
@@ -74,7 +82,8 @@ export function createShipService(deps: {
       const err: Buffer[] = [];
       child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
-      child.on("error", (error) =>
+      child.on("error", (error) => {
+        if (timedOut) return;
         finish(() =>
           reject(
             new ServiceError(
@@ -82,9 +91,10 @@ export function createShipService(deps: {
               redactCliError(error instanceof Error ? error.message : "Could not run git"),
             ),
           ),
-        ),
-      );
+        );
+      });
       child.on("close", (code) => {
+        if (timedOut) return;
         const stdout = Buffer.concat(out).toString("utf8");
         const stderr = Buffer.concat(err).toString("utf8");
         finish(() => {
@@ -100,12 +110,32 @@ export function createShipService(deps: {
         child.stdin.end();
       }
       const timer = setTimeout(() => {
-        if (pid !== undefined) void killTree(pid, "SIGKILL", { mode: "group" });
-        finish(() =>
-          reject(
-            new ServiceError("unavailable", `git ${args.join(" ")} timed out after ${timeoutSec}s`),
-          ),
-        );
+        timedOut = true;
+        const rejectTimeout = () =>
+          finish(() =>
+            reject(
+              new ServiceError(
+                "unavailable",
+                `git ${args.join(" ")} timed out after ${timeoutSec}s`,
+              ),
+            ),
+          );
+        if (pid !== undefined) {
+          // taskkill can hang; the caller (PR polling holds a single in-flight slot) must not.
+          let waitTimer: ReturnType<typeof setTimeout> | undefined;
+          const gaveUp = new Promise<void>((resolveWait) => {
+            waitTimer = setTimeout(resolveWait, killWaitMs);
+          });
+          void Promise.race([
+            killTree(pid, "SIGKILL", { mode: "group" }).catch(() => {}),
+            gaveUp,
+          ]).finally(() => {
+            clearTimeout(waitTimer);
+            rejectTimeout();
+          });
+        } else {
+          rejectTimeout();
+        }
       }, limit);
     });
   }
@@ -193,9 +223,13 @@ export function createShipService(deps: {
   }
 
   async function readOriginHost(cwd: string): Promise<string | null> {
-    const res = await runGit(["remote", "get-url", "origin"], { cwd, allowFail: true });
-    if (res.code !== 0) return null;
-    return originHost(res.stdout);
+    try {
+      const res = await runGit(["remote", "get-url", "origin"], { cwd, allowFail: true });
+      if (res.code !== 0) return null;
+      return originHost(res.stdout);
+    } catch {
+      return null;
+    }
   }
 
   function stripUserinfo(url: string): string {
@@ -324,7 +358,17 @@ export function createShipService(deps: {
       const args = needsUpstream
         ? ["push", "-u", "origin", "--", branch]
         : ["push", "origin", "--", branch];
-      const pushed = await runGit(args, { cwd, timeoutMs: pushTimeout, allowFail: true });
+      // git's own order is GIT_SSH_COMMAND, core.sshCommand, GIT_SSH; the env has to know the
+      // middle one to pin a non-interactive ssh without overriding it.
+      const configured = (
+        await runGit(["config", "--get", "core.sshCommand"], { cwd, allowFail: true })
+      ).stdout.trim();
+      const pushed = await runGit(args, {
+        cwd,
+        timeoutMs: pushTimeout,
+        allowFail: true,
+        ssh: configured ? { coreSshCommand: configured } : {},
+      });
       if (pushed.code !== 0) {
         const detail = redactCliError((pushed.stderr || pushed.stdout).trim());
         const hint = "Sign in to git or run `gh auth login`, then try again.";
@@ -438,7 +482,11 @@ export function createShipService(deps: {
             const host = (await readOriginHost(threadCwd)) ?? "github.com";
             let hostAuthed = authedHosts.get(host);
             if (hostAuthed === undefined) {
-              hostAuthed = await gh.authStatus(host);
+              try {
+                hostAuthed = await gh.authStatus(host);
+              } catch {
+                hostAuthed = false;
+              }
               authedHosts.set(host, hostAuthed);
             }
             if (!hostAuthed) continue;
