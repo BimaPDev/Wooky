@@ -162,21 +162,37 @@ export function createBindManager(options: {
     } else {
       // Loopback stays served either by its own listener or by 0.0.0.0, so its clients keep their connections.
       const keepLoopback = hosts.includes("127.0.0.1") || hosts.includes("0.0.0.0");
-      for (const host of [...listeners.keys()]) {
-        if (!hosts.includes(host)) await drop(host, keepLoopback);
-      }
+      const dropped = [...listeners.keys()].filter((host) => !hosts.includes(host));
+      // On Linux a wildcard bind fails while a loopback listener holds the port, so the old
+      // listeners must go first. If nothing new comes up they are put back below.
+      for (const host of dropped) await drop(host, keepLoopback);
+      let firstError: unknown;
       for (const host of hosts) {
         if (listeners.has(host)) continue;
         const bindPort = assignedPort ?? port;
         try {
           listeners.set(host, await listen(host, bindPort));
         } catch (error) {
-          if (listeners.size === 0) throw error;
+          firstError ??= error;
           console.error(
             `could not listen on ${host}`,
             error instanceof Error ? error.message : error,
           );
         }
+      }
+      if (listeners.size === 0) {
+        // Nothing is accepting connections: restore what was serving before, then report.
+        for (const host of dropped) {
+          try {
+            listeners.set(host, await listen(host, assignedPort ?? port));
+          } catch (error) {
+            console.error(
+              `could not restore ${host}`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }
+        throw firstError ?? new Error("no listener could be started");
       }
     }
     const bound = assignedPort ?? port;

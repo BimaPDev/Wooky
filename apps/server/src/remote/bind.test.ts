@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { RpcResponse, WOOKY_WS_PATH } from "@wooky/contracts";
+import { RpcResponse, WOOKY_WS_PATH, type HostingSettings } from "@wooky/contracts";
 import { createDemoAdapter } from "../providers/demo/adapter.ts";
 import { startServer, type RunningServer } from "../server.ts";
 import { tempDir } from "../testing.ts";
@@ -56,5 +56,51 @@ describe("hosting bind", () => {
     expect(disabled.ok).toBe(true);
     expect(server.addresses()).toEqual(["127.0.0.1"]);
     expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
+  });
+});
+
+describe("bind manager rollback", () => {
+  it("keeps serving loopback when the wildcard bind fails", async () => {
+    const { createBindManager } = await import("./bind.ts");
+    const { Server } = await import("node:net");
+    const hosting = { enabled: false, bind: "loopback", port: 0 } as HostingSettings;
+    const manager = createBindManager({
+      host: "127.0.0.1",
+      port: 0,
+      hostExplicit: false,
+      portExplicit: false,
+      getHosting: () => hosting,
+      tailnetIps: async () => [],
+    });
+    manager.setHandler((_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    const { port } = await manager.apply();
+    try {
+      // Every wildcard bind fails, as if another process held 0.0.0.0:port.
+      const realListen = Server.prototype.listen;
+      const spy = vi.spyOn(Server.prototype, "listen").mockImplementation(function (
+        this: InstanceType<typeof Server>,
+        ...args: unknown[]
+      ) {
+        const wildcard = args.some(
+          (arg) => arg === "0.0.0.0" || (arg as { host?: string })?.host === "::",
+        );
+        if (!wildcard)
+          return (realListen as (...a: unknown[]) => unknown).apply(this, args) as never;
+        process.nextTick(() =>
+          this.emit("error", Object.assign(new Error("address in use"), { code: "EADDRINUSE" })),
+        );
+        return this;
+      } as never);
+      Object.assign(hosting, { enabled: true, bind: "all", port });
+      await expect(manager.apply()).rejects.toThrow(/address in use/);
+      spy.mockRestore();
+      expect(manager.addresses()).toEqual(["127.0.0.1"]);
+      expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+    } finally {
+      await manager.closeServers();
+    }
   });
 });
