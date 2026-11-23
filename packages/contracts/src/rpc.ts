@@ -6,6 +6,16 @@ import {
   DeviceSettingsPatch,
   ThemeImportFormat,
 } from "./appearance.ts";
+import {
+  BrainEntry,
+  BrainInboxProposal,
+  BrainScope,
+  BrainSearchHit,
+  BrainTier,
+  BrainTreeNode,
+  BrainUri,
+  BrainWriteFrontmatter,
+} from "./brain.ts";
 import { ProviderCooldown } from "./failover.ts";
 import { Command, ThreadSpawnParams } from "./commands.ts";
 import { AgeEvent } from "./events.ts";
@@ -485,6 +495,108 @@ export const RpcMethods = {
   "git.pr.status": {
     params: z.object({ threadId: Id }),
     result: PullRequest.nullable(),
+  },
+  "brain.list": {
+    params: z.object({
+      uri: BrainUri,
+      includeArchived: z.boolean().optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.array(BrainTreeNode),
+  },
+  "brain.read": {
+    params: z.object({
+      uri: BrainUri,
+      tier: BrainTier,
+      ...AgentsAuthFields,
+    }),
+    result: BrainEntry,
+  },
+  "brain.search": {
+    params: z.object({
+      query: z.string(),
+      scopes: z.array(BrainScope),
+      pathPrefix: z.string().optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+      includeArchived: z.boolean().optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.array(BrainSearchHit),
+  },
+  "brain.write": {
+    params: z.object({
+      uri: BrainUri,
+      frontmatter: BrainWriteFrontmatter,
+      body: z.string(),
+      expectedUpdatedAt: z.string().optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      uri: BrainUri,
+      updatedAt: z.iso.datetime(),
+      created: z.boolean(),
+      queued: z.boolean(),
+      proposalId: z.string().min(1).optional(),
+      message: z.string().optional(),
+    }),
+  },
+  "brain.archive": {
+    params: z.object({
+      uri: BrainUri,
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      uri: BrainUri,
+      updatedAt: z.iso.datetime(),
+      created: z.boolean(),
+    }),
+  },
+  "brain.remove": {
+    params: z.object({
+      uri: BrainUri,
+      ...AgentsAuthFields,
+    }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "brain.reindex": {
+    params: z.object({
+      scope: BrainScope.optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      added: z.number().int().nonnegative(),
+      updated: z.number().int().nonnegative(),
+      removed: z.number().int().nonnegative(),
+      unchanged: z.number().int().nonnegative(),
+      scopes: z.number().int().nonnegative(),
+      truncated: z.boolean().optional(),
+    }),
+  },
+  "brain.inbox.list": {
+    params: z.object({ ...AgentsAuthFields }),
+    result: z.array(BrainInboxProposal),
+  },
+  "brain.inbox.approve": {
+    params: z.object({
+      id: z.string().min(1),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      id: z.string().min(1),
+      uri: BrainUri,
+      updatedAt: z.iso.datetime(),
+      created: z.boolean(),
+    }),
+  },
+  "brain.inbox.reject": {
+    params: z.object({
+      id: z.string().min(1),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      id: z.string().min(1),
+      ok: z.literal(true),
+    }),
   },
 } as const;
 

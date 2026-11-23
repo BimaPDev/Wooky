@@ -8,7 +8,9 @@ import {
   type ProviderKind,
 } from "@wooky/contracts";
 import { createEffectRunner } from "./effects/runner.ts";
-import { createAgentTokenService } from "./fleet/agent-token.ts";
+import { createBrainService } from "./brain/service.ts";
+import { createBrainStore } from "./brain/store.ts";
+import { createAgentTokenService, type AgentTokenService } from "./fleet/agent-token.ts";
 import { createFleetService } from "./fleet/service.ts";
 import { createGhClient, type GhClient } from "./git/gh.ts";
 import { createShipService } from "./git/ship.ts";
@@ -82,6 +84,8 @@ export interface ServerOptions {
   now?: () => number;
   /** Test seam. Production uses the socket's remote address. */
   remoteAddress?: (req: IncomingMessage) => string | undefined;
+  /** Test seam for issuing and verifying agent tokens against this server. */
+  agentTokens?: AgentTokenService;
   /** File sync around a claim. Defaults to the sync engine, bounded by `fileSyncTimeoutMs`. */
   transfer?: {
     syncNow?: import("./transfer/types.ts").SyncNow;
@@ -142,8 +146,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
+  const agentTokens = options.agentTokens ?? createAgentTokenService();
+  const brainStore = createBrainStore({
+    home: options.home,
+    resolveProjectRoot: (projectId) => store.model.projects[projectId]?.root ?? null,
+    clock: ctx.now,
+    log: (message) => console.error(message),
+  });
+  const brain = createBrainService({
+    home: options.home,
+    brainStore,
+    eventStore: store,
+    tokens: agentTokens,
+    clock: ctx.now,
+    log: (message) => console.error(message),
+  });
   const closeStore = () => {
     unwatchHeldNotices();
+    brain.close();
     store.close();
   };
   const git = options.git ?? createGitService();
@@ -252,7 +272,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   runner.recover();
   transfer.start();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
-  const agentTokens = createAgentTokenService();
   const fleet = createFleetService({ store, dispatcher, git, tokens: agentTokens });
   const ship = createShipService({ store, git, gh: options.gh ?? createGhClient() });
   const stopShipPolling = ship.startPolling();
@@ -289,6 +308,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       attachments: createAttachmentStore(options.home),
       transfer,
       remote,
+      brain,
     },
     new Set(options.allowedHosts ?? []),
     {

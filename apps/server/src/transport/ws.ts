@@ -32,6 +32,7 @@ import { runProjectScript } from "../scripts/run.ts";
 import { suggestSharedPaths } from "../scripts/shared-paths.ts";
 import type { TerminalManager, TerminalSubscriber } from "../terminal/session.ts";
 import type { ScratchService } from "../scratch.ts";
+import type { BrainService } from "../brain/service.ts";
 import type { FleetService } from "../fleet/service.ts";
 import type { ShipService } from "../git/ship.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -59,6 +60,7 @@ interface Services {
   attachments: AttachmentStore;
   transfer: TransferService;
   remote: RemoteRuntime;
+  brain: BrainService;
 }
 
 const MAX_AGENT_WAITS_PER_CONNECTION = 8;
@@ -126,6 +128,7 @@ function createHandlers(
     attachments,
     transfer,
     remote,
+    brain,
   }: Services,
   notifyThemes: (changedIds: string[]) => void,
   folderPicker: FolderPicker,
@@ -340,6 +343,16 @@ function createHandlers(
     "git.push": (params) => ship.push(params),
     "git.pr.create": (params) => ship.prCreate(params),
     "git.pr.status": (params) => ship.prStatus(params),
+    "brain.list": (params) => brain.list(params),
+    "brain.read": (params) => brain.read(params),
+    "brain.search": (params) => brain.search(params),
+    "brain.write": (params) => brain.write(params),
+    "brain.archive": (params) => brain.archive(params),
+    "brain.remove": (params) => brain.remove(params),
+    "brain.reindex": (params) => brain.reindex(params),
+    "brain.inbox.list": (params) => brain.inboxList(params),
+    "brain.inbox.approve": (params) => brain.inboxApprove(params),
+    "brain.inbox.reject": (params) => brain.inboxReject(params),
   };
 }
 

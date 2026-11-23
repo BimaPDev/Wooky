@@ -9,6 +9,7 @@ export const BRAIN_MAX_SEGMENTS = 6;
 export const BRAIN_SUMMARY_MAX = 200;
 export const BRAIN_BODY_MAX_BYTES = 16 * 1024;
 export const BRAIN_MAX_MEMORIES = 2000;
+export const BRAIN_INBOX_MAX = 200;
 
 const SEGMENT = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/;
@@ -224,3 +225,35 @@ export const BrainTreeNode = z.object({
   capped: z.boolean().optional(),
 });
 export type BrainTreeNode = z.infer<typeof BrainTreeNode>;
+
+/**
+ * Wire shape for `brain.write` frontmatter. Kept loose so unknown keys and overlong fields reach
+ * the secret scan before strict validation rejects them without echoing values.
+ */
+export const BrainWriteFrontmatter = z.looseObject({
+  summary: z.string(),
+  kind: BrainKind,
+  tags: z.array(z.string()).optional(),
+  status: BrainStatus.optional(),
+  pinned: z.boolean().optional(),
+  source: z
+    .looseObject({
+      threadId: z.string().optional(),
+      turnId: z.string().optional(),
+      fleetRunId: z.string().optional(),
+      agent: z.string().optional(),
+      at: z.string().optional(),
+    })
+    .optional(),
+});
+export type BrainWriteFrontmatter = z.infer<typeof BrainWriteFrontmatter>;
+
+/** A global memory proposed by an agent, waiting in `<WOOKY_HOME>/brain/inbox/` for approval. */
+export const BrainInboxProposal = z.object({
+  id: z.string().min(1),
+  targetUri: BrainUri,
+  frontmatter: MemoryFrontmatter,
+  body: z.string(),
+  createdAt: z.iso.datetime(),
+});
+export type BrainInboxProposal = z.infer<typeof BrainInboxProposal>;

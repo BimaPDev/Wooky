@@ -275,6 +275,10 @@ describe("wooky mcp", () => {
       "wooky_wait",
       "wooky_read",
       "wooky_interrupt",
+      "brain_ls",
+      "brain_read",
+      "brain_search",
+      "brain_write",
     ]);
     for (const entry of tools) expect(entry.inputSchema.type).toBe("object");
 
@@ -362,6 +366,9 @@ describe("wooky mcp", () => {
       "wooky_list_threads",
       "wooky_wait",
       "wooky_read",
+      "brain_ls",
+      "brain_read",
+      "brain_search",
     ]);
     for (const message of messages.slice(1)) {
       const result = resultOf(message);
