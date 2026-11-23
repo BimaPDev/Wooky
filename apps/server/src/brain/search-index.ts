@@ -194,7 +194,11 @@ export class BrainIndex {
       }
       this.db.exec("COMMIT");
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // The first failure is the one to report: a corrupt index is rebuilt because of it.
+      }
       throw error;
     }
     return report;

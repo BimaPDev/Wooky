@@ -139,6 +139,75 @@ describe("secret scan", () => {
     });
   });
 
+  describe("forms the first scan missed", () => {
+    const value = cat("Xq7mZ2pL9vR4tK8w", "Q3zB");
+
+    it.each([
+      ["YAML value on the next line", `password:\n  ${value}`],
+      ["YAML value indented deeper", `db:\n  secret:\n      ${value}\n`],
+      ["a key at the end of one line", `${"x".repeat(300)} token:\n${value}`],
+      [".env padded with many spaces", `API_TOKEN${" ".repeat(10)}=${" ".repeat(10)}${value}`],
+      ["a password with symbols", cat("password=", "Xq7m!Z2pL9@vR4tK")],
+      ["a symbol password in quotes", cat('PASSWORD: "', 'Xq7m#Z2pL9$vR4tK&w"')],
+    ])("flags %s", (_name, text) => {
+      expect(findSecret(text)?.name).toBe("credential assignment");
+    });
+
+    it("reports the line the key is on for a value on the next line", () => {
+      expect(findSecret(`one\ntwo\npassword:\n    ${value}`)).toEqual({
+        name: "credential assignment",
+        line: 3,
+      });
+    });
+
+    it.each([
+      cat("redis://:", "Xq7mZ2pL9vR4tK8w", "@cache.internal:6379"),
+      "redis://:pw@host",
+      cat("postgres://admin:", "Sup3rS3cretPassw0rd", "@localhost/app"),
+      cat("amqp://svc:", "Xq7mZ2pL9vR4tK8w", "@[::1]:5672"),
+    ])("flags the URL %s", (text) => {
+      expect(findSecret(text)).toEqual({ name: "URL with credentials", line: 1 });
+    });
+
+    it("does not join a key to a harmless next line", () => {
+      expect(findSecret("Rotate the password:\n  every ninety days, no exceptions")).toBeNull();
+      expect(findSecret("the secret\nis Xq7m")).toBeNull();
+    });
+  });
+
+  describe("placeholders and identifiers", () => {
+    it.each([
+      "postgres://postgres:postgres@localhost",
+      "postgres://postgres:postgres@localhost:5432/app",
+      "amqp://guest:guest@localhost",
+      "postgres://user:password@host",
+      "mysql://root:root@127.0.0.1",
+      "mysql://app:app@db.internal/x",
+      "redis://localhost:6379",
+      "redis://:secret@cache.internal:6379",
+      "https://admin:changeme@example.com/panel",
+      "postgres://u:test@host/db",
+      "postgres://u:pass@host/db",
+      "postgres://u:example@host/db",
+      "postgres://u:shortpw@[::1]:5432/db",
+      "postgres://u:shortpw@127.0.0.1/db",
+      "apiKeyHeaderName = 'XApiKeyHeaderName'",
+      "const apiKeyHeaderName = 'XApiKeyHeaderName';",
+      "apiKeyHeaderName: authorizationHeaderName",
+      "const apiKeyHeaderName = 'XApiKeyHeaderNameForTheClient';",
+      'apiKeyStorageName = "SecureStorageKeyIdentifier"',
+      "api_key_header = HeaderNameForApiKeyLookups",
+    ])("leaves %s alone", (text) => {
+      expect(findSecret(text)).toBeNull();
+    });
+
+    it("still flags a letters-only api key that is not an identifier", () => {
+      expect(findSecret(cat("api_key = ", "kXmQpLzWrTvBnYhGcDfJ"))?.name).toBe(
+        "API key assignment",
+      );
+    });
+  });
+
   describe("time", () => {
     const keywords = [
       "password",
@@ -166,7 +235,23 @@ describe("secret scan", () => {
       "hooks.slack.com/services/",
       "a://",
     ];
-    const separators = ["-", "_", " ", ":", "=", "a", "1", ".", "/", '"', "\t"];
+    const separators = [
+      "-",
+      "_",
+      " ",
+      ":",
+      "=",
+      "a",
+      "1",
+      ".",
+      "/",
+      '"',
+      "\t",
+      "\n",
+      ":\n  ",
+      " ".repeat(20),
+      `=${" ".repeat(16)}`,
+    ];
 
     it("finishes a worst-case 16 KB body well under 50 ms for every keyword and separator", () => {
       const slow: string[] = [];
@@ -174,7 +259,14 @@ describe("secret scan", () => {
         for (const separator of separators) {
           const unit = keyword + separator;
           const body = unit.repeat(Math.ceil(16384 / unit.length)).slice(0, 16384);
-          for (const text of [body, body.replace(/(.{80})/g, "$1\n")]) {
+          // Short lines and lines of the length the joined pass looks at, so it runs at its worst.
+          const texts = [
+            body,
+            body.replace(/(.{80})/g, "$1\n"),
+            body.replace(/(.{8})/g, "$1\n"),
+            body.replace(/(.{300})/g, "$1\n"),
+          ];
+          for (const text of texts) {
             const started = performance.now();
             findSecret(text);
             const took = performance.now() - started;

@@ -150,6 +150,41 @@ describe("hostile frontmatter in a file on disk", () => {
   });
 });
 
+describe("the guard around the store", () => {
+  const storeWith = (resolveProjectRoot: (id: string) => string | null) => {
+    const logs: string[] = [];
+    const store = createBrainStore({
+      home: dir("guard"),
+      resolveProjectRoot,
+      log: (m) => logs.push(m),
+    });
+    return { store, logs };
+  };
+
+  it("logs the stack of a bug (TypeError, RangeError) but still maps it to internal", () => {
+    for (const error of [new TypeError("boom"), new RangeError("range")]) {
+      const { store, logs } = storeWith(() => {
+        throw error;
+      });
+      expect(codeOf(() => store.list(a("")))).toBe("internal");
+      const text = logs.join("\n");
+      expect(text).toContain(`${error.name}: ${error.message}`);
+      expect(text).toMatch(/\n\s+at /);
+    }
+  });
+
+  it("keeps a filesystem error to its code, with no stack", () => {
+    const { store, logs } = storeWith(() => {
+      throw Object.assign(new Error("denied: /secret/path"), { code: "EACCES" });
+    });
+    expect(codeOf(() => store.list(a("")))).toBe("internal");
+    const text = logs.join("\n");
+    expect(text).toContain("EACCES");
+    expect(text).not.toMatch(/\n\s+at /);
+    expect(text).not.toContain("/secret/path");
+  });
+});
+
 describe("a project folder that overlaps Wooky's own data", () => {
   it("is refused when its brain is the global brain's folder (a project at dirname(home))", () => {
     const parent = dir("overlap");
@@ -247,6 +282,49 @@ describe("one scan budget per operation", () => {
     expect(logs.some((line) => /stopped reading|too large/.test(line))).toBe(true);
   });
 
+  it("keeps exact overview counts in a normal 1,921-memory brain", () => {
+    const { store, home } = setup();
+    const global = join(home, "brain", "global");
+    const overview = '---\nsummary: "x"\nkind: "note"\ntags: ["auto"]\n---\n\n# Overview\n';
+    const memory = '---\nsummary: "m"\nkind: "note"\n---\nx';
+    mkdirSync(global, { recursive: true });
+    writeFileSync(join(global, "_overview.md"), overview);
+    for (let a1 = 0; a1 < 6; a1 += 1) {
+      for (let b1 = 0; b1 < 5; b1 += 1) {
+        for (let c1 = 0; c1 < 4; c1 += 1) {
+          for (let d1 = 0; d1 < 4; d1 += 1) {
+            const leaf = join(global, `a${a1}`, `b${b1}`, `c${c1}`, `d${d1}`);
+            mkdirSync(leaf, { recursive: true });
+            writeFileSync(join(leaf, "_overview.md"), overview);
+            for (let m = 0; m < 4; m += 1) writeFileSync(join(leaf, `m${m}.md`), memory);
+          }
+          writeFileSync(join(global, `a${a1}`, `b${b1}`, `c${c1}`, "_overview.md"), overview);
+        }
+        writeFileSync(join(global, `a${a1}`, `b${b1}`, "_overview.md"), overview);
+      }
+      writeFileSync(join(global, `a${a1}`, "_overview.md"), overview);
+    }
+    store.write(g("a5/b4/c3/d3/new.md"), note("new"));
+    const root = readFileSync(join(global, "_overview.md"), "utf8");
+    expect(root).not.toContain("+");
+    for (let a1 = 0; a1 < 5; a1 += 1) expect(root).toContain(`\`a${a1}/\` — 320 memories`);
+    expect(root).toContain("`a5/` — 321 memories");
+    const a5 = readFileSync(join(global, "a5", "_overview.md"), "utf8");
+    expect(a5).toContain("`b4/` — 65 memories");
+    expect(a5).toContain("`b0/` — 64 memories");
+    expect(readFileSync(join(global, "a5/b4/c3/d3", "_overview.md"), "utf8")).toContain("`new.md`");
+  }, 60_000);
+
+  it("leaves an overview as it was when the walk behind its counts was cut short", () => {
+    const { store, brainA, logs } = wideTree(40, 150, "txt");
+    const before = readFileSync(join(brainA, "_overview.md"), "utf8");
+    store.write(a("new/note.md"), note("fresh"));
+    expect(readFileSync(join(brainA, "_overview.md"), "utf8")).toBe(before);
+    expect(before).not.toContain("+");
+    expect(logs.some((line) => /left the overviews as they were/.test(line))).toBe(true);
+    expect(logs.some((line) => /stopped reading/.test(line))).toBe(true);
+  });
+
   it("refuses a write past the memory cap", () => {
     const { store } = wideTree(40, 150, "md");
     expect(codeOf(() => store.write(a("new.md"), note("one too many")))).toBe("bad_request");
@@ -336,6 +414,42 @@ describe("secrets never come back in an error", () => {
     const error = failure(() => write(store, { summary: "s", kind: token }));
     expect(error?.message).toMatch(/the kind looks like it contains a credential/);
     expect(error?.message).not.toContain(token);
+  });
+
+  const quoted = ["password", '="', "Xq7mZ2pL9vR4tK8wQ3", '"'].join("");
+
+  it.each([
+    ["the summary", { summary: `db ${quoted}`, kind: "note" }],
+    ["a tag", { summary: "s", kind: "note", tags: [quoted] }],
+    ["source.agent", { summary: "s", kind: "note", source: { agent: quoted } }],
+    ["an unrecognized value", { summary: "s", kind: "note", extra: { deep: [quoted] } }],
+    ["an unrecognized key", { summary: "s", kind: "note", [`k ${quoted}`]: 1 }],
+  ])("finds a quoted credential in %s, where JSON escaping hid it", (_where, frontmatter) => {
+    const { store, home } = setup();
+    const error = failure(() => write(store, frontmatter));
+    expect((error as ServiceError).code).toBe("bad_request");
+    expect(error?.message).toMatch(/credential/);
+    expect(error?.message).not.toContain("Xq7mZ2pL9vR4tK8wQ3");
+    expect(existsSync(join(home, "brain", "global", "n.md"))).toBe(false);
+  });
+
+  it("rejects frontmatter over 8 KB before it scans it", () => {
+    const { store } = setup();
+    const error = failure(() =>
+      write(store, { summary: "s", kind: "note", extra: `${"a".repeat(9000)} ${token}` }),
+    );
+    expect((error as ServiceError).code).toBe("bad_request");
+    expect(error?.message).toMatch(/8192/);
+    expect(error?.message).not.toMatch(/credential/);
+    const plain = failure(() =>
+      write(store, { summary: "s", kind: "note", extra: "a".repeat(9000) }),
+    );
+    expect(plain?.message).toMatch(/8192/);
+    // Under the cap it is the ordinary validation that speaks, not the size check.
+    const under = failure(() =>
+      write(store, { summary: "s", kind: "note", extra: "a".repeat(100) }),
+    );
+    expect(under?.message).not.toMatch(/8192/);
   });
 
   it("scans the body before it validates the frontmatter", () => {

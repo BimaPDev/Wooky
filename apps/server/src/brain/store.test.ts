@@ -656,6 +656,26 @@ describe("reindexing", () => {
   });
 });
 
+describe("a damaged index under a running store", () => {
+  it("is rebuilt by reindex, as it is by search", () => {
+    const { store, home, logs } = setup();
+    store.write(g("n.md"), note("hello", "needle"));
+    store.reindex(GLOBAL);
+    const indexFile = join(home, "brain", "index.sqlite");
+    // Everything into the main file, then every page but the first damaged, under the open store.
+    const other = new DatabaseSync(indexFile);
+    other.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    other.close();
+    const damaged = readFileSync(indexFile);
+    damaged.fill(0xff, 4096);
+    writeFileSync(indexFile, damaged);
+    store.write(g("m.md"), note("second", "needle"));
+    expect(store.reindex(GLOBAL)).toMatchObject({ added: 2 });
+    expect(logs.some((line) => /rebuilding the search index/.test(line))).toBe(true);
+    expect(store.search("needle", { scopes: [GLOBAL], limit: 5 })).toHaveLength(2);
+  });
+});
+
 describe("overviews", () => {
   it("lists memories with their kind and folders with their count, up the tree", () => {
     const { store } = setup();

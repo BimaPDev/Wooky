@@ -164,11 +164,15 @@ repo, and the store treats it that way.
   and never follow them. A hostile brain therefore cannot make Wooky read or overwrite
   `~/.ssh/...` through a link. A race that swaps a path after the check is not defended
   against beyond `O_NOFOLLOW`; the attacker would need to be running code on the machine already.
-- **Bounded.** One operation gets one budget of 5000 directory entries, shared by everything it
-  walks: a listing and its folder counts, a write's memory-count check and the overviews it
-  refreshes (including every ancestor), a reindex. Directories are read entry by entry and reading
-  stops when the budget is gone. Walks go at most 6 levels deep. A folder count that was cut short
-  is marked `capped` in a listing and written as `5000+` in an overview.
+- **Bounded.** A walk reads at most 5000 directory entries, and reading stops when its budget is
+  gone. A `list` shares one budget between its listing and its folder counts. A write uses two,
+  each its own: one for the memory-count check, one for the walk that refreshes overviews, so
+  neither starves the other and a normal brain (2000 memories) gets exact counts. That refresh
+  walks the whole brain once and derives every ancestor's count from that single walk, so it
+  costs one tree, not one per level. If the walk is cut short its counts would be wrong, so the
+  overviews are left exactly as they were and the write still succeeds (it is logged). Walks go
+  at most 6 levels deep. In a `list` or an overview that is not stored yet, a folder count that
+  was cut short is marked `capped` (and shown as `N+`); a written `_overview.md` never says `N+`.
 - **Trust field.** Every result (`BrainEntry`, `BrainSearchHit`, `BrainTreeNode`) carries `trust`:
   `"user"` for global, `"repo"` for project. B3 uses it to fence repo content in prompts as data
   to consider, not instructions to follow. Frontmatter `summary` text is repo content too.
@@ -177,12 +181,18 @@ repo, and the store treats it that way.
   `github_pat_`), GitLab (`glpat-`), `sk-` and `sk-ant-` keys, Stripe (`sk_live_`, `rk_live_`,
   `sk_test_`), Google (`AIza…`), npm (`npm_…`), Hugging Face (`hf_…`), SendGrid (`SG.…`), Slack
   tokens (`xox?-`) and webhook URLs, PEM and PGP private keys, JWT-shaped tokens, URLs with
-  `user:password@`, `Authorization: Bearer …`, and
-  `password|passwd|secret|token|api_key|api key = <16+ character value>` (letters and digits with
-  high entropy; for an api key, letters alone are enough). The scan runs over every frontmatter key
-  and value as serialized, and the body, before the frontmatter is validated. The error names the
-  pattern and the line, never the value, and no error ever contains an unrecognized key or a
-  rejected value. The scan is a net for accidents, not
+  `user:password@` (or `:password@` with no user), `Authorization: Bearer …`, and
+  `password|passwd|secret|token|api_key|api key = <16+ character value>` (letters, digits and
+  common symbols with high entropy; for an api key, letters alone are enough unless the value is a
+  camelCase identifier such as `XApiKeyHeaderName`). Placeholders are not flagged: URL passwords
+  `password`, `pass`, `secret`, `changeme`, `guest`, `root`, `example`, `test` or equal to the user
+  name, and passwords that do not look random on `localhost`, `127.0.0.1` or `::1`. Up to 16
+  spaces may surround the `=` or `:`, and a value on the line after `password:` (YAML) is found.
+  Frontmatter over 8 KB serialized is refused with `bad_request` before it is scanned; below that,
+  every key and every string value is scanned as the writer spelled it (JSON escaping would hide a
+  quoted value) and as serialized. The body is scanned too, all before the frontmatter is
+  validated. The error names the pattern and the line, never the value, and no error ever
+  contains an unrecognized key or a rejected value. The scan is a net for accidents, not
   a guarantee: do not rely on it to make a hostile write safe.
 - **Capped.** Body, summary and count caps above.
 
@@ -190,20 +200,20 @@ repo, and the store treats it that way.
 
 What a hostile repo or a bad file cannot do to the store, and where the test is.
 
-| Defense                                                                                                                                      | Test                                    |
-| -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| Every secret pattern is linear: bounded repetitions, lookbehind anchors, lines scanned one at a time in windows of 4096                      | `safety.test.ts` (time)                 |
-| A project brain that overlaps the global brain's folder, or a project that is the data folder, is `forbidden`                                | `hardening.test.ts` (overlaps)          |
-| `read` never throws on file content: a bad `updatedAt` (year 10000, `+010000`, `-000001`) or mtime falls back; unknown frontmatter is a note | `frontmatter.test.ts`, fuzz             |
-| Nothing but a `ServiceError` leaves the store; logs name an error code, never a dump                                                         | `hardening.test.ts` (non-ServiceError)  |
-| One scan budget per operation, entries read until it runs out, truncation reported                                                           | `hardening.test.ts` (scan budget)       |
-| Case-insensitive filesystems: a path whose on-disk spelling differs is not found for reads and refused for writes                            | `hardening.test.ts` (letter case)       |
-| Project files with other hard links are not read, listed or indexed                                                                          | `hardening.test.ts` (hard links)        |
-| Secrets are scanned before validation and never echoed, including keys                                                                       | `hardening.test.ts`, `safety.test.ts`   |
-| A `WOOKY_HOME` that does not exist yet is resolved through its nearest existing ancestor, so a symlinked parent is fine                      | `hardening.test.ts` (symlink)           |
-| The index is deleted only when corrupt; lock waits and `BEGIN IMMEDIATE`; search errors are logged and surfaced                              | `search-index.test.ts`, `store.test.ts` |
-| A future mtime is hashed once, not on every search                                                                                           | `search-index.test.ts`                  |
-| Reads open with `O_NOFOLLOW` and `O_NONBLOCK`, and refuse anything that is not a regular file after `fstat`                                  | `hardening.test.ts` (pipe)              |
+| Defense                                                                                                                                       | Test                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Every secret pattern is linear: bounded repetitions, lookbehind anchors, lines scanned in windows of 4096 plus a bounded line-pair pass       | `safety.test.ts` (time)                 |
+| A project brain that overlaps the global brain's folder, or a project that is the data folder, is `forbidden`                                 | `hardening.test.ts` (overlaps)          |
+| `read` never throws on file content: a bad `updatedAt` (year 10000, `+010000`, `-000001`) or mtime falls back; unknown frontmatter is a note  | `frontmatter.test.ts`, fuzz             |
+| Nothing but a `ServiceError` leaves the store; logs name an error code, never a dump, and add the stack only for a bug (not fs or SQLite)     | `hardening.test.ts` (guard)             |
+| Scan budgets: memory count and overview refresh each get their own; one walk gives every ancestor's count; a cut-short walk leaves overviews  | `hardening.test.ts` (scan budget)       |
+| Case-insensitive filesystems: a path whose on-disk spelling differs is not found for reads and refused for writes                             | `hardening.test.ts` (letter case)       |
+| Project files with other hard links are not read, listed or indexed                                                                           | `hardening.test.ts` (hard links)        |
+| Secrets are scanned before validation and never echoed, including keys                                                                        | `hardening.test.ts`, `safety.test.ts`   |
+| A `WOOKY_HOME` that does not exist yet is resolved through its nearest existing ancestor, so a symlinked parent is fine                       | `hardening.test.ts` (symlink)           |
+| The index is deleted only when corrupt (in `search` and `reindex`); a failed ROLLBACK keeps the original error; lock waits, `BEGIN IMMEDIATE` | `search-index.test.ts`, `store.test.ts` |
+| A future mtime is hashed once, not on every search                                                                                            | `search-index.test.ts`                  |
+| Reads open with `O_NOFOLLOW` and `O_NONBLOCK`, and refuse anything that is not a regular file after `fstat`                                   | `hardening.test.ts` (pipe)              |
 
 ## Code map (B1)
 

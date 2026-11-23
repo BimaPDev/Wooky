@@ -25,6 +25,35 @@ const hasMixedCaseAndDigit = (value: string) =>
   /[a-z]/.test(value) && /[A-Z]/.test(value) && /[0-9]/.test(value);
 
 const PLACEHOLDER_PASSWORD = /^(?:[$<{%]|\*+$|x+$|\.+$)/i;
+/** Passwords people put in examples and local dev setups, compared in lowercase. */
+const PLACEHOLDER_WORDS = new Set([
+  "password",
+  "pass",
+  "secret",
+  "changeme",
+  "guest",
+  "root",
+  "example",
+  "test",
+]);
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/** `localhost:5432` -> `localhost`; `[::1]:5432` -> `::1`. */
+function hostName(authority: string): string {
+  const lower = authority.toLowerCase();
+  if (lower.startsWith("[")) {
+    const end = lower.indexOf("]");
+    return end === -1 ? lower : lower.slice(1, end);
+  }
+  const colon = lower.indexOf(":");
+  return colon === -1 ? lower : lower.slice(0, colon);
+}
+
+const looksRandom = (value: string) =>
+  value.length >= 16 && hasLetterAndDigit(value) && entropy(value) >= 3.5;
+
+/** `XApiKeyHeaderName`, `apiKeyHeaderName`: two or more capitalised words, code and not a key. */
+const CAMEL_CASE_IDENTIFIER = /^(?:[a-z]+|[A-Z]+)?(?:[A-Z][a-z]{2,}){2,}$/;
 
 /*
  * A scan runs on attacker-influenced text, so no pattern may backtrack badly. The rules here:
@@ -63,8 +92,17 @@ const SECRET_PATTERNS: SecretPattern[] = [
   {
     name: "URL with credentials",
     pattern:
-      /(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,15}:\/\/[^\s:@/?#]{1,64}:([^\s@/?#]{1,128})@[^\s/?#]{1,255}/gi,
-    accept: (match) => !PLACEHOLDER_PASSWORD.test(match[1] ?? ""),
+      /(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,15}:\/\/([^\s:@/?#]{0,64}):([^\s@/?#]{1,128})@([^\s/?#]{1,255})/gi,
+    accept: (match) => {
+      const user = (match[1] ?? "").toLowerCase();
+      const password = match[2] ?? "";
+      const lower = password.toLowerCase();
+      if (PLACEHOLDER_PASSWORD.test(password)) return false;
+      if (PLACEHOLDER_WORDS.has(lower) || lower === user) return false;
+      // A password to a local service is a dev default unless it looks like a real secret.
+      if (LOCAL_HOSTS.has(hostName(match[3] ?? "")) && !looksRandom(password)) return false;
+      return true;
+    },
   },
   {
     name: "bearer token",
@@ -78,7 +116,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   {
     name: "credential assignment",
     pattern:
-      /(?:password|passwd|secret|token|api[_ -]?key)[A-Za-z0-9_-]{0,32}["']?\s{0,4}[:=]\s{0,4}["']?([A-Za-z0-9+/_=.-]{16,256})/gi,
+      /(?:password|passwd|secret|token|api[_ -]?key)[A-Za-z0-9_-]{0,32}["']?\s{0,16}[:=]\s{0,16}["']?([A-Za-z0-9+/_=.!@#$%^&*~-]{16,256})/gi,
     accept: (match) => {
       const value = match[1] ?? "";
       return hasLetterAndDigit(value) && entropy(value) >= 3.5;
@@ -87,8 +125,11 @@ const SECRET_PATTERNS: SecretPattern[] = [
   {
     name: "API key assignment",
     pattern:
-      /api[_ -]?key[A-Za-z0-9_-]{0,32}["']?\s{0,4}[:=]\s{0,4}["']?([A-Za-z]{16,256})(?![A-Za-z0-9+/_=.-])/gi,
-    accept: (match) => entropy(match[1] ?? "") >= 3.5,
+      /api[_ -]?key[A-Za-z0-9_-]{0,32}["']?\s{0,16}[:=]\s{0,16}["']?([A-Za-z]{16,256})(?![A-Za-z0-9+/_=.-])/gi,
+    accept: (match) => {
+      const value = match[1] ?? "";
+      return entropy(value) >= 3.5 && !CAMEL_CASE_IDENTIFIER.test(value);
+    },
   },
   {
     name: "AWS secret key",
@@ -113,19 +154,39 @@ function* windows(line: string): Generator<string> {
   }
 }
 
+/**
+ * A key at the end of one line and its value at the start of the next (`password:\n  <value>`).
+ * Only this much of each line is joined, so the text a pattern sees stays small.
+ */
+const JOIN_TAIL = 128;
+const JOIN_HEAD = 320;
+
+/** `startsBefore`: ignore a match that starts at or after this offset (it belongs to a later line). */
+function firstMatch(piece: string, startsBefore = Number.POSITIVE_INFINITY): string | null {
+  for (const { name, pattern, accept } of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(piece)) !== null && match.index < startsBefore) {
+      if (match[0] === "") pattern.lastIndex += 1;
+      else if (accept === undefined || accept(match)) return name;
+    }
+  }
+  return null;
+}
+
 /** Name of the first credential-shaped pattern in the text, or null. Never returns the match. */
 export function findSecret(text: string): { name: string; line: number } | null {
   const lines = text.split("\n");
   for (const [index, line] of lines.entries()) {
     for (const piece of windows(line)) {
-      for (const { name, pattern, accept } of SECRET_PATTERNS) {
-        pattern.lastIndex = 0;
-        let match: RegExpExecArray | null;
-        while ((match = pattern.exec(piece)) !== null) {
-          if (match[0] === "") pattern.lastIndex += 1;
-          else if (accept === undefined || accept(match)) return { name, line: index + 1 };
-        }
-      }
+      const name = firstMatch(piece);
+      if (name !== null) return { name, line: index + 1 };
+    }
+    const next = lines[index + 1];
+    if (next !== undefined && line.length > 0 && next.length > 0) {
+      const tail = line.slice(-JOIN_TAIL);
+      const name = firstMatch(`${tail}\n${next.slice(0, JOIN_HEAD)}`, tail.length);
+      if (name !== null) return { name, line: index + 1 };
     }
   }
   return null;
@@ -149,5 +210,62 @@ export function assertBodySize(body: string): void {
       "bad_request",
       `Body is ${bytes} bytes; the limit is ${BRAIN_BODY_MAX_BYTES}. Split it into smaller memories.`,
     );
+  }
+}
+
+/** Serialized frontmatter is a few short fields; anything bigger is not scanned, just refused. */
+export const FRONTMATTER_MAX_BYTES = 8 * 1024;
+const WRITABLE_FIELD_NAMES = new Set(["summary", "kind", "tags", "status", "pinned", "source"]);
+const MAX_LEAVES = 2000;
+const MAX_DEPTH = 8;
+
+/** Every object key and string value below a frontmatter value, as the writer spelled them. */
+function* rawStrings(value: unknown): Generator<string> {
+  const pending: { value: unknown; depth: number }[] = [{ value, depth: 0 }];
+  let seen = 0;
+  while (pending.length > 0 && seen < MAX_LEAVES) {
+    const { value: node, depth } = pending.pop() ?? { value: null, depth: 0 };
+    seen += 1;
+    if (typeof node === "string") yield node;
+    else if (typeof node === "object" && node !== null && depth < MAX_DEPTH) {
+      const children = Array.isArray(node) ? node : Object.entries(node);
+      for (const child of children) {
+        if (Array.isArray(node)) pending.push({ value: child, depth: depth + 1 });
+        else {
+          const [key, inner] = child as [string, unknown];
+          yield key;
+          pending.push({ value: inner, depth: depth + 1 });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Refuses oversized frontmatter, then scans every key and value a writer sent. Each is scanned
+ * as written (JSON escaping turns `"` into `\"` and hides what a quoted value looks like) and as
+ * serialized. The error names a known field, or just "frontmatter", never an unrecognized key.
+ */
+export function assertFrontmatterHasNoSecret(input: unknown): void {
+  if (typeof input !== "object" || input === null) return;
+  let whole: string | undefined;
+  try {
+    whole = JSON.stringify(input);
+  } catch {
+    throw new ServiceError("bad_request", "frontmatter: a value cannot be serialized");
+  }
+  const bytes = Buffer.byteLength(whole ?? "", "utf8");
+  if (bytes > FRONTMATTER_MAX_BYTES) {
+    throw new ServiceError(
+      "bad_request",
+      `Frontmatter is ${bytes} bytes; the limit is ${FRONTMATTER_MAX_BYTES}. Shorten it.`,
+    );
+  }
+  for (const [key, value] of Object.entries(input)) {
+    const label = WRITABLE_FIELD_NAMES.has(key) ? key : "frontmatter";
+    assertNoSecret(key, label);
+    assertNoSecret(`${key}: ${JSON.stringify(value) ?? ""}`, label);
+    if (typeof value === "string") assertNoSecret(`${key}: ${value}`, label);
+    for (const text of rawStrings(value)) assertNoSecret(text, label);
   }
 }

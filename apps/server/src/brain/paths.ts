@@ -32,9 +32,10 @@ const MAX_SCAN_ENTRIES = 5000;
 export type BrainLog = (message: string) => void;
 
 /**
- * Directory entries one operation may read in total. A list, a write (its memory count and the
- * overviews it refreshes) or a reindex makes one budget and hands it to every walk, so a hostile
- * tree costs at most this much however many folders it has.
+ * Directory entries one walk, or one group of walks that must stay bounded together, may read.
+ * A list makes one and shares it with its folder counts; a write gives its memory-count check
+ * and its overview refresh one each; a reindex has one. A hostile tree costs at most this much
+ * per budget however many folders it has.
  */
 export interface ScanBudget {
   remaining: number;
@@ -45,6 +46,17 @@ export interface ScanBudget {
 
 export function createScanBudget(limit: number = MAX_SCAN_ENTRIES): ScanBudget {
   return { remaining: limit, used: 0, truncated: false };
+}
+
+export interface ScanResult {
+  files: ScannedFile[];
+  /** True when the walk stopped early: the budget ran out or `maxFiles` was reached. */
+  truncated: boolean;
+  /**
+   * Every folder the walk reached, keyed by its path below the brain root (`""` is the root),
+   * with the number of memories under it. Meaningful only when the walk was not truncated.
+   */
+  folders: Map<string, number>;
 }
 
 export interface ChildList {
@@ -340,14 +352,16 @@ export class BrainRoot {
   /**
    * Every memory file under a folder (default: the whole root), sorted by path. Overviews, odd
    * names and hard-linked files are left out. `truncated` is true when the walk stopped early:
-   * the budget ran out or `maxFiles` was reached.
+   * the budget ran out or `maxFiles` was reached. `folders` holds each folder's memory count,
+   * so one walk answers for every folder in the subtree.
    */
   scan(
     under: readonly string[] = [],
     budget: ScanBudget = createScanBudget(),
     maxFiles: number = Number.POSITIVE_INFINITY,
-  ): { files: ScannedFile[]; truncated: boolean } {
+  ): ScanResult {
     const files: ScannedFile[] = [];
+    const folders = new Map<string, number>([[under.join("/"), 0]]);
     let truncated = false;
     const visit = (dir: readonly string[]): void => {
       if (budget.remaining <= 0) {
@@ -366,7 +380,9 @@ export class BrainRoot {
         if (entry.name === BRAIN_OVERVIEW_FILE || !isBrainSegment(entry.name)) continue;
         const next = [...dir, entry.name];
         if (entry.isDir) {
-          if (!entry.name.endsWith(".md") && next.length < BRAIN_MAX_SEGMENTS) visit(next);
+          if (entry.name.endsWith(".md")) continue;
+          folders.set(next.join("/"), 0);
+          if (next.length < BRAIN_MAX_SEGMENTS) visit(next);
         } else if (entry.name.endsWith(".md")) {
           const stat = lstatSync(this.absolute(next));
           if (!stat.isFile()) continue;
@@ -379,12 +395,16 @@ export class BrainRoot {
             continue;
           }
           files.push({ path: next.join("/"), mtimeMs: stat.mtimeMs, size: stat.size });
+          for (let depth = under.length; depth < next.length; depth += 1) {
+            const key = next.slice(0, depth).join("/");
+            folders.set(key, (folders.get(key) ?? 0) + 1);
+          }
         }
       }
     };
     visit(under);
     files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-    return { files, truncated };
+    return { files, truncated, folders };
   }
 }
 

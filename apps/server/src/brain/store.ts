@@ -33,7 +33,7 @@ import {
   type BrainRoot,
   type ScanBudget,
 } from "./paths.ts";
-import { assertBodySize, assertNoSecret } from "./safety.ts";
+import { assertBodySize, assertFrontmatterHasNoSecret, assertNoSecret } from "./safety.ts";
 import {
   briefDatabaseError,
   isBusyDatabase,
@@ -112,7 +112,7 @@ interface Target {
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-/** "12 memories", or "5000+ memories" when the count stopped at the scan budget. */
+/** "12 memories", or "12+ memories" when a listing's count stopped at its scan budget. */
 const pluralCapped = (count: number, capped: boolean, one: string, many: string) =>
   `${count}${capped ? "+" : ""} ${count === 1 && !capped ? one : many}`;
 
@@ -123,6 +123,13 @@ function brief(error: unknown): string {
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === "string") return code;
   return error instanceof Error ? error.name : "unknown error";
+}
+
+/** Failures the store knows how to describe from a code alone: Zod, filesystem and SQLite. */
+function isExpectedFailure(error: unknown): boolean {
+  if (error instanceof ZodError) return true;
+  const { code, errcode } = (error ?? {}) as { code?: unknown; errcode?: unknown };
+  return typeof code === "string" || typeof errcode === "number";
 }
 
 export function createBrainStore(options: BrainStoreOptions): BrainStore {
@@ -138,7 +145,10 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     } catch (error) {
       if (error instanceof ServiceError) throw error;
       const detail = isBusyDatabase(error) ? briefDatabaseError(error) : brief(error);
-      log(`brain: ${operation} failed (${detail})`);
+      // A filesystem or SQLite error is understood from its code. Anything else is a bug, and
+      // a bug with no stack cannot be found.
+      const stack = isExpectedFailure(error) || !(error instanceof Error) ? "" : `\n${error.stack}`;
+      log(`brain: ${operation} failed (${detail})${stack}`);
       throw new ServiceError(
         isBusyDatabase(error) ? "unavailable" : "internal",
         isBusyDatabase(error)
@@ -203,8 +213,17 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     };
   }
 
-  /** The deterministic L1 of a folder: each memory's summary and kind, each subfolder and its count. */
-  function buildOverview(root: BrainRoot, segments: readonly string[], budget: ScanBudget) {
+  /**
+   * The deterministic L1 of a folder: each memory's summary and kind, each subfolder and its
+   * count. `budget` bounds the folder's own listing; `folderCount` says how many memories a
+   * subfolder holds.
+   */
+  function buildOverview(
+    root: BrainRoot,
+    segments: readonly string[],
+    budget: ScanBudget,
+    folderCount: (name: string) => { count: number; capped: boolean },
+  ) {
     const memories: { name: string; summary: string; kind: string }[] = [];
     const folders: { name: string; count: number; capped: boolean }[] = [];
     const listing = root.children(segments, budget);
@@ -212,12 +231,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       if (child.name === BRAIN_OVERVIEW_FILE || !isBrainSegment(child.name)) continue;
       if (child.isDir) {
         if (child.name.endsWith(".md")) continue;
-        if (budget.remaining <= 0) {
-          folders.push({ name: child.name, count: 0, capped: true });
-        } else {
-          const walked = root.scan([...segments, child.name], budget);
-          folders.push({ name: child.name, count: walked.files.length, capped: walked.truncated });
-        }
+        folders.push({ name: child.name, ...folderCount(child.name) });
       } else if (child.name.endsWith(".md")) {
         try {
           const found = readMemory(root, [...segments, child.name]);
@@ -268,19 +282,35 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
    * Rewrites the `_overview.md` of a folder and of every folder above it, since their counts
    * changed too. An overview without the `auto` tag was written by a person or a model and is
    * left alone. The memory change already happened, so a failure here is logged, not thrown.
+   *
+   * The counts of every level come from one walk of the whole brain (the subtree under the
+   * topmost folder being refreshed), so a refresh costs one tree, not one per level. If that walk
+   * was cut short its counts are wrong, so every overview is left as it was.
    */
-  function regenerateOverviews(
-    root: BrainRoot,
-    folder: readonly string[],
-    budget: ScanBudget,
-  ): void {
+  function regenerateOverviews(root: BrainRoot, folder: readonly string[]): void {
+    let counts: Map<string, number>;
+    try {
+      const walked = root.scan([], createScanBudget());
+      if (walked.truncated) {
+        log("brain: left the overviews as they were (too many entries to count the memories)");
+        return;
+      }
+      counts = walked.folders;
+    } catch (error) {
+      log(`brain: could not count memories for the overviews (${brief(error)})`);
+      return;
+    }
+    const listings = createScanBudget();
     for (let depth = folder.length; depth >= 0; depth -= 1) {
       const segments = folder.slice(0, depth);
       try {
         if (root.inspect(segments) === null) continue;
         const existing = readMemory(root, [...segments, BRAIN_OVERVIEW_FILE]);
         if (existing !== null && !existing.parsed.frontmatter.tags.includes(AUTO_TAG)) continue;
-        const built = buildOverview(root, segments, budget);
+        const built = buildOverview(root, segments, listings, (name) => ({
+          count: counts.get([...segments, name].join("/")) ?? 0,
+          capped: false,
+        }));
         if (built.incomplete) {
           log(`brain: left the overview of /${segments.join("/")} as it was (folder too large)`);
           continue;
@@ -330,7 +360,13 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     }
     const stored = readMemory(found.root, [...found.segments, BRAIN_OVERVIEW_FILE]);
     if (stored !== null) return entry(found, "overview", tier, stored.parsed);
-    const built = buildOverview(found.root, found.segments, createScanBudget());
+    // Not stored yet: count each subfolder with one budget shared by the listing and its walks.
+    const budget = createScanBudget();
+    const built = buildOverview(found.root, found.segments, budget, (name) => {
+      if (budget.remaining <= 0) return { count: 0, capped: true };
+      const walked = found.root.scan([...found.segments, name], budget);
+      return { count: walked.files.length, capped: walked.truncated };
+    });
     return entry(found, "overview", tier, {
       frontmatter: overviewFrontmatter(built.summary),
       body: built.body,
@@ -342,12 +378,11 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     frontmatter: MemoryFrontmatter,
     body: string,
     created: boolean,
-    budget: ScanBudget,
   ): BrainWriteResult {
     const name = found.segments.at(-1) ?? "";
     const folder = found.segments.slice(0, -1);
     found.root.writeAtomic(folder, name, serializeMemory(frontmatter, body));
-    regenerateOverviews(found.root, folder, budget);
+    regenerateOverviews(found.root, folder);
     return {
       uri: formatBrainUri(found.scope, found.path),
       updatedAt: frontmatter.updatedAt,
@@ -385,6 +420,20 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
         return null;
       }
     };
+  }
+
+  /** The index is only a cache: a damaged one is rebuilt from the files, once. */
+  function withIndexRecovery<T>(run: () => T): T {
+    try {
+      return run();
+    } catch (error) {
+      if (!isCorruptDatabase(error)) throw error;
+      log(`brain: rebuilding the search index (${briefDatabaseError(error)})`);
+      index?.close();
+      index = null;
+      resetBrainIndexFiles(indexFile);
+      return run();
+    }
   }
 
   function syncScope(scope: BrainScope, root: BrainRoot): SyncReport {
@@ -491,23 +540,18 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
             : `${uri} changed since ${expected} (now ${current}). Read it again and retry.`,
         );
       }
-      const budget = createScanBudget();
+      // Its own budget: the overview refresh below walks the tree again with a fresh one.
       if (
         existing === null &&
-        found.root.scan([], budget, BRAIN_MAX_MEMORIES).files.length >= BRAIN_MAX_MEMORIES
+        found.root.scan([], createScanBudget(), BRAIN_MAX_MEMORIES).files.length >=
+          BRAIN_MAX_MEMORIES
       ) {
         throw new ServiceError(
           "bad_request",
           `This brain already holds ${BRAIN_MAX_MEMORIES} memories. Archive or remove some first.`,
         );
       }
-      return commit(
-        found,
-        { ...frontmatter, updatedAt: stamp(current) },
-        body,
-        existing === null,
-        budget,
-      );
+      return commit(found, { ...frontmatter, updatedAt: stamp(current) }, body, existing === null);
     },
 
     archive(uri) {
@@ -523,7 +567,6 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
         { ...frontmatter, status: "archived", updatedAt: stamp(frontmatter.updatedAt) },
         body,
         false,
-        createScanBudget(),
       );
     },
 
@@ -532,7 +575,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       if (!found.root.unlink(found.segments)) {
         throw new ServiceError("not_found", `No such memory: ${uri}`);
       }
-      regenerateOverviews(found.root, found.segments.slice(0, -1), createScanBudget());
+      regenerateOverviews(found.root, found.segments.slice(0, -1));
     },
 
     search(query, searchOptions) {
@@ -568,19 +611,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
         });
         return { hits, scopes };
       };
-      let outcome: ReturnType<typeof run>;
-      try {
-        outcome = run();
-      } catch (error) {
-        if (!isCorruptDatabase(error)) throw error;
-        // The index is only a cache: a damaged one is rebuilt from the files, once.
-        log(`brain: rebuilding the search index (${briefDatabaseError(error)})`);
-        index?.close();
-        index = null;
-        resetBrainIndexFiles(indexFile);
-        outcome = run();
-      }
-      const { hits, scopes } = outcome;
+      const { hits, scopes } = withIndexRecovery(run);
       return hits.flatMap((hit) => {
         const scope = scopes.get(hit.scopeKey);
         if (scope === undefined) return [];
@@ -604,7 +635,9 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     overview: (dirUri) => overview(dirUri, 1),
 
     reindex(scope) {
-      return syncScope(scope, openRoot(options.home, scope, options.resolveProjectRoot, log));
+      return withIndexRecovery(() =>
+        syncScope(scope, openRoot(options.home, scope, options.resolveProjectRoot, log)),
+      );
     },
 
     close() {
@@ -624,23 +657,4 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     reindex: (scope) => guard("reindex", () => raw.reindex(scope)),
     close: () => raw.close(),
   };
-}
-
-const WRITABLE_FIELD_NAMES = new Set(["summary", "kind", "tags", "status", "pinned", "source"]);
-
-/**
- * Scans every frontmatter key and value a writer sent, as it would be serialized. The error
- * names a known field, or just "frontmatter", never an unrecognized key.
- */
-function assertFrontmatterHasNoSecret(input: unknown): void {
-  if (typeof input !== "object" || input === null) return;
-  for (const [key, value] of Object.entries(input)) {
-    let json: string | undefined;
-    try {
-      json = JSON.stringify(value);
-    } catch {
-      throw new ServiceError("bad_request", "frontmatter: a value cannot be serialized");
-    }
-    assertNoSecret(`${key}: ${json ?? ""}`, WRITABLE_FIELD_NAMES.has(key) ? key : "frontmatter");
-  }
 }

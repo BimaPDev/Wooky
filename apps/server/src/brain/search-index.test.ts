@@ -126,6 +126,35 @@ describe("a locked or damaged index", () => {
     index.close();
   });
 
+  it("rethrows the original error when ROLLBACK fails too, so a corrupt index is still rebuilt", () => {
+    const index = openBrainIndex(indexFile());
+    const real = (index as unknown as { db: DatabaseSync }).db;
+    const corrupt = Object.assign(new Error("database disk image is malformed"), { errcode: 11 });
+    const rollbackFailure = Object.assign(new Error("cannot rollback"), { errcode: 1 });
+    (index as unknown as { db: DatabaseSync }).db = new Proxy(real, {
+      get(target, property) {
+        if (property === "exec") {
+          return (sql: string) => {
+            if (sql === "ROLLBACK") throw rollbackFailure;
+            return target.exec(sql);
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const error = errorOf(() =>
+      index.sync("global", [{ path: "a.md", mtimeMs: 1, size: 1 }], () => {
+        throw corrupt;
+      }),
+    );
+    expect(error).toBe(corrupt);
+    expect(isCorruptDatabase(error)).toBe(true);
+    (index as unknown as { db: DatabaseSync }).db = real;
+    real.exec("ROLLBACK");
+    index.close();
+  });
+
   it("throws, and keeps what is there, when the index cannot be opened for another reason", () => {
     const file = indexFile();
     mkdirSync(file, { recursive: true });
