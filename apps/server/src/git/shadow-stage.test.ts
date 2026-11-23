@@ -1,9 +1,9 @@
 import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { utimes, writeFile } from "node:fs/promises";
+import { stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { tempDir } from "../testing.ts";
-import { createShadowGit, type ShadowRepo } from "./shadow.ts";
+import { createShadowGit, INDEX_CLOCK_MARGIN_MS, type ShadowRepo } from "./shadow.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -53,6 +53,15 @@ describe("stage after a restart", () => {
     const root = await dir("stage-root");
     await writeFile(join(root, "a.txt"), "a\n");
     await writeFile(join(root, "b.txt"), "b\n");
+    // Files touched within the index clock margin of the first scan are re-hashed once by design,
+    // and ctime cannot be set, so let the files age past it first.
+    await vi.waitFor(
+      async () => {
+        const { ctimeMs } = await stat(join(root, "b.txt"));
+        expect(Date.now() - ctimeMs).toBeGreaterThan(INDEX_CLOCK_MARGIN_MS + 50);
+      },
+      { interval: 10, timeout: 5000 },
+    );
     const repo = { gitDir: join(home, "p.git"), workTree: root };
     const first = createShadowGit({ home });
     await first.ensure(repo);

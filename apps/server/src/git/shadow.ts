@@ -282,7 +282,7 @@ export interface ScanResult {
 }
 
 /** File clocks are coarse (up to ~16 ms on Windows); date the index this much before the scan began. */
-const INDEX_CLOCK_MARGIN_MS = 50;
+export const INDEX_CLOCK_MARGIN_MS = 50;
 
 /** The ctime (ns) inside a scan stamp (`mtime:ctime:size:mode:ino`), or null if it has none. */
 function ctimeOfStamp(stamp: string | undefined): bigint | null {
