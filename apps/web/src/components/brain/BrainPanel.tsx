@@ -10,14 +10,16 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   brainErrorMessage,
+  BrainInboxSavedRejectFailedError,
   createBrainClient,
   isBrainErrorCode,
   type BrainClient,
   type BrainInboxEditOverrides,
   type BrainInboxProposal,
 } from "../../brain/client.ts";
-import { parentFolderUri } from "../../brain/validation.ts";
+import { ancestorFolderUris, parentFolderUri } from "../../brain/validation.ts";
 import { useStore } from "../../state/store.ts";
+import { isPhone } from "../anywhere/phone/phone.tsx";
 import { IconPlus } from "../Icons.tsx";
 import { BrainDetail, type BrainConflictState } from "./BrainDetail.tsx";
 import { IconBrain, IconInbox } from "./BrainIcons.tsx";
@@ -71,6 +73,10 @@ export function BrainPanel({
   const [mode, setMode] = useState<"view" | "edit" | "create">("view");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [createExistsUri, setCreateExistsUri] = useState<{
+    uri: string;
+    scope: BrainScope;
+  } | null>(null);
   const [conflict, setConflict] = useState<BrainConflictState | null>(null);
   const [mobilePane, setMobilePane] = useState<"list" | "detail">("list");
   const [reindexing, setReindexing] = useState(false);
@@ -78,11 +84,44 @@ export function BrainPanel({
   const [inboxProposals, setInboxProposals] = useState<BrainInboxProposal[]>([]);
   const [inboxLoading, setInboxLoading] = useState(false);
   const [inboxError, setInboxError] = useState<string | null>(null);
+  const [savedProposalIds, setSavedProposalIds] = useState<Set<string>>(() => new Set());
 
   const readSeqRef = useRef(0);
   const searchSeqRef = useRef(0);
+  const navTokenRef = useRef(0);
+  const nodesByDirRef = useRef(nodesByDir);
+  const expandedUrisRef = useRef(expandedUris);
+  const includeArchivedRef = useRef(includeArchived);
+  const inboxProposalsRef = useRef(inboxProposals);
+  const pendingFocusRef = useRef<"edit" | "tree" | "new" | null>(null);
+  const newMemoryBtnRef = useRef<HTMLButtonElement | null>(null);
+  const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const editButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  const rootUri = formatBrainUri(activeScope);
+  const activeProjectRemoved =
+    activeScope.kind === "project" &&
+    !projects.some((project) => project.id === activeScope.projectId);
+  const effectiveScope: BrainScope = useMemo(
+    () => (activeProjectRemoved ? { kind: "global" } : activeScope),
+    [activeProjectRemoved, activeScope],
+  );
+  const effectiveSelectedUri = activeProjectRemoved ? null : selectedUri;
+  const effectiveEntry = activeProjectRemoved ? null : entry;
+  const effectiveMode = activeProjectRemoved && mode === "edit" ? "view" : mode;
+
+  const rootUri = formatBrainUri(effectiveScope);
+  const rootUriRef = useRef(rootUri);
+  const scopeArchivedRef = useRef<Record<string, boolean>>({});
+
+  // sync: keep imperative refs aligned with committed state for async write/refresh handlers
+  useEffect(() => {
+    nodesByDirRef.current = nodesByDir;
+    expandedUrisRef.current = expandedUris;
+    includeArchivedRef.current = includeArchived;
+    inboxProposalsRef.current = inboxProposals;
+    rootUriRef.current = rootUri;
+    scopeArchivedRef.current[rootUri] = includeArchived;
+  }, [nodesByDir, expandedUris, includeArchived, inboxProposals, rootUri]);
 
   const loadDirectory = useCallback(
     async (dirUri: string, archived: boolean) => {
@@ -111,6 +150,7 @@ export function BrainPanel({
     setInboxError(null);
     try {
       const proposals = await client.listInbox();
+      inboxProposalsRef.current = proposals;
       setInboxProposals(proposals);
       useStore.setState({ brainInboxCount: proposals.length });
     } catch (error) {
@@ -173,6 +213,7 @@ export function BrainPanel({
     void client.listInbox().then(
       (proposals) => {
         if (cancelled) return;
+        inboxProposalsRef.current = proposals;
         setInboxProposals(proposals);
         setInboxError(null);
         useStore.setState({ brainInboxCount: proposals.length });
@@ -186,6 +227,28 @@ export function BrainPanel({
       cancelled = true;
     };
   }, [client]);
+
+  // sync: move DOM focus to the next control after form save, cancel, or memory removal
+  useEffect(() => {
+    if (effectiveMode !== "view" || busy) return;
+    const target = pendingFocusRef.current;
+    if (!target) return;
+    pendingFocusRef.current = null;
+    if (target === "edit" && editButtonRef.current) {
+      editButtonRef.current.focus();
+      return;
+    }
+    if (target === "tree") {
+      const row =
+        treeScrollRef.current?.querySelector<HTMLButtonElement>('.brain-tree-row[tabindex="0"]') ??
+        treeScrollRef.current?.querySelector<HTMLButtonElement>(".brain-tree-row");
+      if (row) {
+        row.focus();
+        return;
+      }
+    }
+    newMemoryBtnRef.current?.focus();
+  }, [effectiveMode, busy]);
 
   const runSearch = useCallback(
     async (query: string) => {
@@ -204,7 +267,7 @@ export function BrainPanel({
             { kind: "global" },
             ...projects.map((p) => ({ kind: "project" as const, projectId: p.id })),
           ]
-        : [activeScope];
+        : [effectiveScope];
       try {
         const hits = await client.search({
           query: trimmed,
@@ -221,7 +284,7 @@ export function BrainPanel({
         if (seq === searchSeqRef.current) setSearchLoading(false);
       }
     },
-    [client, searchAllScopes, projects, activeScope, includeArchived],
+    [client, searchAllScopes, projects, effectiveScope, includeArchived],
   );
 
   const handleSearchQueryChange = (nextQuery: string) => {
@@ -276,7 +339,14 @@ export function BrainPanel({
     [client],
   );
 
+  const bumpNav = () => {
+    navTokenRef.current += 1;
+    setBusy(false);
+    setCreateExistsUri(null);
+  };
+
   const openNode = (uri: string, isMemory: boolean, initialTier: BrainTier) => {
+    bumpNav();
     if (uri !== selectedUri) setEntry(null);
     setSelectedUri(uri);
     setSelectedTier(initialTier);
@@ -285,11 +355,24 @@ export function BrainPanel({
     void readEntry(uri, initialTier, isMemory);
   };
 
-  const refreshParentOf = async (uri: string) => {
-    const parent = parentFolderUri(uri);
-    if (parent) await loadDirectory(parent, includeArchived);
-    if (parent !== rootUri) await loadDirectory(rootUri, includeArchived);
-  };
+  const refreshAncestorsOf = useCallback(
+    async (uri: string) => {
+      const ancestors = ancestorFolderUris(uri);
+      if (ancestors.length === 0) return;
+      const targets = ancestors.filter(
+        (dirUri) =>
+          Object.hasOwn(nodesByDirRef.current, dirUri) ||
+          expandedUrisRef.current.has(dirUri) ||
+          dirUri === rootUriRef.current,
+      );
+      const nextNodes = { ...nodesByDirRef.current };
+      for (const dirUri of ancestors) delete nextNodes[dirUri];
+      nodesByDirRef.current = nextNodes;
+      setNodesByDir(nextNodes);
+      await Promise.all(targets.map((dirUri) => loadDirectory(dirUri, includeArchivedRef.current)));
+    },
+    [loadDirectory],
+  );
 
   const handleToggleFolder = (node: BrainTreeNode) => {
     setExpandedUris((prev) => {
@@ -302,6 +385,7 @@ export function BrainPanel({
       }
       return next;
     });
+    if (isPhone()) return;
     openNode(node.uri, false, 1);
   };
 
@@ -325,6 +409,27 @@ export function BrainPanel({
   };
 
   const handleSelectScope = (scope: BrainScope) => {
+    bumpNav();
+    readSeqRef.current += 1;
+    const nextRoot = formatBrainUri(scope);
+    const archived = includeArchivedRef.current;
+    if (
+      Object.hasOwn(scopeArchivedRef.current, nextRoot) &&
+      scopeArchivedRef.current[nextRoot] !== archived
+    ) {
+      const nextNodes: Record<string, BrainTreeNode[]> = {};
+      for (const [k, v] of Object.entries(nodesByDirRef.current)) {
+        if (!k.startsWith(nextRoot)) nextNodes[k] = v;
+      }
+      nodesByDirRef.current = nextNodes;
+      setNodesByDir(nextNodes);
+      for (const dirUri of expandedUrisRef.current) {
+        if (dirUri.startsWith(nextRoot) && dirUri !== nextRoot) {
+          void loadDirectory(dirUri, archived);
+        }
+      }
+    }
+    scopeArchivedRef.current[nextRoot] = archived;
     setActiveScope(scope);
     setSelectedUri(null);
     setEntry(null);
@@ -332,6 +437,30 @@ export function BrainPanel({
     setActionError(null);
     setConflict(null);
     setMode("view");
+  };
+
+  const handleToggleIncludeArchived = () => {
+    const nextArchived = !includeArchived;
+    setIncludeArchived(nextArchived);
+    scopeArchivedRef.current[rootUri] = nextArchived;
+    const nextNodes: Record<string, BrainTreeNode[]> = {};
+    for (const [k, v] of Object.entries(nodesByDirRef.current)) {
+      if (!k.startsWith(rootUri)) nextNodes[k] = v;
+    }
+    nodesByDirRef.current = nextNodes;
+    setNodesByDir(nextNodes);
+    setErrorByDir((prev) => {
+      const next: Record<string, string | null> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (!k.startsWith(rootUri)) next[k] = v;
+      }
+      return next;
+    });
+    for (const dirUri of expandedUrisRef.current) {
+      if (dirUri.startsWith(rootUri) && dirUri !== rootUri) {
+        void loadDirectory(dirUri, nextArchived);
+      }
+    }
   };
 
   const handleSelectSearchHit = (hit: BrainSearchHit) => {
@@ -350,7 +479,13 @@ export function BrainPanel({
     uri: string,
     input: { frontmatter: MemoryFrontmatterInput; body: string },
     expectedUpdatedAt?: string,
+    sourceTier: BrainTier = 2,
+    navToken = navTokenRef.current,
   ) => {
+    if (sourceTier < 2) {
+      setActionError("Load full memory (L2) before updating.");
+      return;
+    }
     setBusy(true);
     setActionError(null);
     setConflict(null);
@@ -361,13 +496,16 @@ export function BrainPanel({
         body: input.body,
         ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}),
       });
+      setPinnedUris((prev) => ({ ...prev, [uri]: input.frontmatter.pinned === true }));
+      await refreshAncestorsOf(uri);
+      if (navToken !== navTokenRef.current) return;
+      pendingFocusRef.current = "edit";
       setMode("view");
       setSelectedUri(uri);
       setSelectedTier(2);
-      setPinnedUris((prev) => ({ ...prev, [uri]: input.frontmatter.pinned === true }));
       await readEntry(uri, 2, true);
-      await refreshParentOf(uri);
     } catch (error) {
+      if (navToken !== navTokenRef.current) return;
       if (isBrainErrorCode(error, "conflict")) {
         const message = brainErrorMessage(
           error,
@@ -375,20 +513,127 @@ export function BrainPanel({
         );
         try {
           const latest = await client.read({ uri, tier: 2 });
-          setConflict({ message, latest, missing: false });
+          if (navToken !== navTokenRef.current) return;
+          setConflict({ uri, message, latest, missing: false, readError: null });
         } catch (readErr) {
+          if (navToken !== navTokenRef.current) return;
+          const missing = isBrainErrorCode(readErr, "not_found");
           setConflict({
+            uri,
             message,
             latest: null,
-            missing: isBrainErrorCode(readErr, "not_found"),
+            missing,
+            readError: missing
+              ? null
+              : brainErrorMessage(readErr, "Could not load the latest version."),
           });
         }
       } else {
         setActionError(brainErrorMessage(error, "Could not save memory."));
       }
     } finally {
-      setBusy(false);
+      if (navToken === navTokenRef.current) setBusy(false);
     }
+  };
+
+  const handleRetryConflictRead = async () => {
+    if (!conflict) return;
+    const navToken = navTokenRef.current;
+    setBusy(true);
+    try {
+      const latest = await client.read({ uri: conflict.uri, tier: 2 });
+      if (navToken !== navTokenRef.current) return;
+      setConflict({
+        uri: conflict.uri,
+        message: conflict.message,
+        latest,
+        missing: false,
+        readError: null,
+      });
+    } catch (readErr) {
+      if (navToken !== navTokenRef.current) return;
+      const missing = isBrainErrorCode(readErr, "not_found");
+      setConflict({
+        uri: conflict.uri,
+        message: conflict.message,
+        latest: null,
+        missing,
+        readError: missing
+          ? null
+          : brainErrorMessage(readErr, "Could not load the latest version."),
+      });
+    } finally {
+      if (navToken === navTokenRef.current) setBusy(false);
+    }
+  };
+
+  const handleRecreateFromConflict = async (
+    uri: string,
+    input: { frontmatter: MemoryFrontmatterInput; body: string },
+  ) => {
+    const navToken = navTokenRef.current;
+    setBusy(true);
+    setActionError(null);
+    try {
+      // Guard recreate the same way as create: re-check disk so we never send expectedUpdatedAt: undefined over an existing memory.
+      // TODO(B2): Replace with create-only mode in `brain.write`.
+      let existing: BrainEntry | null = null;
+      try {
+        existing = await client.read({ uri, tier: 2 });
+      } catch (readErr) {
+        if (navToken !== navTokenRef.current) return;
+        if (!isBrainErrorCode(readErr, "not_found")) {
+          setConflict({
+            uri,
+            message: conflict?.message ?? "Conflict while saving memory.",
+            latest: null,
+            missing: false,
+            readError: brainErrorMessage(readErr, "Could not verify whether memory exists."),
+          });
+          return;
+        }
+      }
+      if (navToken !== navTokenRef.current) return;
+      if (existing) {
+        setConflict({
+          uri,
+          message: "This memory now exists on disk. Reload or overwrite with the latest version.",
+          latest: existing,
+          missing: false,
+          readError: null,
+        });
+        return;
+      }
+      await client.write({
+        uri,
+        frontmatter: input.frontmatter,
+        body: input.body,
+      });
+      setPinnedUris((prev) => ({ ...prev, [uri]: input.frontmatter.pinned === true }));
+      await refreshAncestorsOf(uri);
+      if (navToken !== navTokenRef.current) return;
+      pendingFocusRef.current = "edit";
+      setConflict(null);
+      setMode("view");
+      setSelectedUri(uri);
+      setSelectedTier(2);
+      await readEntry(uri, 2, true);
+    } catch (error) {
+      if (navToken !== navTokenRef.current) return;
+      setActionError(brainErrorMessage(error, "Could not recreate memory."));
+    } finally {
+      if (navToken === navTokenRef.current) setBusy(false);
+    }
+  };
+
+  const resolveTier2Memory = async (current: BrainEntry): Promise<BrainEntry | null> => {
+    if (current.type !== "memory") return null;
+    if (current.tier >= 2) return current;
+    const loaded = await client.read({ uri: current.uri, tier: 2 });
+    if (loaded.type !== "memory" || loaded.tier < 2) {
+      throw new Error("Load full memory (L2) before editing or updating.");
+    }
+    return loaded;
   };
 
   const handleCreate = async (input: {
@@ -397,10 +642,33 @@ export function BrainPanel({
     frontmatter: MemoryFrontmatterInput;
     body: string;
   }) => {
+    const navToken = navTokenRef.current;
     const uri = formatBrainUri(input.scope, input.path);
     setBusy(true);
     setActionError(null);
+    setCreateExistsUri(null);
     try {
+      // TODO(B2): Replace this read-before-write check with a create-only mode in `brain.write`
+      // so creation is atomic on the server without a TOCTOU window.
+      let exists = false;
+      try {
+        await client.read({ uri, tier: 0 });
+        exists = true;
+      } catch (readErr) {
+        if (navToken !== navTokenRef.current) return;
+        if (!isBrainErrorCode(readErr, "not_found")) {
+          setActionError(
+            brainErrorMessage(readErr, "Could not verify whether that memory already exists."),
+          );
+          return;
+        }
+      }
+      if (navToken !== navTokenRef.current) return;
+      if (exists) {
+        setCreateExistsUri({ uri, scope: input.scope });
+        setActionError("That memory already exists; open it and edit it instead");
+        return;
+      }
       await client.write({
         uri,
         frontmatter: input.frontmatter,
@@ -410,81 +678,145 @@ export function BrainPanel({
         const { projectId } = input.scope;
         setProjectHasBrain((prev) => ({ ...prev, [projectId]: true }));
       }
+      setPinnedUris((prev) => ({ ...prev, [uri]: input.frontmatter.pinned === true }));
+      await refreshAncestorsOf(uri);
+      if (navToken !== navTokenRef.current) return;
+      pendingFocusRef.current = "edit";
       setActiveScope(input.scope);
       setMode("view");
       setSelectedUri(uri);
       setSelectedTier(2);
-      setPinnedUris((prev) => ({ ...prev, [uri]: input.frontmatter.pinned === true }));
       await readEntry(uri, 2, true);
-      await loadDirectory(formatBrainUri(input.scope), includeArchived);
-      const parent = parentFolderUri(uri);
-      if (parent && parent !== formatBrainUri(input.scope)) {
-        await loadDirectory(parent, includeArchived);
-      }
     } catch (error) {
+      if (navToken !== navTokenRef.current) return;
       setActionError(brainErrorMessage(error, "Could not create memory."));
     } finally {
-      setBusy(false);
+      if (navToken === navTokenRef.current) setBusy(false);
     }
+  };
+
+  const handleStartEdit = async () => {
+    if (!entry || entry.type !== "memory") return;
+    const navToken = navTokenRef.current;
+    setActionError(null);
+    setConflict(null);
+    if (entry.tier < 2) {
+      setBusy(true);
+      try {
+        const loaded = await resolveTier2Memory(entry);
+        if (navToken !== navTokenRef.current || !loaded) return;
+        setEntry(loaded);
+        setSelectedTier(2);
+      } catch (error) {
+        if (navToken !== navTokenRef.current) return;
+        setActionError(brainErrorMessage(error, "Could not load full memory for editing."));
+        return;
+      } finally {
+        if (navToken === navTokenRef.current) setBusy(false);
+      }
+    }
+    if (navToken !== navTokenRef.current) return;
+    setMode("edit");
   };
 
   const handleTogglePin = async () => {
     if (!entry || entry.type !== "memory") return;
-    const { updatedAt, ...rest } = entry.frontmatter;
+    const navToken = navTokenRef.current;
+    let target = entry;
+    if (target.tier < 2) {
+      setBusy(true);
+      setActionError(null);
+      try {
+        const loaded = await resolveTier2Memory(target);
+        if (navToken !== navTokenRef.current || !loaded) return;
+        target = loaded;
+        setEntry(loaded);
+      } catch (error) {
+        if (navToken !== navTokenRef.current) return;
+        setActionError(brainErrorMessage(error, "Could not load full memory before pinning."));
+        setBusy(false);
+        return;
+      }
+    }
+    const { updatedAt, ...rest } = target.frontmatter;
     await writeAndHandleConflict(
-      entry.uri,
+      target.uri,
       {
-        frontmatter: { ...rest, pinned: !entry.frontmatter.pinned },
-        body: entry.body,
+        frontmatter: { ...rest, pinned: !target.frontmatter.pinned },
+        body: target.body,
       },
       updatedAt,
+      target.tier,
+      navToken,
     );
   };
 
   const handleArchive = async () => {
     if (!entry || entry.type !== "memory") return;
+    const navToken = navTokenRef.current;
+    const uri = entry.uri;
+    const tier = selectedTier;
     setBusy(true);
     setActionError(null);
     try {
-      await client.archive({ uri: entry.uri });
-      await readEntry(entry.uri, selectedTier, true);
-      await refreshParentOf(entry.uri);
+      await client.archive({ uri });
+      await refreshAncestorsOf(uri);
+      if (navToken !== navTokenRef.current) return;
+      await readEntry(uri, tier, true);
     } catch (error) {
+      if (navToken !== navTokenRef.current) return;
       setActionError(brainErrorMessage(error, "Could not archive memory."));
     } finally {
-      setBusy(false);
+      if (navToken === navTokenRef.current) setBusy(false);
     }
   };
 
   const handleUnarchive = async () => {
     if (!entry || entry.type !== "memory") return;
-    const { updatedAt, ...rest } = entry.frontmatter;
+    const navToken = navTokenRef.current;
+    let target = entry;
+    if (target.tier < 2) {
+      setBusy(true);
+      setActionError(null);
+      try {
+        const loaded = await resolveTier2Memory(target);
+        if (navToken !== navTokenRef.current || !loaded) return;
+        target = loaded;
+        setEntry(loaded);
+      } catch (error) {
+        if (navToken !== navTokenRef.current) return;
+        setActionError(brainErrorMessage(error, "Could not load full memory before restoring."));
+        setBusy(false);
+        return;
+      }
+    }
+    const { updatedAt, ...rest } = target.frontmatter;
     await writeAndHandleConflict(
-      entry.uri,
+      target.uri,
       {
         frontmatter: { ...rest, status: "active" },
-        body: entry.body,
+        body: target.body,
       },
       updatedAt,
+      target.tier,
+      navToken,
     );
   };
 
   const handleRemove = async (): Promise<boolean> => {
     if (!entry || entry.type !== "memory") return false;
+    const navToken = navTokenRef.current;
     const uri = entry.uri;
+    const scope = entry.scope;
     setBusy(true);
     setActionError(null);
     try {
       await client.remove({ uri });
-      setEntry(null);
-      setSelectedUri(null);
-      setMode("view");
-      setMobilePane("list");
-      await refreshParentOf(uri);
-      if (entry.scope.kind === "project") {
-        const { projectId } = entry.scope;
+      await refreshAncestorsOf(uri);
+      if (scope.kind === "project") {
+        const { projectId } = scope;
         const remaining = await client.list({
-          uri: formatBrainUri(entry.scope),
+          uri: formatBrainUri(scope),
           includeArchived: true,
         });
         setProjectHasBrain((prev) => ({
@@ -492,12 +824,19 @@ export function BrainPanel({
           [projectId]: remaining.length > 0,
         }));
       }
+      if (navToken !== navTokenRef.current) return false;
+      pendingFocusRef.current = "tree";
+      setEntry(null);
+      setSelectedUri(null);
+      setMode("view");
+      setMobilePane("list");
       return true;
     } catch (error) {
+      if (navToken !== navTokenRef.current) return false;
       setActionError(brainErrorMessage(error, "Could not remove memory."));
       return false;
     } finally {
-      setBusy(false);
+      if (navToken === navTokenRef.current) setBusy(false);
     }
   };
 
@@ -515,20 +854,41 @@ export function BrainPanel({
     }
   };
 
+  const handleCheckInboxTarget = async (uri: string): Promise<BrainEntry | null> => {
+    try {
+      return await client.read({ uri, tier: 0 });
+    } catch (error) {
+      if (isBrainErrorCode(error, "not_found")) return null;
+      throw error;
+    }
+  };
+
   const handleApproveInbox = async (
     id: string,
     edits?: BrainInboxEditOverrides,
   ): Promise<string | null> => {
+    const proposalUri =
+      edits?.targetUri ??
+      inboxProposals.find((item) => item.id === id)?.targetUri ??
+      formatBrainUri({ kind: "global" });
     try {
       await client.approveInbox(id, edits);
-      setInboxProposals((prev) => {
-        const next = prev.filter((item) => item.id !== id);
-        useStore.setState({ brainInboxCount: next.length });
-        return next;
-      });
-      await loadDirectory(formatBrainUri({ kind: "global" }), includeArchived);
+      const next = inboxProposalsRef.current.filter((item) => item.id !== id);
+      inboxProposalsRef.current = next;
+      setInboxProposals(next);
+      useStore.setState({ brainInboxCount: next.length });
+      await refreshAncestorsOf(proposalUri);
       return null;
     } catch (error) {
+      if (error instanceof BrainInboxSavedRejectFailedError) {
+        setSavedProposalIds((prev) => {
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
+        await refreshAncestorsOf(proposalUri);
+        return error.message;
+      }
       return brainErrorMessage(error, "Could not approve proposal.");
     }
   };
@@ -536,11 +896,16 @@ export function BrainPanel({
   const handleRejectInbox = async (id: string): Promise<string | null> => {
     try {
       await client.rejectInbox(id);
-      setInboxProposals((prev) => {
-        const next = prev.filter((item) => item.id !== id);
-        useStore.setState({ brainInboxCount: next.length });
+      setSavedProposalIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
         return next;
       });
+      const next = inboxProposalsRef.current.filter((item) => item.id !== id);
+      inboxProposalsRef.current = next;
+      setInboxProposals(next);
+      useStore.setState({ brainInboxCount: next.length });
       return null;
     } catch (error) {
       return brainErrorMessage(error, "Could not reject proposal.");
@@ -583,9 +948,11 @@ export function BrainPanel({
         </div>
         {tab === "browse" ? (
           <button
+            ref={newMemoryBtnRef}
             type="button"
             className="button primary"
             onClick={() => {
+              bumpNav();
               setMode("create");
               setActionError(null);
               setConflict(null);
@@ -604,6 +971,8 @@ export function BrainPanel({
           loading={inboxLoading}
           error={inboxError}
           threads={threadsMap}
+          savedProposalIds={savedProposalIds}
+          onCheckTarget={handleCheckInboxTarget}
           onRetry={() => void loadInbox()}
           onApprove={handleApproveInbox}
           onReject={handleRejectInbox}
@@ -611,7 +980,7 @@ export function BrainPanel({
       ) : (
         <div className={`brain-workspace mobile-${mobilePane}`}>
           <BrainTree
-            activeScope={activeScope}
+            activeScope={effectiveScope}
             projects={projects}
             projectHasBrain={projectHasBrain}
             onSelectScope={handleSelectScope}
@@ -621,7 +990,7 @@ export function BrainPanel({
             searchAllScopes={searchAllScopes}
             onToggleSearchAllScopes={() => setSearchAllScopes((prev) => !prev)}
             includeArchived={includeArchived}
-            onToggleIncludeArchived={() => setIncludeArchived((prev) => !prev)}
+            onToggleIncludeArchived={handleToggleIncludeArchived}
             searchResults={searchResults}
             searchLoading={searchLoading}
             searchError={searchError}
@@ -630,7 +999,7 @@ export function BrainPanel({
             loadingDirs={loadingDirs}
             errorByDir={errorByDir}
             expandedUris={expandedUris}
-            selectedUri={selectedUri}
+            selectedUri={effectiveSelectedUri}
             pinnedUris={pinnedUris}
             reindexing={reindexing}
             onReindex={() => void handleReindex()}
@@ -640,41 +1009,60 @@ export function BrainPanel({
             onCollapseFolder={handleCollapseFolder}
             onSelectNode={(node) => openNode(node.uri, true, 2)}
             onSelectSearchHit={handleSelectSearchHit}
+            treeScrollRef={treeScrollRef}
           />
           <BrainDetail
-            mode={mode}
-            activeScope={activeScope}
+            mode={effectiveMode}
+            activeScope={effectiveScope}
             projects={projects}
-            entry={entry}
-            selectedIsMemory={selectedUri?.endsWith(".md") ?? false}
+            entry={effectiveEntry}
+            selectedIsMemory={effectiveSelectedUri?.endsWith(".md") ?? false}
             tier={selectedTier}
             loading={entryLoading}
             error={entryError}
             busy={busy}
             actionError={actionError}
+            existingCreateUri={createExistsUri?.uri ?? null}
             conflict={conflict}
             onBackToList={() => setMobilePane("list")}
             onChangeTier={handleChangeTier}
-            onStartEdit={() => {
-              setMode("edit");
-              setActionError(null);
-              setConflict(null);
-            }}
+            onStartEdit={() => void handleStartEdit()}
             onCancelForm={() => {
+              bumpNav();
+              pendingFocusRef.current = effectiveEntry ? "edit" : "tree";
               setMode("view");
               setActionError(null);
               setConflict(null);
-              if (!entry) setMobilePane("list");
+              if (!effectiveEntry) setMobilePane("list");
             }}
+            editButtonRef={editButtonRef}
             onTogglePin={() => void handleTogglePin()}
             onArchive={() => void handleArchive()}
             onUnarchive={() => void handleUnarchive()}
             onRemove={handleRemove}
             onSaveEdit={(input) => {
               if (!entry) return;
-              void writeAndHandleConflict(entry.uri, input, entry.frontmatter.updatedAt);
+              void writeAndHandleConflict(
+                entry.uri,
+                input,
+                entry.frontmatter.updatedAt,
+                entry.tier,
+              );
             }}
             onCreate={(input) => void handleCreate(input)}
+            onOpenExistingFromCreate={() => {
+              if (!createExistsUri) return;
+              const target = createExistsUri;
+              setCreateExistsUri(null);
+              setActiveScope(target.scope);
+              openNode(target.uri, true, 2);
+            }}
+            onClearCreateExists={() => {
+              if (createExistsUri) {
+                setCreateExistsUri(null);
+                setActionError(null);
+              }
+            }}
             onResolveConflictReload={() => {
               const latest = conflict?.latest;
               if (!latest) return;
@@ -687,9 +1075,19 @@ export function BrainPanel({
               setMode("view");
             }}
             onResolveConflictOverwrite={(input) => {
-              if (!entry || !conflict) return;
-              void writeAndHandleConflict(entry.uri, input, conflict.latest?.frontmatter.updatedAt);
+              if (!entry || !conflict?.latest) return;
+              void writeAndHandleConflict(
+                entry.uri,
+                input,
+                conflict.latest.frontmatter.updatedAt,
+                conflict.latest.tier,
+              );
             }}
+            onResolveConflictRecreate={(input) => {
+              if (!entry || !conflict?.missing) return;
+              void handleRecreateFromConflict(entry.uri, input);
+            }}
+            onRetryConflictRead={() => void handleRetryConflictRead()}
             onDismissConflict={() => setConflict(null)}
           />
         </div>

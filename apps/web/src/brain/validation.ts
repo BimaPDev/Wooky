@@ -161,6 +161,22 @@ export function parentFolderUri(uri: string): string | null {
   return formatBrainUri(parsed.scope, folderPath);
 }
 
+/** Returns every ancestor folder URI of `uri` from scope root down to its direct parent. */
+export function ancestorFolderUris(uri: string): string[] {
+  const parsed = parseBrainUri(uri);
+  if (!parsed) return [];
+  const root = formatBrainUri(parsed.scope);
+  if (parsed.segments.length === 0) return [root];
+  const out = [root];
+  const folderCount = parsed.path.endsWith(".md")
+    ? parsed.segments.length - 1
+    : parsed.segments.length;
+  for (let i = 1; i <= folderCount; i++) {
+    out.push(formatBrainUri(parsed.scope, parsed.segments.slice(0, i).join("/")));
+  }
+  return out;
+}
+
 export function formatBrainTime(iso?: string): string {
   if (!iso) return "";
   const ms = Date.parse(iso);

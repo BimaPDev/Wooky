@@ -11,7 +11,7 @@ import {
   type MemoryFrontmatterInput,
   type Project,
 } from "@wooky/contracts";
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 import {
   BRAIN_KINDS,
   brainKindLabel,
@@ -26,9 +26,11 @@ import { Markdown } from "../Markdown.tsx";
 import { BrainKindIcon, IconArchive, IconPin } from "./BrainIcons.tsx";
 
 export interface BrainConflictState {
+  uri: string;
   message: string;
   latest: BrainEntry | null;
   missing: boolean;
+  readError: string | null;
 }
 
 export interface BrainDetailProps {
@@ -42,6 +44,7 @@ export interface BrainDetailProps {
   error: string | null;
   busy: boolean;
   actionError: string | null;
+  existingCreateUri: string | null;
   conflict: BrainConflictState | null;
   onBackToList: () => void;
   onChangeTier: (tier: BrainTier) => void;
@@ -58,12 +61,17 @@ export interface BrainDetailProps {
     frontmatter: MemoryFrontmatterInput;
     body: string;
   }) => void;
+  onOpenExistingFromCreate: () => void;
+  onClearCreateExists: () => void;
   onResolveConflictReload: () => void;
   onResolveConflictOverwrite: (input: {
     frontmatter: MemoryFrontmatterInput;
     body: string;
   }) => void;
+  onResolveConflictRecreate: (input: { frontmatter: MemoryFrontmatterInput; body: string }) => void;
+  onRetryConflictRead: () => void;
   onDismissConflict: () => void;
+  editButtonRef?: RefObject<HTMLButtonElement | null>;
 }
 
 export function BrainDetail({
@@ -77,6 +85,7 @@ export function BrainDetail({
   error,
   busy,
   actionError,
+  existingCreateUri,
   conflict,
   onBackToList,
   onChangeTier,
@@ -88,9 +97,14 @@ export function BrainDetail({
   onRemove,
   onSaveEdit,
   onCreate,
+  onOpenExistingFromCreate,
+  onClearCreateExists,
   onResolveConflictReload,
   onResolveConflictOverwrite,
+  onResolveConflictRecreate,
+  onRetryConflictRead,
   onDismissConflict,
+  editButtonRef,
 }: BrainDetailProps) {
   const [confirmingUri, setConfirmingUri] = useState<string | null>(null);
   const confirmingRemove = mode === "view" && entry !== null && confirmingUri === entry.uri;
@@ -105,10 +119,13 @@ export function BrainDetail({
           projects={projects}
           busy={busy}
           serverError={actionError}
+          existingCreateUri={existingCreateUri}
           conflict={null}
           onBackToList={onBackToList}
           onCancel={onCancelForm}
           onSubmitCreate={onCreate}
+          onOpenExistingFromCreate={onOpenExistingFromCreate}
+          onClearCreateExists={onClearCreateExists}
         />
       </div>
     );
@@ -153,6 +170,19 @@ export function BrainDetail({
   }
 
   if (mode === "edit") {
+    if (entry.tier < 2) {
+      return (
+        <div className="brain-detail-col">
+          <div className="brain-detail-mobile-bar">
+            <button type="button" className="ghost-button" onClick={onBackToList}>
+              <IconChevronLeft />
+              <span>Back</span>
+            </button>
+          </div>
+          <p className="brain-status-msg">Loading full memory…</p>
+        </div>
+      );
+    }
     return (
       <div className="brain-detail-col">
         <MemoryForm
@@ -169,6 +199,8 @@ export function BrainDetail({
           onSubmitEdit={onSaveEdit}
           onResolveConflictReload={onResolveConflictReload}
           onResolveConflictOverwrite={onResolveConflictOverwrite}
+          onResolveConflictRecreate={onResolveConflictRecreate}
+          onRetryConflictRead={onRetryConflictRead}
           onDismissConflict={onDismissConflict}
         />
       </div>
@@ -221,7 +253,14 @@ export function BrainDetail({
           </div>
           {isMemory ? (
             <div className="brain-memory-actions">
-              <button type="button" className="button" disabled={busy} onClick={onStartEdit}>
+              <button
+                ref={editButtonRef}
+                type="button"
+                className="button"
+                disabled={busy || tier < 2}
+                title={tier < 2 ? "Switch to L2 to edit" : undefined}
+                onClick={onStartEdit}
+              >
                 <IconEdit />
                 <span>Edit</span>
               </button>
@@ -229,19 +268,32 @@ export function BrainDetail({
                 type="button"
                 className={isPinned ? "button pressed" : "button"}
                 aria-pressed={isPinned}
-                disabled={busy}
+                disabled={busy || tier < 2}
+                title={tier < 2 ? "Switch to L2 to pin or unpin" : undefined}
                 onClick={onTogglePin}
               >
                 <IconPin filled={isPinned} />
                 <span>{isPinned ? "Unpin" : "Pin"}</span>
               </button>
               {isArchived ? (
-                <button type="button" className="button" disabled={busy} onClick={onUnarchive}>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy || tier < 2}
+                  title={tier < 2 ? "Switch to L2 to restore" : undefined}
+                  onClick={onUnarchive}
+                >
                   <IconArchive />
                   <span>Restore</span>
                 </button>
               ) : (
-                <button type="button" className="button" disabled={busy} onClick={onArchive}>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy || tier < 2}
+                  title={tier < 2 ? "Switch to L2 to archive" : undefined}
+                  onClick={onArchive}
+                >
                   <IconArchive />
                   <span>Archive</span>
                 </button>
@@ -263,6 +315,42 @@ export function BrainDetail({
       {actionError ? (
         <div className="brain-error-box" role="alert">
           <p>{actionError}</p>
+        </div>
+      ) : null}
+
+      {conflict ? (
+        <div className="brain-conflict-box brain-detail-conflict" role="alert">
+          <p className="brain-conflict-title">Update conflict</p>
+          <p>{conflict.message}</p>
+          {conflict.missing ? (
+            <p className="brain-conflict-meta">This memory was deleted on disk.</p>
+          ) : conflict.readError ? (
+            <p className="brain-conflict-meta">{conflict.readError}</p>
+          ) : null}
+          <div className="brain-conflict-actions">
+            {conflict.latest ? (
+              <button
+                type="button"
+                className="button primary"
+                disabled={busy}
+                onClick={onResolveConflictReload}
+              >
+                Reload
+              </button>
+            ) : !conflict.missing ? (
+              <button
+                type="button"
+                className="button primary"
+                disabled={busy}
+                onClick={onRetryConflictRead}
+              >
+                Retry
+              </button>
+            ) : null}
+            <button type="button" className="ghost-button" onClick={onDismissConflict}>
+              Dismiss
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -350,13 +438,18 @@ function MemoryForm({
   projects,
   busy,
   serverError,
+  existingCreateUri,
   conflict,
   onBackToList,
   onCancel,
   onSubmitCreate,
   onSubmitEdit,
+  onOpenExistingFromCreate,
+  onClearCreateExists,
   onResolveConflictReload,
   onResolveConflictOverwrite,
+  onResolveConflictRecreate,
+  onRetryConflictRead,
   onDismissConflict,
 }: {
   isNew: boolean;
@@ -365,6 +458,7 @@ function MemoryForm({
   projects: readonly Project[];
   busy: boolean;
   serverError: string | null;
+  existingCreateUri?: string | null;
   conflict: BrainConflictState | null;
   onBackToList: () => void;
   onCancel: () => void;
@@ -375,11 +469,18 @@ function MemoryForm({
     body: string;
   }) => void;
   onSubmitEdit?: (input: { frontmatter: MemoryFrontmatterInput; body: string }) => void;
+  onOpenExistingFromCreate?: () => void;
+  onClearCreateExists?: () => void;
   onResolveConflictReload?: () => void;
   onResolveConflictOverwrite?: (input: {
     frontmatter: MemoryFrontmatterInput;
     body: string;
   }) => void;
+  onResolveConflictRecreate?: (input: {
+    frontmatter: MemoryFrontmatterInput;
+    body: string;
+  }) => void;
+  onRetryConflictRead?: () => void;
   onDismissConflict?: () => void;
 }) {
   const [scopeKey, setScopeKey] = useState(() => brainScopeKey(initialScope));
@@ -471,29 +572,56 @@ function MemoryForm({
               </div>
             ) : conflict.missing ? (
               <p className="brain-conflict-meta">This memory was deleted on disk.</p>
-            ) : null}
+            ) : (
+              <p className="brain-conflict-meta">
+                {conflict.readError ?? "Could not load the latest version from disk."}
+              </p>
+            )}
             <div className="brain-conflict-actions">
               {conflict.latest ? (
+                <>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={busy}
+                    onClick={onResolveConflictReload}
+                  >
+                    Reload latest
+                  </button>
+                  <button
+                    type="button"
+                    className="button primary"
+                    disabled={busy}
+                    onClick={() => {
+                      const built = buildInput();
+                      if (built) onResolveConflictOverwrite?.(built);
+                    }}
+                  >
+                    Overwrite with my edits
+                  </button>
+                </>
+              ) : conflict.missing ? (
                 <button
                   type="button"
-                  className="button"
+                  className="button primary"
                   disabled={busy}
-                  onClick={onResolveConflictReload}
+                  onClick={() => {
+                    const built = buildInput();
+                    if (built) onResolveConflictRecreate?.(built);
+                  }}
                 >
-                  Reload latest
+                  Recreate with my edits
                 </button>
-              ) : null}
-              <button
-                type="button"
-                className="button primary"
-                disabled={busy}
-                onClick={() => {
-                  const built = buildInput();
-                  if (built) onResolveConflictOverwrite?.(built);
-                }}
-              >
-                {conflict.missing ? "Recreate with my edits" : "Overwrite with my edits"}
-              </button>
+              ) : (
+                <button
+                  type="button"
+                  className="button primary"
+                  disabled={busy}
+                  onClick={onRetryConflictRead}
+                >
+                  Retry
+                </button>
+              )}
               <button type="button" className="ghost-button" onClick={onDismissConflict}>
                 Keep editing
               </button>
@@ -504,6 +632,11 @@ function MemoryForm({
         {validationError || serverError ? (
           <div className="brain-error-box" role="alert">
             <p>{validationError ?? serverError}</p>
+            {!validationError && existingCreateUri && onOpenExistingFromCreate ? (
+              <button type="button" className="button" onClick={onOpenExistingFromCreate}>
+                Open memory
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -514,7 +647,10 @@ function MemoryForm({
               <select
                 className="settings-select"
                 value={scopeKey}
-                onChange={(event) => setScopeKey(event.target.value)}
+                onChange={(event) => {
+                  setScopeKey(event.target.value);
+                  onClearCreateExists?.();
+                }}
               >
                 <option value="global">Global (brain://global/)</option>
                 {projects.map((project) => (
@@ -536,6 +672,7 @@ function MemoryForm({
                 onChange={(event) => {
                   setPath(event.target.value);
                   setValidationError(null);
+                  onClearCreateExists?.();
                 }}
               />
               <span className={pathValidation ? "brain-field-hint error" : "brain-field-hint"}>
@@ -569,6 +706,7 @@ function MemoryForm({
               onChange={(event) => setStatus(event.target.value as BrainStatus)}
             >
               <option value="active">Active</option>
+              <option value="proposed">Proposed</option>
               <option value="archived">Archived</option>
             </select>
           </label>

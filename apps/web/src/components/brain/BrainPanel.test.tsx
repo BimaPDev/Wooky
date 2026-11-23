@@ -6,9 +6,18 @@ import { emptyReadModel } from "@wooky/domain";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BrainClient, BrainInboxProposal } from "../../brain/client.ts";
+import {
+  brainErrorMessage,
+  createBrainClient,
+  type BrainClient,
+  type BrainInboxProposal,
+  type BrainTransport,
+} from "../../brain/client.ts";
 import { RpcCallError } from "../../rpc/client.ts";
+import { setBackend } from "../../state/backend.ts";
+import { bindTransport, switchEnvironment } from "../../state/environments.ts";
 import { useStore } from "../../state/store.ts";
+import { App } from "../App.tsx";
 import { Sidebar } from "../Sidebar.tsx";
 import { installFixtureBackend } from "../anywhere/testing.ts";
 import { BrainPanel } from "./BrainPanel.tsx";
@@ -51,7 +60,7 @@ function makeFakeClient(overrides: Partial<BrainClient> = {}): BrainClient {
         status: "active",
         updatedAt: "2026-11-23T00:00:00.000Z",
       },
-      body: "Body",
+      body: tier === 0 ? "" : "Body",
     })),
     search: vi.fn<BrainClient["search"]>(async () => []),
     write: vi.fn<BrainClient["write"]>(async ({ uri }) => ({
@@ -686,6 +695,9 @@ describe("BrainPanel", () => {
 
   it("validates create path and surfaces server secret/size errors cleanly", async () => {
     const client = makeFakeClient({
+      read: vi.fn<BrainClient["read"]>(async ({ uri }) => {
+        throw new RpcCallError("not_found", `No such memory: ${uri}`);
+      }),
       write: vi.fn<BrainClient["write"]>(async () => {
         throw new RpcCallError("bad_request", "Secret detected: GitHub token on line 1.");
       }),
@@ -755,6 +767,9 @@ describe("BrainPanel", () => {
     ];
     const client = makeFakeClient({
       listInbox: vi.fn<BrainClient["listInbox"]>(async () => proposals),
+      read: vi.fn<BrainClient["read"]>(async ({ uri }) => {
+        throw new RpcCallError("not_found", `No such memory: ${uri}`);
+      }),
     });
 
     await mountPanel(client, "inbox");
@@ -869,6 +884,846 @@ describe("BrainPanel", () => {
     await flush();
     expect(client.remove).toHaveBeenCalledWith({ uri: "brain://global/lessons/one.md" });
   });
+
+  it("H1: disables Edit/Pin/Archive at L0 and fetches L2 before writing or editing on tier mismatch", async () => {
+    const uri = "brain://global/lessons/pnpm.md";
+    let resolveDelayedL2: ((entry: BrainEntry) => void) | null = null;
+    let delayedPending = false;
+    const makeEntry = (tier: 0 | 2, status: "active" | "archived" = "archived"): BrainEntry => ({
+      uri,
+      scope: { kind: "global" },
+      path: "lessons/pnpm.md",
+      type: "memory",
+      trust: "user",
+      tier,
+      frontmatter: {
+        summary: "Use pnpm",
+        kind: "lesson",
+        tags: [],
+        status,
+        pinned: false,
+        updatedAt: "2026-11-23T00:00:00.000Z",
+      },
+      body: tier === 0 ? "" : "PRECIOUS BODY",
+    });
+
+    const client = makeFakeClient({
+      list: vi.fn<BrainClient["list"]>(async ({ uri: listUri }) =>
+        listUri === "brain://global/"
+          ? [
+              {
+                uri,
+                scope: { kind: "global" },
+                path: "lessons/pnpm.md",
+                name: "pnpm.md",
+                type: "memory",
+                trust: "user",
+                summary: "Use pnpm",
+                kind: "lesson",
+                status: "archived",
+              },
+            ]
+          : [],
+      ),
+      read: vi.fn<BrainClient["read"]>(async ({ tier }) => {
+        if (delayedPending && tier === 2) {
+          delayedPending = false;
+          return new Promise<BrainEntry>((resolve) => {
+            resolveDelayedL2 = resolve;
+          });
+        }
+        return makeEntry(tier === 0 ? 0 : 2);
+      }),
+    });
+
+    await mountPanel(client);
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>(".brain-tree-row")?.click();
+    });
+    await flush();
+
+    // Switch to L0
+    const l0Btn = [...(host?.querySelectorAll<HTMLButtonElement>(".brain-tier-btn") ?? [])].find(
+      (b) => b.textContent === "L0",
+    );
+    await act(async () => {
+      l0Btn?.click();
+    });
+    await flush();
+
+    const findBtn = (label: string) =>
+      [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (b) => b.textContent?.trim() === label,
+      );
+    expect(findBtn("Edit")?.disabled).toBe(true);
+    expect(findBtn("Pin")?.disabled).toBe(true);
+    expect(findBtn("Restore")?.disabled).toBe(true);
+
+    // Simulate race: user clicks L2 while its read is still pending, so selectedTier=2 while entry.tier=0
+    delayedPending = true;
+    const l2Btn = [...(host?.querySelectorAll<HTMLButtonElement>(".brain-tier-btn") ?? [])].find(
+      (b) => b.textContent === "L2",
+    );
+    await act(async () => {
+      l2Btn?.click();
+    });
+
+    // Clicking Pin before L2 read resolves must still fetch L2 and never write ""
+    await act(async () => {
+      findBtn("Pin")?.click();
+    });
+    await flush();
+    expect(client.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uri,
+        body: "PRECIOUS BODY",
+        frontmatter: expect.objectContaining({ pinned: true }),
+      }),
+    );
+
+    // Clean up pending promise if any
+    await act(async () => {
+      resolveDelayedL2?.(makeEntry(2));
+    });
+    await flush();
+  });
+
+  it("H2: refuses to create when the target path already exists and offers a button to open it", async () => {
+    const existingUri = "brain://global/lessons/pnpm.md";
+    const client = makeFakeClient({
+      read: vi.fn<BrainClient["read"]>(async ({ uri, tier }) => ({
+        uri,
+        scope: { kind: "global" },
+        path: "lessons/pnpm.md",
+        type: "memory",
+        trust: "user",
+        tier,
+        frontmatter: {
+          summary: "Existing summary",
+          kind: "lesson",
+          tags: [],
+          status: "active",
+          updatedAt: "2026-11-23T00:00:00.000Z",
+        },
+        body: tier === 0 ? "" : "Existing body",
+      })),
+    });
+
+    await mountPanel(client);
+    const newBtn = [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) =>
+      b.textContent?.includes("New memory"),
+    );
+    await act(async () => {
+      newBtn?.click();
+    });
+
+    const pathInput = host?.querySelector<HTMLInputElement>(
+      'input[placeholder="conventions/tooling.md"]',
+    );
+    const summaryInput = host?.querySelector<HTMLInputElement>(
+      'input[placeholder="One-line summary shown in listings and agent prompts"]',
+    );
+    await act(async () => {
+      if (pathInput) setInputValue(pathInput, "lessons/pnpm.md");
+      if (summaryInput) setInputValue(summaryInput, "Would overwrite");
+    });
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+    });
+    await flush();
+
+    expect(client.write).not.toHaveBeenCalled();
+    const alert = host?.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("That memory already exists; open it and edit it instead");
+    const openBtn = [...(alert?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) =>
+      b.textContent?.includes("Open"),
+    );
+    expect(openBtn).toBeDefined();
+
+    await act(async () => {
+      openBtn?.click();
+    });
+    await flush();
+
+    expect(client.read).toHaveBeenCalledWith({ uri: existingUri, tier: 2 });
+    expect(host?.textContent).toContain("Existing body");
+  });
+
+  it("M1a: edit-before-approve checks existing target, asks confirmation, and passes expectedUpdatedAt via real client", async () => {
+    const proposals: BrainInboxProposal[] = [
+      {
+        id: "p1",
+        targetUri: "brain://global/lessons/pnpm.md",
+        summary: "Agent summary",
+        kind: "lesson",
+        tags: ["pnpm"],
+        body: "Agent body",
+      },
+    ];
+    const calls: { method: string; params: unknown }[] = [];
+    const transport: BrainTransport = {
+      call: async (method, params) => {
+        calls.push({ method, params });
+        if (method === "brain.list") return [];
+        if (method === "brain.inbox.list") return proposals;
+        if (method === "brain.read") {
+          return {
+            uri: "brain://global/lessons/pnpm.md",
+            scope: { kind: "global" },
+            path: "lessons/pnpm.md",
+            type: "memory",
+            trust: "user",
+            tier: 0,
+            frontmatter: {
+              summary: "Existing memory",
+              kind: "lesson",
+              tags: [],
+              status: "active",
+              updatedAt: "2026-11-23T00:05:00.000Z",
+            },
+            body: "",
+          };
+        }
+        if (method === "brain.write") {
+          return {
+            uri: "brain://global/lessons/pnpm.md",
+            updatedAt: "2026-11-23T00:06:00.000Z",
+            created: false,
+          };
+        }
+        if (method === "brain.inbox.reject") return { ok: true };
+        return {};
+      },
+    };
+    const client = createBrainClient(transport);
+
+    await mountPanel(client, "inbox");
+    const editBtn = [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "Edit",
+    );
+    await act(async () => {
+      editBtn?.click();
+    });
+    const summaryInput = host?.querySelector<HTMLInputElement>(
+      ".brain-inbox-edit input:not(.mono)",
+    );
+    await act(async () => {
+      if (summaryInput) setInputValue(summaryInput, "Human edited summary");
+    });
+    const approveWithEdits = [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent?.includes("Approve with edits"),
+    );
+    await act(async () => {
+      approveWithEdits?.click();
+    });
+    await flush();
+
+    // Must NOT have written yet; must ask to confirm overwrite
+    expect(calls.some((c) => c.method === "brain.write")).toBe(false);
+    expect(host?.textContent).toContain("already exists");
+    const confirmOverwriteBtn = [
+      ...(host?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+    ].find((b) => b.textContent?.includes("Overwrite and approve"));
+    expect(confirmOverwriteBtn).toBeDefined();
+
+    await act(async () => {
+      confirmOverwriteBtn?.click();
+    });
+    await flush();
+
+    const writeCall = calls.find((c) => c.method === "brain.write");
+    expect(writeCall?.params).toEqual(
+      expect.objectContaining({
+        uri: "brain://global/lessons/pnpm.md",
+        expectedUpdatedAt: "2026-11-23T00:05:00.000Z",
+      }),
+    );
+    expect(calls.some((c) => c.method === "brain.inbox.reject")).toBe(true);
+  });
+
+  it("M1b: if reject fails after write succeeds, marks card saved, hides Approve, and tells user to reject manually", async () => {
+    const proposals: BrainInboxProposal[] = [
+      {
+        id: "p-partial",
+        targetUri: "brain://global/lessons/new.md",
+        summary: "Agent summary",
+        kind: "lesson",
+        tags: [],
+        body: "Agent body",
+      },
+    ];
+    let rejectShouldFail = true;
+    const transport: BrainTransport = {
+      call: async (method) => {
+        if (method === "brain.list") return [];
+        if (method === "brain.inbox.list") return proposals;
+        if (method === "brain.read") {
+          throw new RpcCallError("not_found", "No such memory");
+        }
+        if (method === "brain.write") {
+          return {
+            uri: "brain://global/lessons/new.md",
+            updatedAt: "2026-11-23T00:06:00.000Z",
+            created: true,
+          };
+        }
+        if (method === "brain.inbox.reject") {
+          if (rejectShouldFail) throw new RpcCallError("internal", "boom");
+          return { ok: true };
+        }
+        return {};
+      },
+    };
+    const client = createBrainClient(transport);
+
+    await mountPanel(client, "inbox");
+    const editBtn = [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "Edit",
+    );
+    await act(async () => {
+      editBtn?.click();
+    });
+    const approveWithEdits = [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent?.includes("Approve with edits"),
+    );
+    await act(async () => {
+      approveWithEdits?.click();
+    });
+    await flush();
+
+    expect(host?.textContent).toContain(
+      "Your memory was saved but the proposal is still in the inbox. Reject it manually.",
+    );
+    expect(host?.textContent).not.toContain("Could not approve");
+    expect(host?.textContent).toContain("Saved");
+
+    const cardButtons = [
+      ...(host?.querySelectorAll<HTMLButtonElement>(".brain-inbox-card button") ?? []),
+    ].map((b) => b.textContent?.trim());
+    expect(cardButtons).not.toContain("Approve");
+    expect(cardButtons).not.toContain("Edit");
+    expect(cardButtons).toContain("Reject");
+
+    // Manual reject finishes cleanup
+    rejectShouldFail = false;
+    const rejectBtn = [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "Reject",
+    );
+    await act(async () => {
+      rejectBtn?.click();
+    });
+    await flush();
+    expect(host?.textContent).toContain("No pending proposals");
+  });
+
+  it("M2: hides Overwrite and shows Retry when conflict-time read fails, and guards Recreate against existing files", async () => {
+    const uri = "brain://global/lessons/pnpm.md";
+    const initialEntry: BrainEntry = {
+      uri,
+      scope: { kind: "global" },
+      path: "lessons/pnpm.md",
+      type: "memory",
+      trust: "user",
+      tier: 2,
+      frontmatter: {
+        summary: "Initial",
+        kind: "lesson",
+        tags: [],
+        status: "active",
+        updatedAt: "2026-11-23T00:00:00.000Z",
+      },
+      body: "Original",
+    };
+    const newerEntry: BrainEntry = {
+      ...initialEntry,
+      frontmatter: {
+        ...initialEntry.frontmatter,
+        summary: "Updated on disk",
+        updatedAt: "2026-11-23T00:05:00.000Z",
+      },
+      body: "Disk body",
+    };
+
+    let readStep = 0;
+    const write = vi
+      .fn<BrainClient["write"]>()
+      .mockRejectedValueOnce(new RpcCallError("conflict", "changed"))
+      .mockResolvedValueOnce({ uri, updatedAt: "2026-11-23T00:06:00.000Z", created: false });
+
+    const client = makeFakeClient({
+      list: vi.fn<BrainClient["list"]>(async ({ uri: listUri }) =>
+        listUri === "brain://global/"
+          ? [
+              {
+                uri,
+                scope: { kind: "global" },
+                path: "lessons/pnpm.md",
+                name: "pnpm.md",
+                type: "memory",
+                trust: "user",
+                summary: "Initial",
+                kind: "lesson",
+                status: "active",
+              },
+            ]
+          : [],
+      ),
+      read: vi.fn<BrainClient["read"]>(async () => {
+        readStep += 1;
+        if (readStep === 1) return initialEntry;
+        if (readStep === 2) throw new RpcCallError("unavailable", "index busy");
+        if (readStep === 3) throw new RpcCallError("not_found", "deleted");
+        return newerEntry;
+      }),
+      write,
+    });
+
+    await mountPanel(client);
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>(".brain-tree-row")?.click();
+    });
+    await flush();
+
+    const findBtn = (label: string) =>
+      [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (b) => b.textContent?.trim() === label,
+      );
+
+    await act(async () => {
+      findBtn("Edit")?.click();
+    });
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+    });
+    await flush();
+
+    // Conflict-time read failed: Overwrite and Recreate MUST be hidden, Retry MUST be shown
+    expect(findBtn("Overwrite with my edits")).toBeUndefined();
+    expect(findBtn("Recreate with my edits")).toBeUndefined();
+    expect(host?.querySelector(".brain-conflict-box")?.textContent).toContain("index busy");
+    const retryBtn = findBtn("Retry");
+    expect(retryBtn).toBeDefined();
+
+    // Retry returns not_found -> Recreate appears
+    await act(async () => {
+      retryBtn?.click();
+    });
+    await flush();
+    const recreateBtn = findBtn("Recreate with my edits");
+    expect(recreateBtn).toBeDefined();
+
+    // If the file reappeared before Recreate runs, Recreate refuses unconditional write and surfaces newerEntry
+    await act(async () => {
+      recreateBtn?.click();
+    });
+    await flush();
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(host?.querySelector(".brain-conflict-box")?.textContent).toContain("Updated on disk");
+
+    // Now Overwrite sends the fetched expectedUpdatedAt, never undefined
+    await act(async () => {
+      findBtn("Overwrite with my edits")?.click();
+    });
+    await flush();
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(write.mock.calls[1]?.[0].expectedUpdatedAt).toBe("2026-11-23T00:05:00.000Z");
+  });
+
+  it("M3: shows conflict banner with Reload in view mode when Pin/Unpin/Restore conflicts", async () => {
+    const uri = "brain://global/lessons/pnpm.md";
+    const initialEntry: BrainEntry = {
+      uri,
+      scope: { kind: "global" },
+      path: "lessons/pnpm.md",
+      type: "memory",
+      trust: "user",
+      tier: 2,
+      frontmatter: {
+        summary: "Initial",
+        kind: "lesson",
+        tags: [],
+        status: "archived",
+        pinned: false,
+        updatedAt: "2026-11-23T00:00:00.000Z",
+      },
+      body: "Original body",
+    };
+    const newerEntry: BrainEntry = {
+      ...initialEntry,
+      frontmatter: {
+        ...initialEntry.frontmatter,
+        summary: "Updated on disk",
+        status: "active",
+        pinned: true,
+        updatedAt: "2026-11-23T00:05:00.000Z",
+      },
+      body: "Newer body on disk",
+    };
+
+    let readCount = 0;
+    const client = makeFakeClient({
+      list: vi.fn<BrainClient["list"]>(async ({ uri: listUri }) =>
+        listUri === "brain://global/"
+          ? [
+              {
+                uri,
+                scope: { kind: "global" },
+                path: "lessons/pnpm.md",
+                name: "pnpm.md",
+                type: "memory",
+                trust: "user",
+                summary: "Initial",
+                kind: "lesson",
+                status: "archived",
+              },
+            ]
+          : [],
+      ),
+      read: vi.fn<BrainClient["read"]>(async () => {
+        readCount += 1;
+        return readCount === 1 ? initialEntry : newerEntry;
+      }),
+      write: vi.fn<BrainClient["write"]>(async () => {
+        throw new RpcCallError("conflict", "changed on disk");
+      }),
+    });
+
+    await mountPanel(client);
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>(".brain-tree-row")?.click();
+    });
+    await flush();
+
+    const findBtn = (label: string) =>
+      [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (b) => b.textContent?.trim() === label,
+      );
+
+    // Conflict on Pin in view mode
+    await act(async () => {
+      findBtn("Pin")?.click();
+    });
+    await flush();
+
+    const conflictBox = host?.querySelector('.brain-conflict-box[role="alert"]');
+    expect(conflictBox).not.toBeNull();
+    expect(conflictBox?.textContent).toContain("changed on disk");
+
+    const reloadBtn = [...(conflictBox?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "Reload",
+    );
+    expect(reloadBtn).toBeDefined();
+
+    await act(async () => {
+      reloadBtn?.click();
+    });
+    await flush();
+
+    expect(host?.querySelector(".brain-conflict-box")).toBeNull();
+    expect(host?.textContent).toContain("Updated on disk");
+    expect(host?.textContent).toContain("Newer body on disk");
+  });
+
+  it("M4a: invalidates and re-fetches every cached or expanded ancestor folder after create, write, and remove", async () => {
+    const aUri = "brain://global/a";
+    const bUri = "brain://global/a/b";
+    const cUri = "brain://global/a/b/c.md";
+    const dUri = "brain://global/a/b/d.md";
+    let removedC = false;
+    let createdD = false;
+
+    const list = vi.fn<BrainClient["list"]>(async ({ uri }) => {
+      if (uri === "brain://global/") {
+        return [
+          {
+            uri: aUri,
+            scope: { kind: "global" },
+            path: "a",
+            name: "a",
+            type: "folder",
+            trust: "user",
+            count: (removedC ? 0 : 1) + (createdD ? 1 : 0),
+          },
+        ];
+      }
+      if (uri === aUri) {
+        return [
+          {
+            uri: bUri,
+            scope: { kind: "global" },
+            path: "a/b",
+            name: "b",
+            type: "folder",
+            trust: "user",
+            count: (removedC ? 0 : 1) + (createdD ? 1 : 0),
+          },
+        ];
+      }
+      if (uri === bUri) {
+        const out: BrainTreeNode[] = [];
+        if (!removedC) {
+          out.push({
+            uri: cUri,
+            scope: { kind: "global" },
+            path: "a/b/c.md",
+            name: "c.md",
+            type: "memory",
+            trust: "user",
+            summary: "C summary",
+            kind: "note",
+            status: "active",
+          });
+        }
+        if (createdD) {
+          out.push({
+            uri: dUri,
+            scope: { kind: "global" },
+            path: "a/b/d.md",
+            name: "d.md",
+            type: "memory",
+            trust: "user",
+            summary: "D summary",
+            kind: "note",
+            status: "active",
+          });
+        }
+        return out;
+      }
+      return [];
+    });
+
+    const client = makeFakeClient({
+      list,
+      read: vi.fn<BrainClient["read"]>(async ({ uri, tier }) => {
+        if (uri === dUri && !createdD) {
+          throw new RpcCallError("not_found", "missing");
+        }
+        return {
+          uri,
+          scope: { kind: "global" },
+          path: uri.replace("brain://global/", ""),
+          type: uri.endsWith(".md") ? "memory" : "overview",
+          trust: "user",
+          tier,
+          frontmatter: {
+            summary: "C summary",
+            kind: "note",
+            tags: [],
+            status: "active",
+            updatedAt: "2026-11-23T00:00:00.000Z",
+          },
+          body: tier === 0 ? "" : "Body C",
+        };
+      }),
+      write: vi.fn<BrainClient["write"]>(async ({ uri }) => {
+        if (uri === dUri) createdD = true;
+        return { uri, updatedAt: "2026-11-23T00:02:00.000Z", created: uri === dUri };
+      }),
+      remove: vi.fn<BrainClient["remove"]>(async ({ uri }) => {
+        if (uri === cUri) removedC = true;
+      }),
+    });
+
+    await mountPanel(client);
+    const findRow = (name: string) =>
+      [...(host?.querySelectorAll<HTMLButtonElement>(".brain-tree-row") ?? [])].find((r) =>
+        r.textContent?.includes(name),
+      );
+
+    // Expand folder a, then folder b
+    await act(async () => {
+      findRow("a")?.click();
+    });
+    await flush();
+    await act(async () => {
+      findRow("b")?.click();
+    });
+    await flush();
+    expect(findRow("c.md")).toBeDefined();
+
+    // Remove c.md -> all three ancestors (root, a, a/b) must be re-fetched
+    await act(async () => {
+      findRow("c.md")?.click();
+    });
+    await flush();
+    list.mockClear();
+
+    const findBtn = (label: string) =>
+      [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (b) => b.textContent?.trim() === label,
+      );
+    await act(async () => {
+      findBtn("Remove")?.click();
+    });
+    await act(async () => {
+      findBtn("Confirm remove")?.click();
+    });
+    await flush();
+
+    const refreshedAfterRemove = list.mock.calls.map((c) => c[0].uri);
+    expect(refreshedAfterRemove).toContain("brain://global/");
+    expect(refreshedAfterRemove).toContain(aUri);
+    expect(refreshedAfterRemove).toContain(bUri);
+    expect(host?.textContent).not.toContain("c.md");
+
+    // Collapse a (so a and a/b remain cached while collapsed), then create d.md -> cached ancestors must be re-fetched
+    await act(async () => {
+      findRow("a")?.click();
+    });
+    await flush();
+    list.mockClear();
+
+    await act(async () => {
+      [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+        .find((b) => b.textContent?.includes("New memory"))
+        ?.click();
+    });
+    const pathInput = host?.querySelector<HTMLInputElement>(
+      'input[placeholder="conventions/tooling.md"]',
+    );
+    const summaryInput = host?.querySelector<HTMLInputElement>(
+      'input[placeholder="One-line summary shown in listings and agent prompts"]',
+    );
+    await act(async () => {
+      if (pathInput) setInputValue(pathInput, "a/b/d.md");
+      if (summaryInput) setInputValue(summaryInput, "D summary");
+    });
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+    });
+    await flush();
+
+    const refreshedAfterCreate = list.mock.calls.map((c) => c[0].uri);
+    expect(refreshedAfterCreate).toContain("brain://global/");
+    expect(refreshedAfterCreate).toContain(aUri);
+    expect(refreshedAfterCreate).toContain(bUri);
+  });
+
+  it("M4b: toggling Archived clears cached scope listings and reloads expanded folders", async () => {
+    const lessonsUri = "brain://global/lessons";
+    const otherUri = "brain://global/other";
+    const list = vi.fn<BrainClient["list"]>(async ({ uri, includeArchived }) => {
+      if (uri === "brain://global/") {
+        return [
+          {
+            uri: lessonsUri,
+            scope: { kind: "global" },
+            path: "lessons",
+            name: "lessons",
+            type: "folder",
+            trust: "user",
+            count: includeArchived ? 2 : 1,
+          },
+          {
+            uri: otherUri,
+            scope: { kind: "global" },
+            path: "other",
+            name: "other",
+            type: "folder",
+            trust: "user",
+            count: includeArchived ? 2 : 1,
+          },
+        ];
+      }
+      if (uri === lessonsUri) {
+        return [
+          {
+            uri: "brain://global/lessons/active.md",
+            scope: { kind: "global" },
+            path: "lessons/active.md",
+            name: "active.md",
+            type: "memory",
+            trust: "user",
+            summary: "Active",
+            kind: "lesson",
+            status: "active",
+          },
+          ...(includeArchived
+            ? [
+                {
+                  uri: "brain://global/lessons/old.md",
+                  scope: { kind: "global" },
+                  path: "lessons/old.md",
+                  name: "old.md",
+                  type: "memory",
+                  trust: "user",
+                  summary: "Old",
+                  kind: "lesson",
+                  status: "archived",
+                } satisfies BrainTreeNode,
+              ]
+            : []),
+        ];
+      }
+      if (uri === otherUri) {
+        return includeArchived
+          ? [
+              {
+                uri: "brain://global/other/arch.md",
+                scope: { kind: "global" },
+                path: "other/arch.md",
+                name: "arch.md",
+                type: "memory",
+                trust: "user",
+                summary: "Archived other",
+                kind: "note",
+                status: "archived",
+              },
+            ]
+          : [];
+      }
+      return [];
+    });
+
+    const client = makeFakeClient({ list });
+    await mountPanel(client);
+    const findRow = (name: string) =>
+      [...(host?.querySelectorAll<HTMLButtonElement>(".brain-tree-row") ?? [])].find((r) =>
+        r.textContent?.includes(name),
+      );
+
+    // Expand other, then collapse it (cached, not expanded). Expand lessons (expanded).
+    await act(async () => {
+      findRow("other")?.click();
+    });
+    await flush();
+    await act(async () => {
+      findRow("other")?.click();
+    });
+    await flush();
+    await act(async () => {
+      findRow("lessons")?.click();
+    });
+    await flush();
+    expect(host?.textContent).not.toContain("old.md");
+
+    list.mockClear();
+    const archivedCheckbox = [
+      ...(host?.querySelectorAll<HTMLLabelElement>(".brain-filter-toggle") ?? []),
+    ]
+      .find((el) => el.textContent?.includes("Archived"))
+      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(archivedCheckbox).toBeDefined();
+
+    await act(async () => {
+      archivedCheckbox?.click();
+    });
+    await flush();
+
+    // Expanded folder (lessons) and root reloaded with includeArchived: true; collapsed cached folder (other) cleared, not fetched yet
+    expect(list).toHaveBeenCalledWith({ uri: "brain://global/", includeArchived: true });
+    expect(list).toHaveBeenCalledWith({ uri: lessonsUri, includeArchived: true });
+    expect(list.mock.calls.some((c) => c[0].uri === otherUri)).toBe(false);
+    expect(host?.textContent).toContain("old.md");
+
+    // Re-expanding `other` must fetch fresh archived contents because its cache was cleared
+    await act(async () => {
+      findRow("other")?.click();
+    });
+    await flush();
+    expect(list).toHaveBeenCalledWith({ uri: otherUri, includeArchived: true });
+    expect(host?.textContent).toContain("arch.md");
+  });
 });
 
 describe("Sidebar Brain entry point", () => {
@@ -903,5 +1758,690 @@ describe("Sidebar Brain entry point", () => {
       brainBtn?.click();
     });
     expect(useStore.getState().brainOpen).toBe(true);
+  });
+
+  it("M5: resets BrainPanel state and reloads new environment brain when switching environments", async () => {
+    let activeEnv = "local";
+    bindTransport({
+      reconnect: () => {
+        useStore.setState({ status: "open" });
+      },
+      localUrl: () => "ws://local/ws",
+    });
+    setBackend({
+      call: (async (method: string, params: unknown) => {
+        const p = (params ?? {}) as Record<string, unknown>;
+        if (method === "remote.connectInfo") {
+          return { wsUrl: "ws://env-home/ws", token: "tok" };
+        }
+        if (method === "settings.get") {
+          return {
+            environments: [
+              {
+                id: "env-home",
+                label: "Home",
+                connection: { kind: "direct", url: "http://127.0.0.1:4317" },
+                addedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          };
+        }
+        if (method === "brain.list") {
+          if (p.uri !== "brain://global/") return [];
+          return activeEnv === "local"
+            ? [
+                {
+                  uri: "brain://global/local-only.md",
+                  scope: { kind: "global" },
+                  path: "local-only.md",
+                  name: "local-only.md",
+                  type: "memory",
+                  trust: "user",
+                  summary: "Local secret note",
+                  kind: "note",
+                  status: "active",
+                },
+              ]
+            : [
+                {
+                  uri: "brain://global/remote-only.md",
+                  scope: { kind: "global" },
+                  path: "remote-only.md",
+                  name: "remote-only.md",
+                  type: "memory",
+                  trust: "user",
+                  summary: "Remote note",
+                  kind: "note",
+                  status: "active",
+                },
+              ];
+        }
+        if (method === "brain.read") {
+          return {
+            uri: String(p.uri),
+            scope: { kind: "global" },
+            path: "local-only.md",
+            type: "memory",
+            trust: "user",
+            tier: p.tier ?? 2,
+            frontmatter: {
+              summary: "Local secret note",
+              kind: "note",
+              tags: [],
+              status: "active",
+              updatedAt: "2026-11-23T00:00:00.000Z",
+            },
+            body: "Local body content",
+          };
+        }
+        if (method === "brain.inbox.list") {
+          return activeEnv === "local"
+            ? []
+            : [
+                {
+                  id: "r1",
+                  targetUri: "brain://global/r.md",
+                  summary: "R",
+                  kind: "note",
+                  tags: [],
+                  body: "R",
+                },
+              ];
+        }
+        return undefined;
+      }) as never,
+    });
+
+    useStore.setState({ status: "open", hasSnapshot: true, brainOpen: true });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(<App />);
+    });
+    await flush();
+
+    // Open local-only.md in the local environment
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>(".brain-tree-row")?.click();
+    });
+    await flush();
+    expect(host?.textContent).toContain("Local body content");
+
+    // Switch to remote environment
+    activeEnv = "env-home";
+    await act(async () => {
+      await switchEnvironment("env-home");
+    });
+    await flush();
+
+    expect(host?.textContent).not.toContain("Local body content");
+    expect(host?.textContent).not.toContain("local-only.md");
+    expect(host?.textContent).toContain("remote-only.md");
+    expect(useStore.getState().brainInboxCount).toBe(1);
+
+    // Switch back to local for test isolation
+    activeEnv = "local";
+    await act(async () => {
+      await switchEnvironment("local");
+    });
+    await flush();
+  });
+});
+
+describe("BrainPanel navigation & lows & XSS", () => {
+  beforeEach(() => {
+    useStore.setState(useStore.getInitialState(), true);
+    seedProjects();
+  });
+
+  afterEach(async () => {
+    await act(async () => root?.unmount());
+    host?.remove();
+    root = undefined;
+    host = undefined;
+    document.body.innerHTML = "";
+    vi.restoreAllMocks();
+  });
+
+  it("M6: skips selection and mode updates when a write finishes after navigation, while still refreshing the tree", async () => {
+    const aUri = "brain://global/lessons/a.md";
+    const bUri = "brain://global/lessons/b.md";
+    let resolveWrite!: (res: { uri: string; updatedAt: string; created: boolean }) => void;
+
+    const list = vi.fn<BrainClient["list"]>(async ({ uri }) =>
+      uri === "brain://global/"
+        ? [
+            {
+              uri: aUri,
+              scope: { kind: "global" },
+              path: "lessons/a.md",
+              name: "a.md",
+              type: "memory",
+              trust: "user",
+              summary: "Summary A",
+              kind: "lesson",
+              status: "active",
+            },
+            {
+              uri: bUri,
+              scope: { kind: "global" },
+              path: "lessons/b.md",
+              name: "b.md",
+              type: "memory",
+              trust: "user",
+              summary: "Summary B",
+              kind: "lesson",
+              status: "active",
+            },
+          ]
+        : [],
+    );
+
+    const read = vi.fn<BrainClient["read"]>(async ({ uri, tier }) => ({
+      uri,
+      scope: { kind: "global" },
+      path: uri.replace("brain://global/", ""),
+      type: "memory",
+      trust: "user",
+      tier,
+      frontmatter: {
+        summary: uri === aUri ? "Summary A" : "Summary B",
+        kind: "lesson",
+        tags: [],
+        status: "active",
+        updatedAt: "2026-11-23T00:00:00.000Z",
+      },
+      body: tier === 0 ? "" : uri === aUri ? "Body A" : "Body B",
+    }));
+
+    const write = vi.fn<BrainClient["write"]>(
+      () =>
+        new Promise((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+
+    const client = makeFakeClient({ list, read, write });
+    await mountPanel(client);
+
+    const findRow = (name: string) =>
+      [...(host?.querySelectorAll<HTMLButtonElement>(".brain-tree-row") ?? [])].find((r) =>
+        r.textContent?.includes(name),
+      );
+
+    // Open a.md and enter Edit mode
+    await act(async () => {
+      findRow("a.md")?.click();
+    });
+    await flush();
+    await act(async () => {
+      [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+        .find((b) => b.textContent?.trim() === "Edit")
+        ?.click();
+    });
+
+    // Submit save (write stays pending)
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+    });
+    expect(write).toHaveBeenCalledTimes(1);
+
+    // Navigate to b.md while write is still in flight
+    await act(async () => {
+      findRow("b.md")?.click();
+    });
+    await flush();
+    expect(host?.textContent).toContain("Body B");
+
+    list.mockClear();
+    read.mockClear();
+
+    // Now the in-flight write for a.md finishes
+    await act(async () => {
+      resolveWrite({ uri: aUri, updatedAt: "2026-11-23T00:01:00.000Z", created: false });
+    });
+    await flush();
+
+    // Tree refresh MUST still run, but view MUST NOT hijack back to a.md
+    expect(list).toHaveBeenCalledWith({ uri: "brain://global/" });
+    expect(read).not.toHaveBeenCalledWith({ uri: aUri, tier: 2 });
+    expect(host?.querySelector(".brain-detail-uri")?.textContent).toBe(bUri);
+    expect(host?.textContent).toContain("Body B");
+  });
+
+  it("L1: refreshes brainInboxCount when the window regains focus", async () => {
+    let inboxItems: BrainInboxProposal[] = [];
+    bindTransport({
+      reconnect: () => {
+        useStore.setState({ status: "open" });
+      },
+      localUrl: () => "ws://local/ws",
+    });
+    setBackend({
+      call: (async (method: string) => {
+        if (method === "brain.inbox.list") return inboxItems;
+        if (method === "brain.list") return [];
+        return undefined;
+      }) as never,
+    });
+
+    useStore.setState({ status: "open", hasSnapshot: true, brainOpen: false, brainInboxCount: 0 });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(<App />);
+    });
+    await flush();
+
+    inboxItems = [
+      {
+        id: "focus-1",
+        targetUri: "brain://global/lessons/focus.md",
+        summary: "Focus proposal",
+        kind: "lesson",
+        tags: [],
+        body: "Body",
+      },
+    ];
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await flush();
+    expect(useStore.getState().brainInboxCount).toBe(1);
+  });
+
+  it("L2: falls back to Global when the active project is removed", async () => {
+    const client = makeFakeClient({
+      list: vi.fn<BrainClient["list"]>(async ({ uri }) => {
+        if (uri === "brain://global/") {
+          return [
+            {
+              uri: "brain://global/g.md",
+              scope: { kind: "global" },
+              path: "g.md",
+              name: "g.md",
+              type: "memory",
+              trust: "user",
+              summary: "Global item",
+              kind: "note",
+              status: "active",
+            },
+          ];
+        }
+        if (uri === "brain://project/p1/") {
+          return [
+            {
+              uri: "brain://project/p1/p.md",
+              scope: { kind: "project", projectId: "p1" },
+              path: "p.md",
+              name: "p.md",
+              type: "memory",
+              trust: "repo",
+              summary: "Project item",
+              kind: "note",
+              status: "active",
+            },
+          ];
+        }
+        return [];
+      }),
+    });
+
+    await mountPanel(client);
+    const p1Btn = [...(host?.querySelectorAll<HTMLButtonElement>(".brain-scope-btn") ?? [])].find(
+      (b) => b.textContent?.includes("orders-api"),
+    );
+    await act(async () => {
+      p1Btn?.click();
+    });
+    await flush();
+    expect(host?.textContent).toContain("p.md");
+
+    // Remove p1 from store
+    await act(async () => {
+      const state = useStore.getState();
+      const { p1: _removed, ...rest } = state.model.projects;
+      useStore.setState({ model: { ...state.model, projects: rest } });
+    });
+    await flush();
+
+    const globalBtn = [
+      ...(host?.querySelectorAll<HTMLButtonElement>(".brain-scope-btn") ?? []),
+    ].find((b) => b.textContent?.includes("Global"));
+    expect(globalBtn?.getAttribute("aria-pressed")).toBe("true");
+    expect(host?.textContent).toContain("g.md");
+  });
+
+  it("L3: on phone, tapping a folder expands it and stays on the list", async () => {
+    const origMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn<typeof window.matchMedia>((query: string) => ({
+      matches: query === "(max-width: 640px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn<() => void>(),
+      removeListener: vi.fn<() => void>(),
+      addEventListener: vi.fn<() => void>(),
+      removeEventListener: vi.fn<() => void>(),
+      dispatchEvent: vi.fn<() => boolean>(() => true),
+    }));
+
+    try {
+      const client = makeFakeClient({
+        list: vi.fn<BrainClient["list"]>(async ({ uri }) => {
+          if (uri === "brain://global/") {
+            return [
+              {
+                uri: "brain://global/lessons",
+                scope: { kind: "global" },
+                path: "lessons",
+                name: "lessons",
+                type: "folder",
+                trust: "user",
+                count: 1,
+              },
+            ];
+          }
+          if (uri === "brain://global/lessons") {
+            return [
+              {
+                uri: "brain://global/lessons/pnpm.md",
+                scope: { kind: "global" },
+                path: "lessons/pnpm.md",
+                name: "pnpm.md",
+                type: "memory",
+                trust: "user",
+                summary: "Use pnpm",
+                kind: "lesson",
+                status: "active",
+              },
+            ];
+          }
+          return [];
+        }),
+      });
+
+      await mountPanel(client);
+      const folderRow = host?.querySelector<HTMLButtonElement>(".brain-tree-row");
+      await act(async () => {
+        folderRow?.click();
+      });
+      await flush();
+
+      expect(host?.textContent).toContain("pnpm.md");
+      expect(host?.querySelector(".brain-workspace")?.classList.contains("mobile-list")).toBe(true);
+    } finally {
+      window.matchMedia = origMatchMedia;
+    }
+  });
+
+  it("L4: moves focus sensibly after Save, Cancel, and Remove", async () => {
+    const uri = "brain://global/lessons/focus.md";
+    const client = makeFakeClient({
+      list: vi.fn<BrainClient["list"]>(async ({ uri: listUri }) =>
+        listUri === "brain://global/"
+          ? [
+              {
+                uri,
+                scope: { kind: "global" },
+                path: "lessons/focus.md",
+                name: "focus.md",
+                type: "memory",
+                trust: "user",
+                summary: "Focus test",
+                kind: "note",
+                status: "active",
+              },
+            ]
+          : [],
+      ),
+    });
+
+    await mountPanel(client);
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>(".brain-tree-row")?.click();
+    });
+    await flush();
+
+    const findBtn = (label: string) =>
+      [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (b) => b.textContent?.trim() === label,
+      );
+
+    // Cancel edit -> focus moves to Edit button
+    await act(async () => {
+      findBtn("Edit")?.click();
+    });
+    await act(async () => {
+      findBtn("Cancel")?.click();
+    });
+    await flush();
+    expect(document.activeElement).toBe(findBtn("Edit"));
+
+    // Save edit -> focus moves to Edit button
+    await act(async () => {
+      findBtn("Edit")?.click();
+    });
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+    });
+    await flush();
+    expect(document.activeElement).toBe(findBtn("Edit"));
+
+    // Remove -> focus moves to tree row
+    await act(async () => {
+      findBtn("Remove")?.click();
+    });
+    await act(async () => {
+      findBtn("Confirm remove")?.click();
+    });
+    await flush();
+    expect(document.activeElement).toBe(host?.querySelector(".brain-tree-row"));
+  });
+
+  it("L5 & L6 & L7 & L8: pinned proposal warning, proposed status option, capped error length, and link host title", async () => {
+    // L7: capped error length
+    const longMsg = "X".repeat(500);
+    const capped = brainErrorMessage(new Error(longMsg), "fallback");
+    expect(capped.length).toBeLessThanOrEqual(240);
+    expect(capped.endsWith("…")).toBe(true);
+
+    // L5: pinned proposal warning
+    const pinnedProposal: BrainInboxProposal = {
+      id: "pin-prop",
+      targetUri: "brain://global/lessons/pin.md",
+      summary: "Pinned proposal",
+      kind: "lesson",
+      tags: [],
+      body: "Always do this",
+      pinned: true,
+    };
+    const proposedEntry: BrainEntry = {
+      uri: "brain://global/lessons/prop.md",
+      scope: { kind: "global" },
+      path: "lessons/prop.md",
+      type: "memory",
+      trust: "user",
+      tier: 2,
+      frontmatter: {
+        summary: "Proposed memory",
+        kind: "note",
+        tags: [],
+        status: "proposed",
+        updatedAt: "2026-11-23T00:00:00.000Z",
+      },
+      body: "[docs](https://example.com/guide)",
+    };
+
+    const client = makeFakeClient({
+      listInbox: vi.fn<BrainClient["listInbox"]>(async () => [pinnedProposal]),
+      list: vi.fn<BrainClient["list"]>(async ({ uri }) =>
+        uri === "brain://global/"
+          ? [
+              {
+                uri: proposedEntry.uri,
+                scope: { kind: "global" },
+                path: "lessons/prop.md",
+                name: "prop.md",
+                type: "memory",
+                trust: "user",
+                summary: "Proposed memory",
+                kind: "note",
+                status: "proposed",
+              },
+            ]
+          : [],
+      ),
+      read: vi.fn<BrainClient["read"]>(async ({ tier }) => ({
+        ...proposedEntry,
+        tier,
+        body: tier === 0 ? "" : proposedEntry.body,
+      })),
+    });
+
+    await mountPanel(client, "inbox");
+    expect(host?.textContent).toContain("injected into every turn prompt");
+
+    // L6 & L8: switch to Memories, view link host on hover, and edit proposed status
+    const memTab = [...(host?.querySelectorAll<HTMLButtonElement>(".brain-tab") ?? [])].find((b) =>
+      b.textContent?.includes("Memories"),
+    );
+    await act(async () => {
+      memTab?.click();
+    });
+    await flush();
+
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>(".brain-tree-row")?.click();
+    });
+    await flush();
+
+    const anchor = host?.querySelector<HTMLAnchorElement>(".brain-body-card a");
+    expect(anchor?.getAttribute("target")).toBe("_blank");
+    expect(anchor?.getAttribute("rel")).toBe("noreferrer noopener");
+    expect(anchor?.getAttribute("title")).toBe("example.com");
+
+    const editBtn = [...(host?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "Edit",
+    );
+    await act(async () => {
+      editBtn?.click();
+    });
+    const selects = [
+      ...(host?.querySelectorAll<HTMLSelectElement>("select.settings-select") ?? []),
+    ];
+    const statusSelect = selects.find((s) =>
+      [...s.options].some((opt) => opt.value === "archived"),
+    );
+    expect(statusSelect?.value).toBe("proposed");
+    expect([...(statusSelect?.options ?? [])].some((opt) => opt.value === "proposed")).toBe(true);
+  });
+
+  it("XSS: escapes scripts, SVG-looking text, data: links, and enforces target/rel across fields and inbox", async () => {
+    const xssPayload = '<script>window.__xss=1</script><svg onload="alert(1)"><circle /></svg>';
+    const bodyPayload = `${xssPayload}\n\n[bad](data:text/html,<script>alert(1)</script>)\n\n[ok](https://docs.example.org/path)`;
+    const repoUri = `brain://project/p1/<img src=x onerror=alert(1)>.md`;
+
+    const client = makeFakeClient({
+      list: vi.fn<BrainClient["list"]>(async ({ uri }) =>
+        uri === "brain://project/p1/"
+          ? [
+              {
+                uri: repoUri,
+                scope: { kind: "project", projectId: "p1" },
+                path: "<img src=x onerror=alert(1)>.md",
+                name: "<img src=x onerror=alert(1)>.md",
+                type: "memory",
+                trust: "repo",
+                summary: xssPayload,
+                kind: "gotcha",
+                status: "active",
+              },
+            ]
+          : [],
+      ),
+      read: vi.fn<BrainClient["read"]>(async ({ tier }) => ({
+        uri: repoUri,
+        scope: { kind: "project", projectId: "p1" },
+        path: "<img src=x onerror=alert(1)>.md",
+        type: "memory",
+        trust: "repo",
+        tier,
+        frontmatter: {
+          summary: xssPayload,
+          kind: "gotcha",
+          tags: [xssPayload],
+          status: "active",
+          source: { agent: xssPayload },
+          updatedAt: "2026-11-23T00:00:00.000Z",
+        },
+        body: tier === 0 ? "" : bodyPayload,
+      })),
+      listInbox: vi.fn<BrainClient["listInbox"]>(async () => [
+        {
+          id: "xss-inbox",
+          targetUri: `brain://global/<script>alert(1)</script>.md`,
+          summary: xssPayload,
+          kind: "gotcha",
+          tags: [xssPayload],
+          body: bodyPayload,
+          source: { agent: xssPayload },
+        },
+      ]),
+    });
+
+    await mountPanel(client);
+    const p1Btn = [...(host?.querySelectorAll<HTMLButtonElement>(".brain-scope-btn") ?? [])].find(
+      (b) => b.textContent?.includes("orders-api"),
+    );
+    await act(async () => {
+      p1Btn?.click();
+    });
+    await flush();
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>(".brain-tree-row")?.click();
+    });
+    await flush();
+
+    // Check browse detail XSS safety
+    expect(host?.querySelector("script")).toBeNull();
+    expect(host?.querySelector(".brain-body-card svg")).toBeNull();
+    expect(host?.querySelector(".brain-fm-summary svg")).toBeNull();
+    expect(host?.querySelector(".brain-tags svg")).toBeNull();
+    expect(host?.querySelector(".brain-fm-source svg")).toBeNull();
+    expect(host?.querySelector(".brain-detail-uri svg")).toBeNull();
+    expect(host?.querySelector('a[href^="data:"]')).toBeNull();
+    const safeLink = host?.querySelector<HTMLAnchorElement>('.brain-body-card a[href^="https://"]');
+    expect(safeLink?.getAttribute("target")).toBe("_blank");
+    expect(safeLink?.getAttribute("rel")).toBe("noreferrer noopener");
+    expect(host?.querySelector(".brain-fm-summary")?.textContent).toContain("<script>");
+    expect(host?.querySelector(".brain-tag")?.textContent).toContain("<svg");
+    expect(host?.querySelector(".brain-fm-source")?.textContent).toContain("<script>");
+    expect(host?.querySelector(".brain-detail-uri")?.textContent).toContain("<img");
+
+    // Check inbox XSS safety
+    const inboxTab = [...(host?.querySelectorAll<HTMLButtonElement>(".brain-tab") ?? [])].find(
+      (b) => b.textContent?.includes("Inbox"),
+    );
+    await act(async () => {
+      inboxTab?.click();
+    });
+    await flush();
+
+    expect(host?.querySelector("script")).toBeNull();
+    expect(host?.querySelector(".brain-inbox-body svg")).toBeNull();
+    expect(host?.querySelector('a[href^="data:"]')).toBeNull();
+    const inboxLink = host?.querySelector<HTMLAnchorElement>(
+      '.brain-inbox-body a[href^="https://"]',
+    );
+    expect(inboxLink?.getAttribute("target")).toBe("_blank");
+    expect(inboxLink?.getAttribute("rel")).toBe("noreferrer noopener");
+    expect(host?.querySelector(".brain-inbox-card .brain-fm-summary")?.textContent).toContain(
+      "<script>",
+    );
+    expect(host?.querySelector(".brain-inbox-card .brain-tag")?.textContent).toContain("<svg");
+    expect(host?.querySelector(".brain-inbox-source")?.textContent).toContain("<script>");
+    expect(host?.querySelector(".brain-inbox-uri")?.textContent).toContain("<script>");
   });
 });

@@ -12,6 +12,7 @@ import type {
 import { emptyReadModel } from "@wooky/domain";
 import { useSyncExternalStore } from "react";
 import type { ConnectionStatus } from "../rpc/client.ts";
+import { refreshBrainInboxCount } from "./actions.ts";
 import { backend } from "./backend.ts";
 import { receiveSnapshot, useStore } from "./store.ts";
 import { loadDeviceSettings } from "./appearance.ts";
@@ -284,12 +285,14 @@ async function resetModel() {
     model: emptyReadModel(),
     hasSnapshot: false,
     selectedThreadId: null,
+    brainInboxCount: 0,
     status: "connecting",
   });
   if (!useStore.getState().fixture) return;
   const model = await backend().call("snapshot", {});
   receiveSnapshot(model);
   useStore.setState({ status: "open" });
+  void refreshBrainInboxCount();
 }
 
 async function connectInfoFor(id: string): Promise<RpcResult<"remote.connectInfo"> | null> {
@@ -321,6 +324,7 @@ async function connectRemote(id: string, reset: boolean) {
       model: emptyReadModel(),
       hasSnapshot: false,
       selectedThreadId: null,
+      brainInboxCount: 0,
       status: "reconnecting",
     });
     scheduleRetry(id);
@@ -340,6 +344,7 @@ async function connectRemote(id: string, reset: boolean) {
     return;
   }
   await loadDeviceSettings();
+  void refreshBrainInboxCount();
 }
 
 function localLabel() {
@@ -392,6 +397,7 @@ export async function switchEnvironment(id: string) {
     }
     await loadDeviceSettings();
     syncEnvironmentsFromStore(useStore.getState().deviceSettings);
+    void refreshBrainInboxCount();
     return;
   }
   if (deviceId) rememberEnvironment(deviceId, id);

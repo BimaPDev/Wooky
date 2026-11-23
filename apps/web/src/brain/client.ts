@@ -91,6 +91,21 @@ export interface BrainInboxEditOverrides {
   targetUri: string;
   frontmatter: MemoryFrontmatterInput;
   body: string;
+  expectedUpdatedAt?: string;
+}
+
+export class BrainInboxSavedRejectFailedError extends Error {
+  readonly savedUri: string;
+  readonly updatedAt: string;
+
+  constructor(savedUri: string, updatedAt: string, cause?: unknown) {
+    super("Your memory was saved but the proposal is still in the inbox. Reject it manually.", {
+      cause,
+    });
+    this.name = "BrainInboxSavedRejectFailedError";
+    this.savedUri = savedUri;
+    this.updatedAt = updatedAt;
+  }
 }
 
 export interface BrainClient {
@@ -171,8 +186,8 @@ export async function listBrainInbox(transport: BrainTransport): Promise<BrainIn
 /**
  * Approves a pending inbox proposal.
  *
- * TODO(B2): If `brain.inbox.approve` accepts edited fields directly once B2/B4 lands, replace the
- * write + reject sequence below with a single `brain.inbox.approve` call.
+ * TODO(B2): The real fix is `brain.inbox.approve` accepting `{ targetUri, frontmatter, body }`
+ * directly so the write and inbox removal are atomic on the server.
  */
 export async function approveBrainInbox(
   transport: BrainTransport,
@@ -183,12 +198,19 @@ export async function approveBrainInbox(
     await transport.call("brain.inbox.approve", { id } satisfies BrainInboxApproveParams);
     return;
   }
-  await writeBrain(transport, {
+  const written = await writeBrain(transport, {
     uri: edits.targetUri,
     frontmatter: edits.frontmatter,
     body: edits.body,
+    ...(edits.expectedUpdatedAt !== undefined
+      ? { expectedUpdatedAt: edits.expectedUpdatedAt }
+      : {}),
   });
-  await transport.call("brain.inbox.reject", { id } satisfies BrainInboxRejectParams);
+  try {
+    await transport.call("brain.inbox.reject", { id } satisfies BrainInboxRejectParams);
+  } catch (error) {
+    throw new BrainInboxSavedRejectFailedError(written.uri, written.updatedAt, error);
+  }
 }
 
 export async function rejectBrainInbox(transport: BrainTransport, id: string): Promise<void> {
@@ -223,11 +245,19 @@ export function isBrainErrorCode(
   return false;
 }
 
+const MAX_BRAIN_ERROR_LENGTH = 240;
+
+function capBrainError(message: string): string {
+  const trimmed = message.trim();
+  if (trimmed.length <= MAX_BRAIN_ERROR_LENGTH) return trimmed;
+  return `${trimmed.slice(0, MAX_BRAIN_ERROR_LENGTH - 1)}…`;
+}
+
 export function brainErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim() !== "") return error.message;
+  if (error instanceof Error && error.message.trim() !== "") return capBrainError(error.message);
   if (typeof error === "object" && error !== null && "message" in error) {
     const message = (error as { message?: unknown }).message;
-    if (typeof message === "string" && message.trim() !== "") return message;
+    if (typeof message === "string" && message.trim() !== "") return capBrainError(message);
   }
   return fallback;
 }

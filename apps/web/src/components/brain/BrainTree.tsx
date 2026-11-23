@@ -7,7 +7,7 @@ import {
   type BrainTreeNode,
   type Project,
 } from "@wooky/contracts";
-import { useMemo, useRef, type KeyboardEvent } from "react";
+import { useMemo, useRef, type KeyboardEvent, type RefObject } from "react";
 import { brainKindLabel } from "../../brain/validation.ts";
 import { IconChevron, IconClose, IconFolder, IconRefresh, IconSearch } from "../Icons.tsx";
 import { ProjectMonogram } from "../ProjectMonogram.tsx";
@@ -76,6 +76,7 @@ export interface BrainTreeProps {
   onCollapseFolder: (uri: string) => void;
   onSelectNode: (node: BrainTreeNode) => void;
   onSelectSearchHit: (hit: BrainSearchHit) => void;
+  treeScrollRef?: RefObject<HTMLDivElement | null>;
 }
 
 export function BrainTree({
@@ -108,6 +109,7 @@ export function BrainTree({
   onCollapseFolder,
   onSelectNode,
   onSelectSearchHit,
+  treeScrollRef,
 }: BrainTreeProps) {
   const rootUri = formatBrainUri(activeScope);
   const rootNodes = useMemo(() => nodesByDir[rootUri] ?? [], [nodesByDir, rootUri]);
@@ -270,7 +272,7 @@ export function BrainTree({
         </div>
       </form>
 
-      <div className="brain-tree-scroll">
+      <div ref={treeScrollRef} className="brain-tree-scroll">
         {isSearching ? (
           <div className="brain-search-results" aria-label="Search results">
             {searchLoading ? <p className="brain-status-msg">Searching…</p> : null}

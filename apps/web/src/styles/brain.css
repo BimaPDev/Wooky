@@ -753,6 +753,10 @@
   font-size: var(--text-sm);
 }
 
+.brain-detail-conflict {
+  margin: var(--space-2) var(--space-4) 0;
+}
+
 .brain-conflict-box p {
   margin: 0;
 }

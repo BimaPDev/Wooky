@@ -63,11 +63,13 @@ export function startConnection() {
     onStatus: (status) => {
       useStore.setState({ status });
       noteConnectionStatus(status);
-      if (status === "open") void refreshSync();
+      if (status === "open") {
+        void refreshSync();
+        void refreshBrainInboxCount();
+      }
       if (status === "open" && firstOpen) {
         firstOpen = false;
         void refreshProviders();
-        void refreshBrainInboxCount();
         void loadDeviceSettings().then(() => {
           void bootEnvironments();
         });
