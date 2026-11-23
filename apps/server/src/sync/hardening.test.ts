@@ -404,6 +404,30 @@ describe("interval gate", () => {
     const second = await a.engine.snapshot(a.projectId, "interval", {}, { gate: true });
     expect(second).not.toBeNull();
   });
+
+  it("re-hashes a file whose ctime changed even when git ignores ctime and mtime matches", async () => {
+    const a = await makeDevice({ deviceId: "devA", projectId: "proj" });
+    const file = join(a.root, "f.txt");
+    const fixed = new Date("2025-01-01T00:00:00.000Z");
+    await put(a.root, "f.txt", "aaaa\n");
+    await utimes(file, fixed, fixed);
+    const first = await a.engine.snapshot(a.projectId, "interval", {}, { gate: true });
+    expect(first).not.toBeNull();
+
+    // Mirrors Git for Windows, where st_ctime maps to creation time and never moves on overwrite.
+    const shadow = createShadowGit();
+    const repo = { gitDir: join(a.home, "sync", `${a.projectId}.git`), workTree: a.root };
+    await shadow.run(repo, ["config", "core.trustctime", "false"]);
+
+    await writeFile(file, "bbbb\n");
+    await utimes(file, fixed, fixed);
+    const second = must(await a.engine.snapshot(a.projectId, "interval", {}, { gate: true }));
+    const blob = await shadow.blobAt(repo, second.id, "f.txt");
+    expect(blob?.toString("utf8")).toBe("bbbb\n");
+
+    const third = await a.engine.snapshot(a.projectId, "interval", {}, { gate: true });
+    expect(third).toBeNull();
+  });
 });
 
 describe("ambient git config", () => {

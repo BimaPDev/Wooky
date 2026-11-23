@@ -163,6 +163,7 @@ export interface ScanResult {
   add: string[];
   remove: string[];
   skipped: Array<{ path: string; bytes: number }>;
+  stamps: ReadonlyMap<string, string>;
 }
 
 /** HFS+ and NTFS fold format characters away; a zero-width spelling must not slip past. */
@@ -337,6 +338,7 @@ export function createShadowGit(
   }
 
   const prepared = new Set<string>();
+  const stagedStamps = new Map<string, Map<string, string>>();
 
   /** Creates the shadow repo on first use and points core.worktree at the project. */
   async function ensure(repo: ShadowRepo): Promise<void> {
@@ -443,29 +445,54 @@ export function createShadowGit(
             if (cached) removed.push(path);
             return;
           }
-          add.push({ path, stamp: `${info.mtimeNs}:${info.ctimeNs}:${info.size}:${info.mode}` });
+          add.push({
+            path,
+            stamp: `${info.mtimeNs}:${info.ctimeNs}:${info.size}:${info.mode}:${info.ino}`,
+          });
         }),
       );
     }
     add.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     const hash = createHash("sha1");
-    for (const item of add) hash.update(`${item.path}\0${item.stamp}\n`);
+    const stamps = new Map<string, string>();
+    for (const item of add) {
+      hash.update(`${item.path}\0${item.stamp}\n`);
+      stamps.set(item.path, item.stamp);
+    }
     skipped.sort((a, b) => (a.path < b.path ? -1 : 1));
     return {
       fingerprint: hash.digest("hex"),
       add: add.map((item) => item.path),
       remove: removed,
       skipped,
+      stamps,
     };
   }
 
   /** Brings the private index in line with a scan. Returns the tree sha. */
   async function stage(repo: ShadowRepo, result: ScanResult): Promise<string> {
-    const env = withIndex(indexOf(repo));
-    if (result.remove.length > 0) {
+    const index = indexOf(repo);
+    const env = withIndex(index);
+    const prev = stagedStamps.get(repo.gitDir);
+    stagedStamps.delete(repo.gitDir);
+    // Git on Windows maps st_ctime to creation time and compares mtime at 1s resolution, so
+    // update-index trusts stale entries after a same-size rewrite with a restored mtime. Evict
+    // paths whose Node lstat stamp changed (NTFS ChangeTime) so git must re-hash them.
+    if (process.platform === "win32" && !prev && existsSync(index)) {
+      await rm(index, { force: true });
+    }
+    const rehash: string[] = [];
+    if (prev) {
+      for (const path of result.add) {
+        const before = prev.get(path);
+        if (before !== undefined && before !== result.stamps.get(path)) rehash.push(path);
+      }
+    }
+    const toRemove = rehash.length > 0 ? [...result.remove, ...rehash] : result.remove;
+    if (toRemove.length > 0) {
       await run(repo, ["update-index", "--force-remove", "-z", "--stdin"], {
         env,
-        input: result.remove.join("\0") + "\0",
+        input: toRemove.join("\0") + "\0",
       });
     }
     if (result.add.length > 0) {
@@ -475,11 +502,13 @@ export function createShadowGit(
       });
     }
     const tree = await run(repo, ["write-tree"], { env });
+    stagedStamps.set(repo.gitDir, new Map(result.stamps));
     return tree.text.trim();
   }
 
   /** The next scan must re-read every file: used after files were written by restore or apply. */
   async function dropIndex(repo: ShadowRepo): Promise<void> {
+    stagedStamps.delete(repo.gitDir);
     await rm(indexOf(repo), { force: true });
   }
 
@@ -1046,6 +1075,7 @@ export function createShadowGit(
   }
 
   async function remove(repo: ShadowRepo): Promise<void> {
+    stagedStamps.delete(repo.gitDir);
     await rm(repo.gitDir, { recursive: true, force: true });
   }
 
