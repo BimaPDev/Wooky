@@ -56,6 +56,7 @@ export function createShipService(deps: {
     const timeoutSec = Math.round(limit / 1000);
     return new Promise((resolvePromise, reject) => {
       let settled = false;
+      let timedOut = false;
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
@@ -74,7 +75,8 @@ export function createShipService(deps: {
       const err: Buffer[] = [];
       child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
-      child.on("error", (error) =>
+      child.on("error", (error) => {
+        if (timedOut) return;
         finish(() =>
           reject(
             new ServiceError(
@@ -82,9 +84,10 @@ export function createShipService(deps: {
               redactCliError(error instanceof Error ? error.message : "Could not run git"),
             ),
           ),
-        ),
-      );
+        );
+      });
       child.on("close", (code) => {
+        if (timedOut) return;
         const stdout = Buffer.concat(out).toString("utf8");
         const stderr = Buffer.concat(err).toString("utf8");
         finish(() => {
@@ -100,12 +103,21 @@ export function createShipService(deps: {
         child.stdin.end();
       }
       const timer = setTimeout(() => {
-        if (pid !== undefined) void killTree(pid, "SIGKILL", { mode: "group" });
-        finish(() =>
-          reject(
-            new ServiceError("unavailable", `git ${args.join(" ")} timed out after ${timeoutSec}s`),
-          ),
-        );
+        timedOut = true;
+        const rejectTimeout = () =>
+          finish(() =>
+            reject(
+              new ServiceError(
+                "unavailable",
+                `git ${args.join(" ")} timed out after ${timeoutSec}s`,
+              ),
+            ),
+          );
+        if (pid !== undefined) {
+          void killTree(pid, "SIGKILL", { mode: "group" }).finally(rejectTimeout);
+        } else {
+          rejectTimeout();
+        }
       }, limit);
     });
   }
@@ -193,9 +205,13 @@ export function createShipService(deps: {
   }
 
   async function readOriginHost(cwd: string): Promise<string | null> {
-    const res = await runGit(["remote", "get-url", "origin"], { cwd, allowFail: true });
-    if (res.code !== 0) return null;
-    return originHost(res.stdout);
+    try {
+      const res = await runGit(["remote", "get-url", "origin"], { cwd, allowFail: true });
+      if (res.code !== 0) return null;
+      return originHost(res.stdout);
+    } catch {
+      return null;
+    }
   }
 
   function stripUserinfo(url: string): string {
@@ -438,7 +454,11 @@ export function createShipService(deps: {
             const host = (await readOriginHost(threadCwd)) ?? "github.com";
             let hostAuthed = authedHosts.get(host);
             if (hostAuthed === undefined) {
-              hostAuthed = await gh.authStatus(host);
+              try {
+                hostAuthed = await gh.authStatus(host);
+              } catch {
+                hostAuthed = false;
+              }
               authedHosts.set(host, hostAuthed);
             }
             if (!hostAuthed) continue;
