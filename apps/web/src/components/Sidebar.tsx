@@ -57,6 +57,13 @@ const statusText = {
   offline: "Offline",
 } as const;
 
+const unreachableText = {
+  connecting: "Connecting to Wooky...",
+  open: "Connected",
+  reconnecting: "Reconnecting...",
+  offline: "Wooky is not reachable. Retrying.",
+} as const;
+
 export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const model = useStore((state) => state.model);
   const projects = model.projects;
@@ -178,7 +185,12 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
         groups.every((g) => g.threads.length === 0) ? (
           <p className="sidebar-empty">No matching threads.</p>
         ) : null}
-        {!hasProjects ? (
+        {!hasProjects && status !== "open" ? (
+          <div className="sidebar-empty">
+            <p>{unreachableText[status]}</p>
+          </div>
+        ) : null}
+        {!hasProjects && status === "open" ? (
           <div className="sidebar-empty">
             <p>No projects yet.</p>
             <button

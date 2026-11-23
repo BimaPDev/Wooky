@@ -65,7 +65,15 @@ describe("Sidebar project list", () => {
     expect(host?.querySelector(".project-name")).toBeNull();
   });
 
+  it("says it is connecting instead of claiming there are no projects", async () => {
+    useStore.setState({ status: "connecting" });
+    await mountSidebar([]);
+    expect(host?.textContent).toContain("Connecting to Wooky");
+    expect(host?.textContent).not.toContain("No projects yet");
+  });
+
   it("explains an empty workspace", async () => {
+    useStore.setState({ status: "open" });
     await mountSidebar([]);
     expect(host?.textContent).toContain("No projects yet");
     expect(host?.textContent).toContain("Add a project");
