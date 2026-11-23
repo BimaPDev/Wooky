@@ -75,7 +75,7 @@ interface PeerRuntime {
 class NetworkError extends Error {}
 
 export function createSyncEngine(deps: SyncDeps) {
-  const git = createShadowGit(deps.gitBin ? { gitBin: deps.gitBin } : {});
+  const git = createShadowGit({ home: deps.home, ...(deps.gitBin ? { gitBin: deps.gitBin } : {}) });
   const now = deps.now ?? (() => new Date());
   const timers = deps.timers ?? realTimers;
   const doFetch = deps.fetch ?? fetch;

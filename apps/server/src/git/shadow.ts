@@ -8,12 +8,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   constants as fsConstants,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   writeFileSync,
+  type Stats,
 } from "node:fs";
 import {
   lstat,
@@ -36,23 +40,80 @@ import { gitChildEnv } from "./env.ts";
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const ZERO_SHA = "0".repeat(40);
 
+const onWindows = process.platform === "win32";
+
+function ownedByUs(info: Stats): boolean {
+  return onWindows || typeof process.getuid !== "function" || info.uid === process.getuid();
+}
+
+/** A real, private entry: not a symlink, ours on POSIX, not writable by group or others. */
+function trusted(info: Stats): boolean {
+  if (info.isSymbolicLink() || !ownedByUs(info)) return false;
+  return onWindows || (info.mode & 0o022) === 0;
+}
+
+function isInertConfig(path: string): boolean {
+  try {
+    const info = lstatSync(path);
+    return info.isFile() && trusted(info) && info.size === 0;
+  } catch {
+    return false;
+  }
+}
+
+function isInertDir(path: string, empty: boolean): boolean {
+  try {
+    const info = lstatSync(path);
+    return info.isDirectory() && trusted(info) && (!empty || readdirSync(path).length === 0);
+  } catch {
+    return false;
+  }
+}
+
+let fallbackInertDir: string | null = null;
+
 /**
- * An empty git config file and an empty hooks directory, owned by this process. Calls that
- * have no shadow repo yet (init, --version, plumbing on a project) still need "no global
- * config, no hooks"; the null device cannot stand in, because git on Windows opens
- * `\\.\nul` as a path and fails with "Invalid argument".
+ * An empty git config file and an empty hooks directory. Calls that have no shadow repo yet
+ * (init, --version, plumbing on a project) still need "no global config, no hooks"; the null
+ * device cannot stand in, because git on Windows opens `\\.\nul` as a path and fails with
+ * "Invalid argument".
+ *
+ * They live under the Wooky home (`run/git-inert`), not a shared temp directory, where
+ * another local user could replace them after a cleaner removed them. Every use re-checks
+ * that they are still ours and empty, and rebuilds them if not: a planted config or hook
+ * would otherwise run for every git call.
  */
-let inert: { config: string; hooks: string } | null = null;
-function inertGitFiles(): { config: string; hooks: string } {
-  if (inert) return inert;
-  const dir = mkdtempSync(join(tmpdir(), "wooky-git-"));
+function inertGitFiles(home: string | undefined): { config: string; hooks: string } {
+  let dir: string;
+  if (home) {
+    dir = join(home, "run", "git-inert");
+  } else {
+    // No home (tests, tools): a private per-process directory instead.
+    if (!fallbackInertDir) {
+      const created = mkdtempSync(join(tmpdir(), "wooky-git-"));
+      fallbackInertDir = created;
+      process.once("exit", () => {
+        try {
+          rmSync(created, { recursive: true, force: true });
+        } catch {
+          // Best effort: Windows may still hold the directory open.
+        }
+      });
+    }
+    dir = fallbackInertDir;
+  }
   const config = join(dir, "empty.config");
   const hooks = join(dir, "no-hooks");
-  writeFileSync(config, "");
-  mkdirSync(hooks);
-  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
-  inert = { config, hooks };
-  return inert;
+  if (isInertDir(dir, false) && isInertConfig(config) && isInertDir(hooks, true)) {
+    return { config, hooks };
+  }
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!onWindows) chmodSync(dir, 0o700);
+  writeFileSync(config, "", { mode: 0o600 });
+  mkdirSync(hooks, { mode: 0o700 });
+  if (!onWindows) chmodSync(hooks, 0o700);
+  return { config, hooks };
 }
 
 export class ShadowGitError extends Error {
@@ -224,12 +285,15 @@ async function retryBusy<T>(fn: () => Promise<T>): Promise<T> {
 export function createShadowGit(
   options: {
     gitBin?: string;
+    /** WOOKY_HOME: where the inert git config and hooks directory live. */
+    home?: string;
     /** Test seam: runs after the temporary file is written and before the final checks. */
     beforeCommit?: (finalPath: string) => Promise<void>;
   } = {},
 ) {
   const beforeCommit = options.beforeCommit;
   const gitBin = options.gitBin ?? "git";
+  const home = options.home;
 
   function environment(repo: ShadowRepo | null, extra?: Record<string, string>) {
     const env = gitChildEnv();
@@ -245,7 +309,9 @@ export function createShadowGit(
     }
     env.GIT_CONFIG_NOSYSTEM = "1";
     env.GIT_ATTR_NOSYSTEM = "1";
-    env.GIT_CONFIG_GLOBAL = repo ? join(repo.gitDir, "wooky-empty.config") : inertGitFiles().config;
+    env.GIT_CONFIG_GLOBAL = repo
+      ? join(repo.gitDir, "wooky-empty.config")
+      : inertGitFiles(home).config;
     if (repo) {
       env.GIT_DIR = repo.gitDir;
       env.GIT_WORK_TREE = repo.workTree;
@@ -269,7 +335,7 @@ export function createShadowGit(
   function launch(repo: ShadowRepo | null, args: string[], opts: RunOptions): ChildProcess {
     const hooks = [
       "-c",
-      `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : inertGitFiles().hooks}`,
+      `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : inertGitFiles(home).hooks}`,
     ];
     return spawn(gitBin, [...CONFIG_OVERRIDES, ...hooks, ...args], {
       // The work tree, so git never computes a prefix when the shadow dir sits inside the project.
