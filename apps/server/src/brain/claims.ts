@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { ServiceError } from "../errors.ts";
 import type { BrainLog } from "./paths.ts";
 import { assertNoSecret } from "./safety.ts";
+import { INVISIBLE } from "./text.ts";
 
 /**
  * Live state of a fleet run: who holds which files, what one worker hands the next, what a worker
@@ -18,6 +19,10 @@ import { assertNoSecret } from "./safety.ts";
 
 export const CLAIM_TTL_MS = 2 * 60 * 60 * 1000;
 export const MAX_LIVE_CLAIMS_PER_RUN = 100;
+/** So one thread cannot use up the run's claims and leave none for the others. */
+export const MAX_LIVE_CLAIMS_PER_THREAD = 20;
+/** Wildcards in one target: a run of `*` counts once, each `?` once. */
+export const MAX_WILDCARDS_PER_TARGET = 8;
 export const MAX_TEXT_CHARS = 2048;
 export const MAX_TARGET_CHARS = 200;
 /** Handoffs and findings per run. At the cap the oldest is dropped. */
@@ -33,8 +38,19 @@ export const ClaimInput = z.object({
   projectId: Id,
   threadId: Id,
   agent: z.string().min(1).max(64),
-  /** A path, a glob such as `src/**`, or a label such as `topic:auth`. */
-  target: z.string().min(1).max(MAX_TARGET_CHARS),
+  /**
+   * A path, a glob such as `src/**`, or a label such as `topic:auth`. It may not start with a
+   * wildcard (that would claim nearly everything) and has at most MAX_WILDCARDS_PER_TARGET.
+   */
+  target: z
+    .string()
+    .min(1)
+    .max(MAX_TARGET_CHARS)
+    .refine((target) => !startsWithWildcard(target), "must not start with a wildcard")
+    .refine(
+      (target) => wildcardCount(target) <= MAX_WILDCARDS_PER_TARGET,
+      `must have at most ${MAX_WILDCARDS_PER_TARGET} wildcards`,
+    ),
   note: Text.default(""),
 });
 export type ClaimInput = z.input<typeof ClaimInput>;
@@ -105,6 +121,8 @@ export interface RunCoordination {
   findings(input: FindingsInput): Finding;
   /** Releases every claim a thread holds. Handoffs and findings stay for the run. */
   releaseThread(threadId: string): number;
+  /** Releases every claim of every run. A starting server calls it: no turn holds one yet. */
+  releaseAll(): number;
   close(): void;
 }
 
@@ -127,6 +145,8 @@ export function fleetRunId(thread: {
 }
 
 const WILDCARD = /[*?[\]{}]/;
+/** A label such as `topic:auth`: a word, a colon and no slash. It is compared as a whole. */
+const LABEL = /^[\p{L}][\p{L}\p{N}_-]*:[^/]*$/u;
 
 function normalizeTarget(target: string): string {
   return target
@@ -135,18 +155,51 @@ function normalizeTarget(target: string): string {
     .replaceAll("\\", "/")
     .replace(/\/{2,}/g, "/")
     .replace(/^(?:\.\/)+/, "")
+    .replace(/^\/+/, "")
     .replace(/\/+$/, "")
     .toLowerCase();
 }
 
-function segmentGlob(pattern: string, literal: string): boolean {
-  let source = "";
-  for (const char of pattern) {
-    if (char === "*") source += "[^/]*";
-    else if (char === "?") source += "[^/]";
-    else source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+const isLabel = (normalized: string) => LABEL.test(normalized);
+
+function startsWithWildcard(target: string): boolean {
+  const normalized = normalizeTarget(target);
+  return !isLabel(normalized) && /^[*?]/.test(normalized);
+}
+
+function wildcardCount(target: string): number {
+  return (target.match(/\*+|\?/g) ?? []).length;
+}
+
+/**
+ * `*` matches any run of characters and `?` one character; nothing else is special. Two pointers,
+ * and on a mismatch the last `*` takes one more character: O(pattern x text), no backtracking
+ * blow-up, no regular expression built from what a worker sent.
+ */
+function wildcardMatch(pattern: string, text: string): boolean {
+  let p = 0;
+  let t = 0;
+  let star = -1;
+  let resume = 0;
+  while (t < text.length) {
+    const char = pattern[p];
+    if (char === "*") {
+      while (pattern[p] === "*") p += 1;
+      star = p;
+      resume = t;
+    } else if (p < pattern.length && (char === "?" || char === text[t])) {
+      p += 1;
+      t += 1;
+    } else if (star !== -1) {
+      resume += 1;
+      t = resume;
+      p = star;
+    } else {
+      return false;
+    }
   }
-  return new RegExp(`^${source}$`).test(literal);
+  while (pattern[p] === "*") p += 1;
+  return p === pattern.length;
 }
 
 function segmentsOverlap(a: string, b: string): boolean {
@@ -154,19 +207,23 @@ function segmentsOverlap(a: string, b: string): boolean {
   const aWild = WILDCARD.test(a);
   const bWild = WILDCARD.test(b);
   if (aWild && bWild) return true;
-  if (aWild) return segmentGlob(a, b);
-  if (bWild) return segmentGlob(b, a);
+  if (aWild) return wildcardMatch(a, b);
+  if (bWild) return wildcardMatch(b, a);
   return false;
 }
 
 /**
  * Two targets overlap when one names the other or something inside it: the same path, a folder
  * and a file below it, or globs that can match a common path. Wildcards on both sides count as
- * overlap, since telling otherwise is not worth being wrong about. A claim is only advice.
+ * overlap, since telling otherwise is not worth being wrong about. A label overlaps only the same
+ * label: it is not a path, so no glob reaches it. A claim is only advice.
  */
 export function targetsOverlap(first: string, second: string): boolean {
-  const a = normalizeTarget(first).split("/");
-  const b = normalizeTarget(second).split("/");
+  const one = normalizeTarget(first);
+  const two = normalizeTarget(second);
+  if (isLabel(one) || isLabel(two)) return one === two;
+  const a = one.split("/");
+  const b = two.split("/");
   const shared = Math.min(a.length, b.length);
   for (let index = 0; index < shared; index += 1) {
     const left = a[index] ?? "";
@@ -230,12 +287,11 @@ function parse<T>(schema: z.ZodType<T, unknown>, input: unknown): T {
   throw new ServiceError("bad_request", `Invalid ${field}: ${issue?.message ?? "bad value"}`);
 }
 
-/** Control characters other than newline, carriage return and tab have no place in a note. */
-const CONTROL = /[\p{Cc}\u2028\u2029]/u;
-
 function checkText(label: string, value: string, multiline = true): void {
-  if (CONTROL.test(value.replace(/[\n\r\t]/g, ""))) {
-    throw new ServiceError("bad_request", `The ${label} contains control characters.`);
+  // Control, format and other invisible characters (tag characters, zero-width, bidi, variation
+  // selectors) are refused, newline, carriage return and tab aside: text can hide instructions in them.
+  if (INVISIBLE.test(value.replace(/[\n\r\t]/g, ""))) {
+    throw new ServiceError("bad_request", `The ${label} contains control or invisible characters.`);
   }
   if (!multiline && /[\n\r\t]/.test(value)) {
     throw new ServiceError("bad_request", `The ${label} must be a single line.`);
@@ -253,6 +309,9 @@ export function createRunStore(options: RunStoreOptions): RunCoordination {
   function open(): DatabaseSync {
     if (db !== null) return db;
     mkdirSync(dirname(file), { recursive: true });
+    // Claims name files and workers: nobody but the owner reads this database. The journal files
+    // SQLite adds take the main file's mode; they are set below too in case it does not.
+    closeSync(openSync(file, "a", 0o600));
     const opened = new DatabaseSync(file);
     try {
       opened.exec("PRAGMA busy_timeout = 2000");
@@ -283,6 +342,9 @@ export function createRunStore(options: RunStoreOptions): RunCoordination {
           CREATE INDEX findings_run ON findings (run_id);
           PRAGMA user_version = ${SCHEMA_VERSION};
         `);
+      }
+      for (const suffix of ["", "-wal", "-shm"]) {
+        if (existsSync(file + suffix)) chmodSync(file + suffix, 0o600);
       }
     } catch (error) {
       opened.close();
@@ -373,6 +435,15 @@ export function createRunStore(options: RunStoreOptions): RunCoordination {
               claim.threadId !== input.threadId && targetsOverlap(claim.target, input.target),
           );
           if (holder !== undefined) return { status: "held" as const, holder };
+          if (
+            live.filter((claim) => claim.threadId === input.threadId).length >=
+            MAX_LIVE_CLAIMS_PER_THREAD
+          ) {
+            throw new ServiceError(
+              "bad_request",
+              `This thread already holds ${MAX_LIVE_CLAIMS_PER_THREAD} claims. Release some first.`,
+            );
+          }
           if (live.length >= MAX_LIVE_CLAIMS_PER_RUN) {
             throw new ServiceError(
               "bad_request",
@@ -432,6 +503,14 @@ export function createRunStore(options: RunStoreOptions): RunCoordination {
         return Number(
           database.prepare("DELETE FROM claims WHERE thread_id = ?").run(threadId).changes,
         );
+      });
+    },
+
+    releaseAll() {
+      return guard("release", () => {
+        const database = openIfPresent();
+        if (database === null) return 0;
+        return Number(database.prepare("DELETE FROM claims").run().changes);
       });
     },
 

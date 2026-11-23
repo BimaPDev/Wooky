@@ -331,6 +331,8 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
           threadId: thread.id,
           role: thread.role,
           parentThreadId: thread.parentThreadId,
+          provider: thread.provider,
+          sessionId: thread.providerSessionId,
         }),
       );
     } catch (cause) {

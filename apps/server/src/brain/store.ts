@@ -58,6 +58,8 @@ export interface BrainStoreOptions {
   now?: () => number;
   /** Test hook: how long the search index waits for another connection's lock. */
   indexBusyTimeoutMs?: number;
+  /** Test hook: called each time a scope's files are walked to bring the index up to date. */
+  onSync?: (scopeKey: string) => void;
 }
 
 export interface BrainWriteInput {
@@ -76,6 +78,17 @@ export interface BrainSearchOptions {
   pathPrefix?: string;
   limit: number;
   includeArchived?: boolean;
+  /** The caller just called `refresh`: query the index as it is, without walking the files. */
+  skipSync?: boolean;
+}
+
+export interface BrainRefreshOptions {
+  /** How long to wait for another connection's write lock. Past it the scope is left out. */
+  lockWaitMs: number;
+  /** A scope refreshed less than this long ago is not walked again. Default 0: always walk. */
+  maxAgeMs?: number;
+  /** Asked while walking and loading. When it says yes the work ends and what is done stays. */
+  stop?: () => boolean;
 }
 
 export interface BrainStore {
@@ -95,7 +108,21 @@ export interface BrainStore {
   remove(uri: string): void;
   search(query: string, options: BrainSearchOptions): BrainSearchHit[];
   /** Active memories marked `pinned: true` in the given scopes, newest first. */
-  pinned(scopes: readonly BrainScope[], limit: number): BrainSearchHit[];
+  pinned(
+    scopes: readonly BrainScope[],
+    limit: number,
+    options?: { skipSync?: boolean },
+  ): BrainSearchHit[];
+  /** Whether the scope holds any memory at all. Stops at the first, creates nothing. */
+  hasMemories(scope: BrainScope): boolean;
+  /**
+   * Brings the index in line with the files of the given scopes for a prompt, and returns the
+   * scopes it can be queried for. It never waits long: a scope whose sync is blocked by another
+   * connection's lock, or whose folder cannot be opened, is left out, and so is every scope after
+   * a locked index. A walk or load cut short by `stop` is not an error: what was done stays and
+   * the scope stays queryable, but it is not marked fresh.
+   */
+  refresh(scopes: readonly BrainScope[], options: BrainRefreshOptions): BrainScope[];
   overview(dirUri: string): BrainEntry;
   /** Brings the search index in line with the files of one scope. */
   reindex(scope: BrainScope): SyncReport;
@@ -110,6 +137,8 @@ export interface BrainStore {
  */
 const WALK_ENTRIES = 3 * BRAIN_MAX_MEMORIES + 1000;
 const walkBudget = () => createScanBudget(WALK_ENTRIES);
+/** Entries `hasMemories` may read looking for one memory. */
+const PROBE_ENTRIES = 1000;
 
 const AUTO_TAG = "auto";
 const MAX_OVERVIEW_MEMORIES = 80;
@@ -154,6 +183,9 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
   const log: BrainLog = options.log ?? (() => {});
   let index: BrainIndex | null = null;
   const indexFile = join(options.home, "brain", "index.sqlite");
+  const nowMs = options.now ?? Date.now;
+  /** When each scope was last found in line with its files; a write through here forgets its scope. */
+  const freshAt = new Map<string, number>();
 
   /** Nothing but a ServiceError leaves the store: anything else is logged here and mapped. */
   function guard<T>(operation: string, run: () => T): T {
@@ -175,9 +207,10 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     }
   }
 
-  const getIndex = (): BrainIndex =>
+  const getIndex = (openWaitMs?: number): BrainIndex =>
     (index ??= openBrainIndex(indexFile, {
       log,
+      ...(openWaitMs === undefined ? {} : { openWaitMs }),
       ...(options.noFts5 === undefined ? {} : { noFts5: options.noFts5 }),
       ...(options.now === undefined ? {} : { now: options.now }),
       ...(options.indexBusyTimeoutMs === undefined
@@ -399,6 +432,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     const name = found.segments.at(-1) ?? "";
     const folder = found.segments.slice(0, -1);
     found.root.writeAtomic(folder, name, serializeMemory(frontmatter, body));
+    freshAt.delete(brainScopeKey(found.scope));
     regenerateOverviews(found.root, folder);
     return {
       uri: formatBrainUri(found.scope, found.path),
@@ -454,6 +488,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
   }
 
   function syncScope(scope: BrainScope, root: BrainRoot): SyncReport {
+    options.onSync?.(brainScopeKey(scope));
     let files: ReturnType<BrainRoot["scan"]>["files"] = [];
     let truncated = false;
     try {
@@ -482,6 +517,67 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       }
     }
     return scopes;
+  }
+
+  /** The requested scopes by key, for a query whose caller has just refreshed them. */
+  function unsynced(requested: readonly BrainScope[]): Map<string, BrainScope> {
+    return new Map(requested.map((scope) => [brainScopeKey(scope), scope]));
+  }
+
+  function refreshScopes(
+    requested: readonly BrainScope[],
+    refreshOptions: BrainRefreshOptions,
+  ): BrainScope[] {
+    const maxAge = refreshOptions.maxAgeMs ?? 0;
+    const stop = refreshOptions.stop;
+    const at = nowMs();
+    const ready = new Map<string, BrainScope>();
+    const pending = new Map<string, BrainScope>();
+    for (const scope of requested) {
+      const key = brainScopeKey(scope);
+      const since = freshAt.get(key);
+      if (since !== undefined && at - since < maxAge) ready.set(key, scope);
+      else pending.set(key, scope);
+    }
+    if (pending.size > 0) {
+      try {
+        withIndexRecovery(() =>
+          getIndex(refreshOptions.lockWaitMs).withBusyTimeout(refreshOptions.lockWaitMs, () => {
+            for (const [key, scope] of pending) {
+              if (stop?.() === true) break;
+              let root: BrainRoot;
+              let scanned: ReturnType<BrainRoot["scan"]>;
+              try {
+                root = openRoot(options.home, scope, options.resolveProjectRoot, log);
+                options.onSync?.(key);
+                scanned = root.scan([], createScanBudget(WALK_ENTRIES, stop));
+              } catch (error) {
+                if (!(error instanceof ServiceError)) throw error;
+                log(`brain: skipping ${key} in a prompt (${error.message})`);
+                continue;
+              }
+              // A walk that did not finish would look like deleted files: leave the index as it is.
+              if (scanned.truncated) {
+                ready.set(key, scope);
+                continue;
+              }
+              const report = getIndex().sync(
+                key,
+                scanned.files,
+                loadForIndex(root),
+                stop === undefined ? {} : { stop },
+              );
+              ready.set(key, scope);
+              if (report.truncated !== true) freshAt.set(key, at);
+            }
+          }),
+        );
+      } catch (error) {
+        if (!isBusyDatabase(error) && !(error instanceof ServiceError)) throw error;
+        log("brain: the search index is not available, so a prompt goes without some memories");
+      }
+    }
+    return requested.filter((scope) => ready.has(brainScopeKey(scope)));
   }
 
   function toBrainHits(
@@ -633,6 +729,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       if (!found.root.unlink(found.segments)) {
         throw new ServiceError("not_found", `No such memory: ${uri}`);
       }
+      freshAt.delete(brainScopeKey(found.scope));
       regenerateOverviews(found.root, found.segments.slice(0, -1));
     },
 
@@ -644,7 +741,10 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
         throw new ServiceError("bad_request", "pathPrefix is not a valid brain path");
       }
       const { hits, scopes } = withIndexRecovery(() => {
-        const synced = syncScopes(searchOptions.scopes, "a search");
+        const synced =
+          searchOptions.skipSync === true
+            ? unsynced(searchOptions.scopes)
+            : syncScopes(searchOptions.scopes, "a search");
         const found = getIndex().search(query, {
           scopeKeys: [...synced.keys()],
           limit: searchOptions.limit,
@@ -660,13 +760,23 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       return toBrainHits(hits, scopes);
     },
 
-    pinned(pinnedScopes, limit) {
+    pinned(pinnedScopes, limit, pinnedOptions = {}) {
       const { hits, scopes } = withIndexRecovery(() => {
-        const synced = syncScopes(pinnedScopes, "a pinned lookup");
+        const synced =
+          pinnedOptions.skipSync === true
+            ? unsynced(pinnedScopes)
+            : syncScopes(pinnedScopes, "a pinned lookup");
         return { hits: getIndex().pinned([...synced.keys()], limit), scopes: synced };
       });
       return toBrainHits(hits, scopes);
     },
+
+    hasMemories(scope) {
+      const root = openRoot(options.home, scope, options.resolveProjectRoot, log);
+      return root.hasMemory(createScanBudget(PROBE_ENTRIES));
+    },
+
+    refresh: refreshScopes,
 
     overview: (dirUri) => overview(dirUri, 1),
 
@@ -689,7 +799,11 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     archive: (uri) => guard("archive", () => raw.archive(uri)),
     remove: (uri) => guard("remove", () => raw.remove(uri)),
     search: (query, searchOptions) => guard("search", () => raw.search(query, searchOptions)),
-    pinned: (scopes, limit) => guard("pinned", () => raw.pinned(scopes, limit)),
+    pinned: (scopes, limit, pinnedOptions) =>
+      guard("pinned", () => raw.pinned(scopes, limit, pinnedOptions)),
+    hasMemories: (scope) => guard("hasMemories", () => raw.hasMemories(scope)),
+    refresh: (scopes, refreshOptions) =>
+      guard("refresh", () => raw.refresh(scopes, refreshOptions)),
     overview: (dirUri) => guard("overview", () => raw.overview(dirUri)),
     reindex: (scope) => guard("reindex", () => raw.reindex(scope)),
     close: () => raw.close(),

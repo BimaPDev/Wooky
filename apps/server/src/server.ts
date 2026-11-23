@@ -151,6 +151,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     log: (message) => console.error(message),
   });
   const brainRuns = createRunStore({ home: options.home });
+  // Every claim belongs to a turn, and no turn is running yet: whatever is left is from a crash.
+  try {
+    brainRuns.releaseAll();
+  } catch (error) {
+    console.error("Could not release brain claims left from the last run", error);
+  }
   const closeStore = () => {
     unwatchHeldNotices();
     brainStore.close();

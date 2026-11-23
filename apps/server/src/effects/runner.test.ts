@@ -1766,4 +1766,31 @@ describe("effect runner brain context", () => {
     });
     expect(inputs.map((input) => input.prompt)).toEqual(["plain", "still plain"]);
   });
+  it("tells the brain which provider and session the turn runs in, so it can skip what the session already has", async () => {
+    const seen: { provider: string | undefined; sessionId: string | null | undefined }[] = [];
+    const h = await harness({
+      adapters: [
+        scripted("demo", async function* () {
+          yield { type: "session", sessionId: "sess-1" };
+          yield { type: "done", status: "completed", error: null };
+        }),
+      ],
+      brain: {
+        contextFor: (input) => {
+          seen.push({ provider: input.provider, sessionId: input.sessionId });
+          return null;
+        },
+        turnEnded: () => {},
+      },
+    });
+    const threadId = h.createThread("full");
+    await finishedFor(h.store, h.startTurn(threadId, "one").turnId);
+    await h.runner.idle();
+    await finishedFor(h.store, h.startTurn(threadId, "two").turnId);
+    await h.runner.idle();
+    expect(seen).toEqual([
+      { provider: "demo", sessionId: null },
+      { provider: "demo", sessionId: "sess-1" },
+    ]);
+  });
 });

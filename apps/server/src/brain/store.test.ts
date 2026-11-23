@@ -62,6 +62,7 @@ function setup(
     fixedClock?: boolean;
     now?: () => number;
     indexBusyTimeoutMs?: number;
+    onSync?: (scopeKey: string) => void;
   } = {},
 ): Fixture {
   const home = dir("home");
@@ -79,6 +80,7 @@ function setup(
     log: (message) => logs.push(message),
     ...(options.noFts5 === undefined ? {} : { noFts5: options.noFts5 }),
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.onSync === undefined ? {} : { onSync: options.onSync }),
     ...(options.indexBusyTimeoutMs === undefined
       ? {}
       : { indexBusyTimeoutMs: options.indexBusyTimeoutMs }),
@@ -781,5 +783,105 @@ describe.each([false, true])("pinned memories (noFts5: %s)", (noFts5) => {
     expect(store.pinned([A], 10)).toHaveLength(1);
     store.write(a("x.md"), note("Pinned", ""), { expectedUpdatedAt: updatedAt });
     expect(store.pinned([A], 10)).toEqual([]);
+  });
+});
+
+describe("hasMemories", () => {
+  it("answers without creating anything, and stops at the first memory", () => {
+    const { store, rootA, home } = setup();
+    expect(store.hasMemories(A)).toBe(false);
+    expect(store.hasMemories(GLOBAL)).toBe(false);
+    expect(existsSync(join(rootA, ".wooky"))).toBe(false);
+    expect(existsSync(join(home, "brain"))).toBe(false);
+    store.write(a("deep/er/x.md"), note("Deep"));
+    expect(store.hasMemories(A)).toBe(true);
+    expect(store.hasMemories(GLOBAL)).toBe(false);
+    store.remove(a("deep/er/x.md"));
+    expect(store.hasMemories(A)).toBe(false);
+  });
+
+  it("is false for folders and overviews alone, and refuses an unknown project", () => {
+    const { store, brainA } = setup();
+    mkdirSync(join(brainA, "empty", "folders"), { recursive: true });
+    writeFileSync(join(brainA, "_overview.md"), "---\nsummary: x\n---\n");
+    expect(store.hasMemories(A)).toBe(false);
+    expect(codeOf(() => store.hasMemories({ kind: "project", projectId: "nope" }))).toBe(
+      "not_found",
+    );
+  });
+
+  it("gives up on a tree of empty folders past its entry budget instead of reading it all", () => {
+    const { store, brainA } = setup();
+    for (let index = 0; index < 1200; index += 1) {
+      mkdirSync(join(brainA, `d${String(index).padStart(4, "0")}`), { recursive: true });
+    }
+    expect(store.hasMemories(A)).toBe(false);
+  });
+});
+
+describe("refresh, for the prompt path", () => {
+  const fresh = { lockWaitMs: 50, maxAgeMs: 5000 };
+
+  it("syncs a scope once and remembers that it is fresh until a write or the time limit", () => {
+    const syncs: string[] = [];
+    let at = Date.now() + 60_000;
+    const { store } = setup({ onSync: (key) => syncs.push(key), now: () => at });
+    store.write(a("x.md"), note("Pinned", "", { pinned: true }));
+    expect(store.refresh([GLOBAL, A], fresh)).toEqual([GLOBAL, A]);
+    expect(syncs).toEqual(["global", "project:proj_a"]);
+    store.refresh([GLOBAL, A], fresh);
+    expect(syncs).toHaveLength(2);
+    at += 6000;
+    store.refresh([GLOBAL, A], fresh);
+    expect(syncs).toHaveLength(4);
+    store.write(a("y.md"), note("Another"));
+    store.refresh([A], fresh);
+    expect(syncs).toHaveLength(5);
+    expect(store.pinned([A], 5, { skipSync: true }).map((hit) => hit.summary)).toEqual(["Pinned"]);
+    expect(store.search("another", { scopes: [A], limit: 5, skipSync: true })).toHaveLength(1);
+  });
+
+  it("leaves out a scope it cannot open", () => {
+    const { store } = setup();
+    expect(store.refresh([{ kind: "project", projectId: "nope" }, GLOBAL], fresh)).toEqual([
+      GLOBAL,
+    ]);
+  });
+
+  it("does not index a walk that was told to stop, and indexes it on a later turn", () => {
+    const { store, brainA } = setup();
+    for (let index = 0; index < 300; index += 1) {
+      const folder = join(brainA, `f${String(index).padStart(3, "0")}`);
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(
+        join(folder, "m.md"),
+        `---\nsummary: "memory ${index}"\nkind: "note"\nstatus: "active"\npinned: true\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\n`,
+      );
+    }
+    let checks = 0;
+    const stop = () => ++checks > 10;
+    store.refresh([A], { ...fresh, stop });
+    expect(checks).toBeLessThan(60);
+    expect(store.pinned([A], 5, { skipSync: true })).toEqual([]);
+    expect(store.refresh([A], fresh)).toEqual([A]);
+    expect(store.pinned([A], 5, { skipSync: true })).toHaveLength(5);
+  });
+
+  it("skips a scope when the index is locked and a write would be needed, without a long wait", () => {
+    const { store, home } = setup({ indexBusyTimeoutMs: 2000 });
+    store.write(a("x.md"), note("Pinned", "", { pinned: true }));
+    expect(store.refresh([A], { lockWaitMs: 50 })).toEqual([A]);
+    store.write(a("y.md"), note("New"));
+    const other = new DatabaseSync(join(home, "brain", "index.sqlite"));
+    other.exec("BEGIN IMMEDIATE");
+    try {
+      const started = performance.now();
+      expect(store.refresh([A], { lockWaitMs: 50 })).toEqual([]);
+      expect(performance.now() - started).toBeLessThan(1000);
+    } finally {
+      other.exec("ROLLBACK");
+      other.close();
+    }
+    expect(store.refresh([A], { lockWaitMs: 50 })).toEqual([A]);
   });
 });

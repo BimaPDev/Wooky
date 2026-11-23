@@ -214,3 +214,73 @@ describe("files with a future mtime", () => {
     index.close();
   });
 });
+
+describe("a sync on the way to a prompt", () => {
+  const now = Date.UTC(2026, 0, 1);
+  const old = (path: string, size = 5) => ({ path, mtimeMs: now - 60_000, size });
+
+  it("takes no write lock when nothing changed", () => {
+    const file = indexFile();
+    const index = openBrainIndex(file, { now: () => now, busyTimeoutMs: 20 });
+    const files = [old("a.md"), old("b.md")];
+    index.sync("global", files, () => loaded("hello"));
+
+    const other = new DatabaseSync(file);
+    other.exec("BEGIN IMMEDIATE");
+    try {
+      expect(index.sync("global", files, () => loaded("hello"))).toMatchObject({
+        added: 0,
+        updated: 0,
+        removed: 0,
+        unchanged: 2,
+      });
+      expect(
+        isBusyDatabase(errorOf(() => index.sync("global", [old("c.md")], () => loaded("x")))),
+      ).toBe(true);
+    } finally {
+      other.exec("ROLLBACK");
+      other.close();
+    }
+    index.close();
+  });
+
+  it("can be asked to wait only briefly for a lock, and goes back to its usual wait", () => {
+    const file = indexFile();
+    const index = openBrainIndex(file, { now: () => now, busyTimeoutMs: 400 });
+    const other = new DatabaseSync(file);
+    other.exec("BEGIN IMMEDIATE");
+    try {
+      const timed = (run: () => unknown) => {
+        const started = performance.now();
+        const error = errorOf(run);
+        return { error, took: performance.now() - started };
+      };
+      const sync = () => index.sync("global", [old("a.md")], () => loaded("x"));
+      const brief = timed(() => index.withBusyTimeout(10, sync));
+      expect(isBusyDatabase(brief.error)).toBe(true);
+      expect(brief.took).toBeLessThan(300);
+      const usual = timed(sync);
+      expect(isBusyDatabase(usual.error)).toBe(true);
+      expect(usual.took).toBeGreaterThanOrEqual(300);
+    } finally {
+      other.exec("ROLLBACK");
+      other.close();
+    }
+    index.close();
+  });
+
+  it("stops loading files when told to, keeps what it did, and does not drop the rest", () => {
+    const index = openBrainIndex(indexFile(), { now: () => now });
+    index.sync("global", [old("z.md")], () => loaded("zed"));
+    let allowed = 2;
+    const files = ["a.md", "b.md", "c.md", "d.md"].map((path) => old(path));
+    const report = index.sync("global", files, () => loaded("more"), {
+      stop: () => allowed-- <= 0,
+    });
+    expect(report).toMatchObject({ added: 2, truncated: true, removed: 0 });
+    expect(index.search("zed", { scopeKeys: ["global"], limit: 5 })).toHaveLength(1);
+    const done = index.sync("global", files, () => loaded("more"));
+    expect(done).toMatchObject({ added: 2, removed: 1 });
+    index.close();
+  });
+});
