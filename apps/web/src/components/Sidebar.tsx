@@ -57,6 +57,8 @@ const statusText = {
   offline: "Offline",
 } as const;
 
+const CONNECTING_GRACE_MS = 300;
+
 const unreachableText = {
   connecting: "Connecting to Wooky...",
   open: "Connected",
@@ -66,6 +68,7 @@ const unreachableText = {
 
 export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const model = useStore((state) => state.model);
+  const hasSnapshot = useStore((state) => state.hasSnapshot);
   const projects = model.projects;
   const threads = model.threads;
   const fleetGroups = model.groups;
@@ -78,6 +81,7 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const [query, setQuery] = useState("");
   const [workingOpen, setWorkingOpen] = useState(true);
   const [settledOpen, setSettledOpen] = useState(false);
+  const [connectingElapsed, setConnectingElapsed] = useState(false);
 
   const needle = query.trim().toLowerCase();
   const { working, settled, groups, all, hasProjects, settledInScroll } = useMemo(() => {
@@ -116,6 +120,19 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
       settledInScroll: includeSettledInGroups,
     };
   }, [projects, threads, needle, settledOpen]);
+
+  const waitingForSnapshot =
+    !hasProjects && (status === "connecting" || (status === "open" && !hasSnapshot));
+
+  // sync: grace timer before showing connecting so fast local connects do not flash it
+  useEffect(() => {
+    if (!waitingForSnapshot) return;
+    const timer = setTimeout(() => setConnectingElapsed(true), CONNECTING_GRACE_MS);
+    return () => {
+      clearTimeout(timer);
+      setConnectingElapsed(false);
+    };
+  }, [waitingForSnapshot]);
 
   return (
     <nav className="sidebar" data-workspace-area="sidebar" aria-label="Projects and threads">
@@ -185,12 +202,17 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
         groups.every((g) => g.threads.length === 0) ? (
           <p className="sidebar-empty">No matching threads.</p>
         ) : null}
-        {!hasProjects && status !== "open" ? (
+        {!hasProjects && (status === "reconnecting" || status === "offline") ? (
           <div className="sidebar-empty">
             <p>{unreachableText[status]}</p>
           </div>
         ) : null}
-        {!hasProjects && status === "open" ? (
+        {waitingForSnapshot && connectingElapsed ? (
+          <div className="sidebar-empty">
+            <p>{unreachableText.connecting}</p>
+          </div>
+        ) : null}
+        {hasSnapshot && !hasProjects && status === "open" ? (
           <div className="sidebar-empty">
             <p>No projects yet.</p>
             <button
