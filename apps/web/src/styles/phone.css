@@ -228,6 +228,14 @@
     min-width: max-content;
   }
 
+  .review-note,
+  .review-compose {
+    position: sticky;
+    left: var(--space-3);
+    width: calc(100vw - 2 * var(--space-3));
+    max-width: calc(100vw - 2 * var(--space-3));
+  }
+
   .markdown pre,
   .tool-output {
     max-width: 100%;
