@@ -185,6 +185,12 @@ export function createBindManager(options: {
       }
       const servesLoopback = () => listeners.has("127.0.0.1") || listeners.has("0.0.0.0");
       const wantsLoopback = hosts.includes("127.0.0.1") || hosts.includes("0.0.0.0");
+      // 0.0.0.0 failed but :: came up (ipv6Only): IPv4 loopback is not served. 127.0.0.1 coexists
+      // with :: and keeps the desktop app and CLI connected.
+      // Only when something did come up: if every bind failed this is a plain failure below.
+      if (wantsLoopback && !servesLoopback() && hosts.includes("0.0.0.0") && listeners.size > 0) {
+        await tryBind("127.0.0.1", assignedPort ?? port);
+      }
       // A loopback-only target that lost its port (something grabbed it while hosting was on) comes
       // back on a fresh one rather than leaving no listener; the new port shows in url().
       if (
@@ -195,7 +201,7 @@ export function createBindManager(options: {
       ) {
         await tryBind("127.0.0.1", 0);
       }
-      if (listeners.size === 0) {
+      if (listeners.size === 0 || (wantsLoopback && !servesLoopback())) {
         // Not usable from this machine: drop what this round opened and put back only the loopback
         // listeners that were serving. Wildcard or tailnet listeners are never restored here,
         // because the caller asked for them to go and the settings may already say so.

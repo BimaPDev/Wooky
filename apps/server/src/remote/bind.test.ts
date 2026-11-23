@@ -182,6 +182,24 @@ describe("bind manager rollback", () => {
     }
   });
 
+  it("keeps IPv4 loopback when 0.0.0.0 fails but :: comes up", async () => {
+    const hosting = { enabled: false, bind: "loopback", port: 0 } as HostingSettings;
+    const manager = await newManager(hosting);
+    try {
+      const { port } = await manager.apply();
+      const spy = await failListen((host) => host === "0.0.0.0");
+      Object.assign(hosting, { enabled: true, bind: "all", port });
+      await manager.apply();
+      spy.mockRestore();
+      expect(manager.addresses()).toContain("127.0.0.1");
+      expect(manager.addresses()).not.toContain("0.0.0.0");
+      expect(manager.url()).toBe(`http://127.0.0.1:${port}`);
+      expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+    } finally {
+      await manager.closeServers();
+    }
+  });
+
   it("reports the failure and holds no wildcard when restoring loopback fails too", async () => {
     const hosting = { enabled: false, bind: "loopback", port: 0 } as HostingSettings;
     const manager = await newManager(hosting);
