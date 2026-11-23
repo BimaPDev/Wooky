@@ -204,6 +204,7 @@ export const BrainSearchHit = z.object({
   updatedAt: z.string(),
   /** Higher is better. BM25, negated. */
   score: z.number(),
+  source: BrainSource.optional(),
 });
 export type BrainSearchHit = z.infer<typeof BrainSearchHit>;
 
@@ -220,6 +221,7 @@ export const BrainTreeNode = z.object({
   kind: BrainKind.optional(),
   status: BrainStatus.optional(),
   updatedAt: z.string().optional(),
+  source: BrainSource.optional(),
   /** Folders only: memories below it, at any depth. */
   count: z.number().int().nonnegative().optional(),
   /** Folders only: the count stopped at the scan budget, so there are at least this many. */

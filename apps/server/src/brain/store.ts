@@ -12,6 +12,7 @@ import {
   type BrainEntry,
   type BrainScope,
   type BrainSearchHit,
+  type BrainSource,
   type BrainTier,
   type BrainTreeNode,
   type MemoryFrontmatter,
@@ -582,16 +583,16 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
   }
 
   // A global memory an agent wrote stays untrusted data after the user approves it.
-  function hitTrust(
+  function hitProvenance(
     scope: BrainScope,
     path: string,
     roots: Map<string, BrainRoot | null>,
-  ): BrainSearchHit["trust"] {
+  ): { trust: BrainSearchHit["trust"]; source?: BrainSource } {
     const base = brainTrust(scope);
-    if (base === "repo") return base;
+    if (base === "repo") return { trust: base };
     try {
       const segments = parseBrainPath(path);
-      if (segments === null) return "repo";
+      if (segments === null) return { trust: "repo" };
       const key = brainScopeKey(scope);
       let root = roots.get(key);
       if (root === undefined) {
@@ -603,11 +604,14 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
         roots.set(key, root);
       }
       const memory = root === null ? null : readMemory(root, segments);
-      return memory === null
-        ? "repo"
-        : effectiveTrust({ trust: base, frontmatter: memory.parsed.frontmatter });
+      if (memory === null) return { trust: "repo" };
+      const { frontmatter } = memory.parsed;
+      return {
+        trust: effectiveTrust({ trust: base, frontmatter }),
+        ...(frontmatter.source === undefined ? {} : { source: frontmatter.source }),
+      };
     } catch {
-      return "repo";
+      return { trust: "repo" };
     }
   }
 
@@ -619,12 +623,14 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     return hits.flatMap((hit) => {
       const scope = scopes.get(hit.scopeKey);
       if (scope === undefined) return [];
+      const provenance = hitProvenance(scope, hit.path, roots);
       return [
         {
           uri: formatBrainUri(scope, hit.path),
           scope,
           path: hit.path,
-          trust: hitTrust(scope, hit.path, roots),
+          trust: provenance.trust,
+          ...(provenance.source === undefined ? {} : { source: provenance.source }),
           summary: hit.summary,
           kind: hit.kind,
           tags: hit.tags,
@@ -686,6 +692,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
               ...base,
               type: "memory",
               trust: effectiveTrust({ trust, frontmatter }),
+              ...(frontmatter.source === undefined ? {} : { source: frontmatter.source }),
               summary: frontmatter.summary,
               kind: frontmatter.kind,
               status: frontmatter.status,

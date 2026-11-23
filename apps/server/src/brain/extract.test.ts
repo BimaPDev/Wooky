@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ServiceError } from "../errors.ts";
 import {
   EXTRACT_DIGEST_MAX,
   EXTRACT_TAG,
@@ -338,6 +339,33 @@ describe("runExtraction", () => {
       at: "2026-11-23T10:00:00.000Z",
     });
     expect(entry.body).toContain("pnpm store");
+  });
+
+  it("writes project memories create-only and falls back to the next path after a conflict", async () => {
+    const f = fixture();
+    const calls: { uri: string; options?: { expectedUpdatedAt?: string | null } }[] = [];
+    const racing: ExtractDeps["brain"] = {
+      list: (uri, options) => f.store.list(uri, options),
+      read: (uri, tier) => f.store.read(uri, tier),
+      write: (uri, writeInput, options) => {
+        calls.push({ uri, options });
+        if (uri === proj("decisions/use-pnpm.md")) {
+          throw new ServiceError("conflict", "another writer took the path");
+        }
+        return f.store.write(uri, writeInput, options);
+      },
+    };
+    const report = await runExtraction(
+      f.deps(reply(candidate()), { brain: racing }),
+      input(),
+      both,
+      signal(),
+    );
+    expect(report.written).toEqual([proj("decisions/use-pnpm-2.md")]);
+    expect(calls).toEqual([
+      { uri: proj("decisions/use-pnpm.md"), options: { expectedUpdatedAt: null } },
+      { uri: proj("decisions/use-pnpm-2.md"), options: { expectedUpdatedAt: null } },
+    ]);
   });
 
   it("stamps a fleet run id", async () => {

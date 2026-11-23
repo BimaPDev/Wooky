@@ -15,7 +15,7 @@ import { normalizeBody, parseFrontmatterInput } from "./frontmatter.ts";
 import { BrainRoot, createScanBudget, realpathNearest, type BrainLog } from "./paths.ts";
 import { assertBodySize, assertFrontmatterHasNoSecret, assertNoSecret } from "./safety.ts";
 import type { BrainStore, BrainWriteResult } from "./store.ts";
-import { sanitizeAgentFrontmatter } from "./trust.ts";
+import { isAgentAuthored, sanitizeAgentFrontmatter } from "./trust.ts";
 
 const PROPOSAL_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/;
 
@@ -31,7 +31,7 @@ export interface BrainInbox {
   propose(
     targetUri: string,
     input: { frontmatter: Record<string, unknown>; body: string },
-    options?: { rejectExistingTarget?: boolean },
+    options?: { rejectExistingTarget?: boolean; expectedUpdatedAt?: string | null },
   ): BrainInboxProposal;
   list(): BrainInboxItem[];
   /** With `edits`, the user's version is validated and written in this one step. */
@@ -212,7 +212,10 @@ export function createBrainInbox(options: BrainInboxOptions): BrainInbox {
             `The brain inbox is full (${BRAIN_INBOX_MAX} proposals). Approve or reject some first.`,
           );
         }
-        const baseUpdatedAt = currentTarget(targetCanonical)?.updatedAt ?? null;
+        const baseUpdatedAt =
+          proposeOptions.expectedUpdatedAt !== undefined
+            ? proposeOptions.expectedUpdatedAt
+            : (currentTarget(targetCanonical)?.updatedAt ?? null);
 
         const id = assertValidId(newId());
         const proposal: BrainInboxProposal = {
@@ -301,11 +304,12 @@ export function createBrainInbox(options: BrainInboxOptions): BrainInbox {
           throw new ServiceError("not_found", `Proposal ${safeId} was already approved.`);
         }
         const { updatedAt: _stampedOnWrite, ...proposed } = proposal.frontmatter;
-        // An edit that drops `source` keeps the proposal's: the text still began as an agent's.
+        // An edit cannot replace provenance on an agent-authored proposal: the text began as an agent's.
+        const keepSource = isAgentAuthored(proposal.frontmatter);
         const frontmatter = edits
           ? {
               ...edits.frontmatter,
-              ...(edits.frontmatter.source === undefined && proposal.frontmatter.source
+              ...(keepSource && proposal.frontmatter.source !== undefined
                 ? { source: proposal.frontmatter.source }
                 : {}),
             }

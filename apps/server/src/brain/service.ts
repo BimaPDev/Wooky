@@ -168,10 +168,14 @@ export function createBrainService(deps: BrainServiceDeps): BrainService {
           caller.kind === "agent"
             ? { threadId: caller.threadId, agent: caller.agent, at: clock() }
             : { agent: "mcp", at: clock() };
-        const proposal = inbox.propose(params.uri, {
-          frontmatter: { ...sanitizeAgentFrontmatter(params.frontmatter), source },
-          body: params.body,
-        });
+        const proposal = inbox.propose(
+          params.uri,
+          {
+            frontmatter: { ...sanitizeAgentFrontmatter(params.frontmatter), source },
+            body: params.body,
+          },
+          writeOptions,
+        );
         return {
           uri: proposal.targetUri,
           updatedAt: proposal.createdAt,

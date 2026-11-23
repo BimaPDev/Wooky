@@ -239,6 +239,42 @@ describe("create-only writes", () => {
     expect(data?.expectedUpdatedAt).toBeNull();
     expect(data?.propose).toBe(true);
   });
+
+  it("passes expectedUpdatedAt through a global proposal", () => {
+    const { service } = setup();
+    const uri = "brain://global/prefs/proposed-once.md";
+    const first = service.write({ uri, frontmatter: note("v1"), body: "b" });
+    service.write({ uri, frontmatter: note("v2"), body: "b" });
+
+    const stale = service.write({
+      uri,
+      frontmatter: note("stale proposal"),
+      body: "b",
+      propose: true,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    const staleId = stale.proposalId;
+    expect(staleId).toEqual(expect.any(String));
+    if (!staleId) throw new Error("The write did not return a proposal id.");
+    const [pending] = service.inboxList({});
+    expect(pending?.baseUpdatedAt).toBe(first.updatedAt);
+    expect(codeOf(() => service.inboxApprove({ id: staleId }))).toBe("conflict");
+
+    const createOnly = service.write({
+      uri,
+      frontmatter: note("create only proposal"),
+      body: "b",
+      propose: true,
+      expectedUpdatedAt: null,
+    });
+    const createOnlyId = createOnly.proposalId;
+    expect(createOnlyId).toEqual(expect.any(String));
+    if (!createOnlyId) throw new Error("The write did not return a proposal id.");
+    const [replacement] = service.inboxList({});
+    expect(replacement?.id).toBe(createOnlyId);
+    expect(replacement?.baseUpdatedAt).toBeNull();
+    expect(codeOf(() => service.inboxApprove({ id: createOnlyId }))).toBe("conflict");
+  });
 });
 
 describe("L3: errors carry no absolute paths", () => {

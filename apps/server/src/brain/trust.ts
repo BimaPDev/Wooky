@@ -18,8 +18,9 @@ export function isAgentAuthored(frontmatter: Pick<MemoryFrontmatter, "source">):
 
 /**
  * The trust a reader must apply: `repo` (untrusted data, fenced) for project memories and for any
- * agent-authored memory, even in the global scope. B3's context builder and the MCP tools call this
- * instead of reading `trust` alone.
+ * agent-authored memory, even in the global scope. The store applies this to reads, listings and
+ * searches; prompt builders and MCP output apply it again to the raw trust and provenance they
+ * receive, so agent text cannot be presented as the user's own.
  */
 export function effectiveTrust(entry: {
   trust: BrainTrust;
