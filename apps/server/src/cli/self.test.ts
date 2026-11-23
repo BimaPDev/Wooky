@@ -358,8 +358,11 @@ describe("update URL validation", () => {
   });
 });
 
+// launchd/systemd emulation joins POSIX paths onto the real temp home, which is a drive path on Windows.
+const onWindows = process.platform === "win32";
+
 describe("runSelfCli commands", () => {
-  it("prints launchd files and commands with --dry-run on macOS", async () => {
+  it.skipIf(onWindows)("prints launchd files and commands with --dry-run on macOS", async () => {
     const home = makeTempDir("wooky-self-dry-mac-");
     const binDir = join(home, ".local", "bin");
     mkdirSync(binDir, { recursive: true });
@@ -392,7 +395,7 @@ describe("runSelfCli commands", () => {
     expect(existsSync(join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`))).toBe(false);
   });
 
-  it("prints systemd files and commands with --dry-run on Linux", async () => {
+  it.skipIf(onWindows)("prints systemd files and commands with --dry-run on Linux", async () => {
     const home = makeTempDir("wooky-self-dry-linux-");
     const binDir = join(home, ".local", "bin");
     mkdirSync(binDir, { recursive: true });
@@ -443,7 +446,7 @@ describe("runSelfCli commands", () => {
     expect(out).toContain("schtasks.exe /Run /TN Wooky");
   });
 
-  it("installs, inspects, and uninstalls a macOS launchd service", async () => {
+  it.skipIf(onWindows)("installs, inspects, and uninstalls a macOS launchd service", async () => {
     const home = makeTempDir("wooky-self-mac-");
     const binDir = join(home, ".local", "bin");
     mkdirSync(binDir, { recursive: true });
@@ -517,34 +520,37 @@ describe("runSelfCli commands", () => {
     expect(existsSync(plistPath)).toBe(false);
   });
 
-  it("installs a Linux systemd user unit and notes when loginctl needs privileges", async () => {
-    const home = makeTempDir("wooky-self-linux-");
-    const { runner, calls } = fakeRunner((file) => {
-      if (file === "loginctl") {
-        return { status: 1, stdout: "", stderr: "Access denied" };
-      }
-      return { status: 0, stdout: "active\n", stderr: "" };
-    });
-    const io = captureIo();
-    const code = await runSelfCli(
-      ["service", "install"],
-      {},
-      {
-        platform: "linux",
-        homeDir: home,
-        username: "wooky",
-        runner,
-        io: io.io,
-      },
-    );
-    expect(code).toBe(0);
-    expect(io.out()).toContain("sudo loginctl enable-linger wooky");
-    expect(calls.map((c) => [c.file, ...c.args])).toEqual([
-      ["systemctl", "--user", "daemon-reload"],
-      ["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT_NAME],
-      ["loginctl", "enable-linger", "wooky"],
-    ]);
-  });
+  it.skipIf(onWindows)(
+    "installs a Linux systemd user unit and notes when loginctl needs privileges",
+    async () => {
+      const home = makeTempDir("wooky-self-linux-");
+      const { runner, calls } = fakeRunner((file) => {
+        if (file === "loginctl") {
+          return { status: 1, stdout: "", stderr: "Access denied" };
+        }
+        return { status: 0, stdout: "active\n", stderr: "" };
+      });
+      const io = captureIo();
+      const code = await runSelfCli(
+        ["service", "install"],
+        {},
+        {
+          platform: "linux",
+          homeDir: home,
+          username: "wooky",
+          runner,
+          io: io.io,
+        },
+      );
+      expect(code).toBe(0);
+      expect(io.out()).toContain("sudo loginctl enable-linger wooky");
+      expect(calls.map((c) => [c.file, ...c.args])).toEqual([
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT_NAME],
+        ["loginctl", "enable-linger", "wooky"],
+      ]);
+    },
+  );
 
   it("downloads and executes the installer on update with WOOKY_YES=1", async () => {
     const home = makeTempDir("wooky-self-update-");
@@ -591,50 +597,53 @@ describe("runSelfCli commands", () => {
     expect(existsSync(capturedScriptPath)).toBe(false);
   });
 
-  it("uninstalls app and launcher while preserving WOOKY_HOME unless --purge", async () => {
-    const home = makeTempDir("wooky-self-uninstall-");
-    const wookyHome = join(home, ".wooky");
-    const appDir = join(wookyHome, "app", "0.1.0");
-    const runtimeDir = join(wookyHome, "runtime", "node");
-    const binDir = join(home, ".local", "bin");
-    const launcher = join(binDir, "wooky");
-    const dbFile = join(wookyHome, "state.sqlite");
-    mkdirSync(appDir, { recursive: true });
-    mkdirSync(runtimeDir, { recursive: true });
-    mkdirSync(binDir, { recursive: true });
-    writeFileSync(launcher, "#!/bin/sh\n", "utf8");
-    writeFileSync(dbFile, "data", "utf8");
+  it.skipIf(onWindows)(
+    "uninstalls app and launcher while preserving WOOKY_HOME unless --purge",
+    async () => {
+      const home = makeTempDir("wooky-self-uninstall-");
+      const wookyHome = join(home, ".wooky");
+      const appDir = join(wookyHome, "app", "0.1.0");
+      const runtimeDir = join(wookyHome, "runtime", "node");
+      const binDir = join(home, ".local", "bin");
+      const launcher = join(binDir, "wooky");
+      const dbFile = join(wookyHome, "state.sqlite");
+      mkdirSync(appDir, { recursive: true });
+      mkdirSync(runtimeDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(launcher, "#!/bin/sh\n", "utf8");
+      writeFileSync(dbFile, "data", "utf8");
 
-    const { runner } = fakeRunner();
-    const io1 = captureIo();
-    const code1 = await runSelfCli(
-      ["uninstall"],
-      {},
-      {
-        platform: "linux",
-        homeDir: home,
-        runner,
-        io: io1.io,
-      },
-    );
-    expect(code1).toBe(0);
-    expect(existsSync(join(wookyHome, "app"))).toBe(false);
-    expect(existsSync(join(wookyHome, "runtime"))).toBe(false);
-    expect(existsSync(launcher)).toBe(false);
-    expect(existsSync(dbFile)).toBe(true);
+      const { runner } = fakeRunner();
+      const io1 = captureIo();
+      const code1 = await runSelfCli(
+        ["uninstall"],
+        {},
+        {
+          platform: "linux",
+          homeDir: home,
+          runner,
+          io: io1.io,
+        },
+      );
+      expect(code1).toBe(0);
+      expect(existsSync(join(wookyHome, "app"))).toBe(false);
+      expect(existsSync(join(wookyHome, "runtime"))).toBe(false);
+      expect(existsSync(launcher)).toBe(false);
+      expect(existsSync(dbFile)).toBe(true);
 
-    const io2 = captureIo();
-    const code2 = await runSelfCli(
-      ["uninstall", "--purge"],
-      {},
-      {
-        platform: "linux",
-        homeDir: home,
-        runner,
-        io: io2.io,
-      },
-    );
-    expect(code2).toBe(0);
-    expect(existsSync(wookyHome)).toBe(false);
-  });
+      const io2 = captureIo();
+      const code2 = await runSelfCli(
+        ["uninstall", "--purge"],
+        {},
+        {
+          platform: "linux",
+          homeDir: home,
+          runner,
+          io: io2.io,
+        },
+      );
+      expect(code2).toBe(0);
+      expect(existsSync(wookyHome)).toBe(false);
+    },
+  );
 });
