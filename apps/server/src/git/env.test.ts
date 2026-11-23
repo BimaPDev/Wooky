@@ -47,7 +47,7 @@ describe("gitChildEnv", () => {
     setEnv("GIT_EDITOR", "vim");
     setEnv("Git_Terminal_Prompt", "1");
     const env = gitChildEnv({ GIT_AUTHOR_NAME: "Wooky" });
-    expect(env.GIT_SSH_COMMAND).toBe("ssh -i /keys/id ssh -o BatchMode=yes");
+    expect(env.GIT_SSH_COMMAND).toBe("ssh -i /keys/id -o BatchMode=yes");
     expect(env.GIT_ASKPASS).toBe("/bin/askpass");
     expect(env.GIT_EDITOR).toBe("false");
     expect(env.GIT_TERMINAL_PROMPT).toBe("0");
@@ -55,5 +55,18 @@ describe("gitChildEnv", () => {
     expect(Object.keys(env).filter((key) => key.toUpperCase() === "GIT_TERMINAL_PROMPT")).toEqual([
       "GIT_TERMINAL_PROMPT",
     ]);
+  });
+
+  it("does not invent GIT_SSH_COMMAND, so core.sshCommand and GIT_SSH keep working", () => {
+    delete process.env.GIT_SSH_COMMAND;
+    setEnv("GIT_SSH", "/usr/bin/plink");
+    const env = gitChildEnv();
+    expect(env.GIT_SSH).toBe("/usr/bin/plink");
+    expect(env.GIT_SSH_COMMAND).toBeUndefined();
+  });
+
+  it("does not repeat BatchMode when the user already set it", () => {
+    setEnv("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -i /k");
+    expect(gitChildEnv().GIT_SSH_COMMAND).toBe("ssh -o BatchMode=yes -i /k");
   });
 });

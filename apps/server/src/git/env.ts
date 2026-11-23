@@ -17,12 +17,11 @@ const TRANSPORT_VARS = new Set([
   "GIT_SSL_VERSION",
 ]);
 
-const BATCH_SSH = "ssh -o BatchMode=yes";
-
-export function composeGitSshCommand(existing: string | undefined): string {
-  const trimmed = existing?.trim() ?? "";
-  if (trimmed.length === 0) return BATCH_SSH;
-  return `${trimmed} ${BATCH_SSH}`;
+/** Appends `-o BatchMode=yes` to the user's own ssh command so it can never wait for input. */
+export function composeGitSshCommand(existing: string): string {
+  const trimmed = existing.trim();
+  if (/\bBatchMode=/i.test(trimmed)) return trimmed;
+  return `${trimmed} -o BatchMode=yes`;
 }
 
 /**
@@ -49,7 +48,10 @@ export function gitChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   env.GCM_INTERACTIVE = "never";
   env.GIT_EDITOR = "false";
   env.GIT_PAGER = "cat";
-  env.GIT_SSH_COMMAND = composeGitSshCommand(sshCommand);
+  // Only the user's own ssh command is touched. Setting GIT_SSH_COMMAND from nothing would
+  // override their core.sshCommand and GIT_SSH (plink); without a tty ssh cannot prompt anyway,
+  // and GIT_TERMINAL_PROMPT=0 covers https.
+  if (sshCommand?.trim()) env.GIT_SSH_COMMAND = composeGitSshCommand(sshCommand);
   return { ...env, ...extra };
 }
 
