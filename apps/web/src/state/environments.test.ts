@@ -165,4 +165,32 @@ describe("environments", () => {
     await putSettings({ sync: { enabled: true } });
     expect(calls).toContain("settings.put");
   });
+
+  it("resets and refreshes brainInboxCount when switching environments", async () => {
+    let remote = false;
+    const { calls } = setup((method, params) => {
+      if (method === "remote.connectInfo") {
+        remote = true;
+        return info((params as { environmentId: string }).environmentId);
+      }
+      if (method === "brain.inbox.list") {
+        return remote ? [{ id: "p1" }, { id: "p2" }] : [{ id: "local-1" }];
+      }
+      return undefined;
+    });
+
+    useStore.setState({ brainInboxCount: 7 });
+    await switchEnvironment("env-home");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toContain("brain.inbox.list");
+    expect(useStore.getState().brainInboxCount).toBe(2);
+
+    remote = false;
+    await switchEnvironment("local");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useStore.getState().brainInboxCount).toBe(1);
+  });
 });

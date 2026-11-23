@@ -8,7 +8,8 @@
         └── pushed events)             ├── orchestrator (pure)
                                        ├── event store (node:sqlite, WOOKY_HOME/state.sqlite)
                                        ├── effect runner
-                                       └── git service (worktrees, checkpoints, diffs)
+                                       ├── git service (worktrees, checkpoints, diffs)
+                                       └── brain (store, inbox, claims, extraction, RPC/MCP)
 ```
 
 One server per machine owns all state. The desktop app starts the same server and loads

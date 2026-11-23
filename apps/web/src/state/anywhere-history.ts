@@ -66,6 +66,7 @@ useStore.subscribe((state, prev) => {
     (state.selectedThreadId !== prev.selectedThreadId && state.selectedThreadId !== null) ||
     (state.newThread !== null && prev.newThread === null) ||
     (state.fleetBoardOpen && !prev.fleetBoardOpen) ||
+    (state.brainOpen && !prev.brainOpen) ||
     (state.compareGroupId !== null && prev.compareGroupId === null);
   if (left) useAnywhereHistory.setState({ replicaView: null });
 });
@@ -83,6 +84,7 @@ export function openReplicaThread(target: ReplicaTarget) {
     newThread: null,
     settingsOpen: false,
     fleetBoardOpen: false,
+    brainOpen: false,
     compareGroupId: null,
     jumpOpen: false,
   });

@@ -107,6 +107,27 @@ describe("device settings", () => {
     const many = Array.from({ length: 31 }, (_, index) => ({ ...target, model: `m${index}` }));
     expect(DeviceSettingsPatch.safeParse({ favoriteModels: many }).success).toBe(false);
   });
+
+  it("validates the brain extraction model: allowed characters, a length limit, clearable", () => {
+    const patch = (extractModel: unknown) =>
+      DeviceSettingsPatch.safeParse({ brain: { extractModel } }).success;
+    expect(patch({ provider: "claude", model: "haiku" })).toBe(true);
+    expect(patch({ provider: "claude", model: "claude-opus-4-1[1m]" })).toBe(true);
+    expect(patch({ provider: "claude", model: "anthropic/claude-3.5-sonnet:beta" })).toBe(true);
+    expect(patch(null)).toBe(true);
+    expect(patch("")).toBe(true);
+    expect(patch({ provider: "claude", model: "" })).toBe(false);
+    expect(patch({ provider: "claude", model: "x".repeat(101) })).toBe(false);
+    expect(patch({ provider: "claude", model: "bad model" })).toBe(false);
+    expect(patch({ provider: "claude", model: "--dangerous" })).toBe(false);
+    expect(patch({ provider: "claude", model: "a;rm -rf" })).toBe(false);
+    expect(patch({ provider: "claude", model: "line\nbreak" })).toBe(false);
+    expect(patch("claude")).toBe(false);
+    expect(
+      DeviceSettings.safeParse({ brain: { extractModel: { provider: "claude", model: "a b" } } })
+        .success,
+    ).toBe(false);
+  });
 });
 
 describe("theme rpc", () => {

@@ -6,6 +6,16 @@ import {
   DeviceSettingsPatch,
   ThemeImportFormat,
 } from "./appearance.ts";
+import {
+  BrainEntry,
+  BrainInboxItem,
+  BrainScope,
+  BrainSearchHit,
+  BrainTier,
+  BrainTreeNode,
+  BrainUri,
+  BrainWriteFrontmatter,
+} from "./brain.ts";
 import { ProviderCooldown } from "./failover.ts";
 import { Command, ThreadSpawnParams } from "./commands.ts";
 import { AgeEvent } from "./events.ts";
@@ -485,6 +495,165 @@ export const RpcMethods = {
   "git.pr.status": {
     params: z.object({ threadId: Id }),
     result: PullRequest.nullable(),
+  },
+  "brain.list": {
+    params: z.object({
+      uri: BrainUri,
+      includeArchived: z.boolean().optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.array(BrainTreeNode),
+  },
+  "brain.read": {
+    params: z.object({
+      uri: BrainUri,
+      tier: BrainTier,
+      ...AgentsAuthFields,
+    }),
+    result: BrainEntry,
+  },
+  "brain.search": {
+    params: z.object({
+      query: z.string(),
+      scopes: z.array(BrainScope),
+      pathPrefix: z.string().optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+      includeArchived: z.boolean().optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.array(BrainSearchHit),
+  },
+  "brain.write": {
+    params: z.object({
+      uri: BrainUri,
+      frontmatter: BrainWriteFrontmatter,
+      body: z.string(),
+      /** A stamp: update only if it matches. `null`: create only, the file must not exist. */
+      expectedUpdatedAt: z.string().nullable().optional(),
+      /** Downgrade only: a global write goes to the inbox even for a user. Never raises privilege. */
+      propose: z.boolean().optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      uri: BrainUri,
+      updatedAt: z.iso.datetime(),
+      created: z.boolean(),
+      queued: z.boolean(),
+      proposalId: z.string().min(1).optional(),
+      message: z.string().optional(),
+    }),
+  },
+  "brain.archive": {
+    params: z.object({
+      uri: BrainUri,
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      uri: BrainUri,
+      updatedAt: z.iso.datetime(),
+      created: z.boolean(),
+    }),
+  },
+  "brain.remove": {
+    params: z.object({
+      uri: BrainUri,
+      ...AgentsAuthFields,
+    }),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "brain.reindex": {
+    params: z.object({
+      scope: BrainScope.optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      added: z.number().int().nonnegative(),
+      updated: z.number().int().nonnegative(),
+      removed: z.number().int().nonnegative(),
+      unchanged: z.number().int().nonnegative(),
+      scopes: z.number().int().nonnegative(),
+      truncated: z.boolean().optional(),
+    }),
+  },
+  "brain.inbox.list": {
+    params: z.object({ ...AgentsAuthFields }),
+    result: z.array(BrainInboxItem),
+  },
+  "brain.inbox.approve": {
+    params: z.object({
+      id: z.string().min(1),
+      /** The user's edits, applied in the same step as the approval. */
+      edits: z.object({ frontmatter: BrainWriteFrontmatter, body: z.string() }).optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      id: z.string().min(1),
+      uri: BrainUri,
+      updatedAt: z.iso.datetime(),
+      created: z.boolean(),
+    }),
+  },
+  "brain.inbox.reject": {
+    params: z.object({
+      id: z.string().min(1),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      id: z.string().min(1),
+      ok: z.literal(true),
+    }),
+  },
+  "brain.claim": {
+    params: z.object({
+      target: z.string().min(1).max(200),
+      note: z.string().max(2048).optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("claimed"),
+        claimId: z.string().min(1),
+        expiresAt: IsoTime,
+      }),
+      z.object({
+        status: z.literal("held"),
+        holder: z.object({
+          threadId: Id,
+          agent: z.string().min(1),
+          target: z.string().min(1),
+          note: z.string(),
+          expiresAt: IsoTime,
+        }),
+      }),
+    ]),
+  },
+  "brain.release": {
+    params: z.object({
+      claimId: z.string().min(1).max(128),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      released: z.boolean(),
+    }),
+  },
+  "brain.handoff": {
+    params: z.object({
+      summary: z.string().min(1).max(2048),
+      toThreadId: Id.optional(),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      handoffId: z.string().min(1),
+    }),
+  },
+  "brain.finding": {
+    params: z.object({
+      text: z.string().min(1).max(2048),
+      ...AgentsAuthFields,
+    }),
+    result: z.object({
+      findingId: z.string().min(1),
+    }),
   },
 } as const;
 

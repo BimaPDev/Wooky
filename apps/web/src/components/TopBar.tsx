@@ -35,6 +35,7 @@ import { ProjectMonogram } from "./ProjectMonogram.tsx";
 import { ScriptsBar } from "./project-settings/ScriptsBar.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import { ProviderMark } from "./ProviderMark.tsx";
+import { IconBrain } from "./brain/BrainIcons.tsx";
 
 export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
   const thread = useStore((state) =>
@@ -55,6 +56,7 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
   const canBack = useStore((state) => state.nav.past.length > 0);
   const canForward = useStore((state) => state.nav.future.length > 0);
   const hasProjects = useStore((state) => Object.keys(state.model.projects).length > 0);
+  const brainOpen = useStore((state) => state.brainOpen);
   const phone = usePhone();
   const peerThread = useAnywhereHistory((state) => state.replicaView !== null);
   const [editing, setEditing] = useState(false);
@@ -103,7 +105,12 @@ export function TopBar({ macDesktop = false }: { macDesktop?: boolean }) {
         {!sidebarOpen ? <EnvironmentTag /> : null}
       </div>
       <div className="topbar-title">
-        {thread && project ? (
+        {brainOpen ? (
+          <>
+            <IconBrain />
+            <span className="topbar-draft-title">Brain</span>
+          </>
+        ) : thread && project ? (
           <>
             <ProjectMonogram name={project.name} />
             <span className="crumb-project" title={project.root}>

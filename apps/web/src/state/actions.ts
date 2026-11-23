@@ -13,6 +13,7 @@ import type {
   TurnFailure,
 } from "@wooky/contracts";
 import { threadsSharingWorkspace } from "@wooky/domain";
+import { defaultBrainTransport, listBrainInbox } from "../brain/client.ts";
 import { patchDeviceSettings } from "./appearance.ts";
 import { backend } from "./backend.ts";
 import { navBack, navForward, pushNavStack } from "../lib/nav-history.ts";
@@ -113,6 +114,7 @@ function applyNavTarget(target: ReturnType<typeof currentNavFromState>) {
     newThread: target.threadId ? null : state.newThread,
     settingsOpen: false,
     fleetBoardOpen: false,
+    brainOpen: false,
     compareGroupId: null,
     jumpOpen: false,
     changes: { ...state.changes, turnId: null, focusPath: null },
@@ -127,6 +129,7 @@ export const selectThread = (threadId: string | null) => {
     newThread: threadId ? null : state.newThread,
     settingsOpen: false,
     fleetBoardOpen: false,
+    brainOpen: false,
     compareGroupId: null,
     jumpOpen: false,
     changes: { ...state.changes, turnId: null, focusPath: null },
@@ -383,6 +386,7 @@ export function openNewThread(projectId?: string | null) {
       selectedThreadId: null,
       settingsOpen: false,
       fleetBoardOpen: false,
+      brainOpen: false,
       compareGroupId: null,
       jumpOpen: false,
       paletteOpen: false,
@@ -720,6 +724,7 @@ export const setJumpOpen = (jumpOpen: boolean) => useStore.setState({ jumpOpen }
 export function openFleetBoard() {
   useStore.setState((state) => ({
     fleetBoardOpen: true,
+    brainOpen: false,
     compareGroupId: null,
     jumpOpen: false,
     paletteOpen: false,
@@ -727,6 +732,28 @@ export function openFleetBoard() {
     fanoutDialog: null,
     changes: { ...state.changes, open: false },
   }));
+}
+
+export function openBrain() {
+  useStore.setState((state) => ({
+    brainOpen: true,
+    fleetBoardOpen: false,
+    compareGroupId: null,
+    jumpOpen: false,
+    paletteOpen: false,
+    settingsOpen: false,
+    fanoutDialog: null,
+    changes: { ...state.changes, open: false },
+  }));
+}
+
+export async function refreshBrainInboxCount() {
+  try {
+    const proposals = await listBrainInbox(defaultBrainTransport());
+    useStore.setState({ brainInboxCount: proposals.length });
+  } catch {
+    // Ignore when the server does not expose brain.inbox.list yet.
+  }
 }
 
 export function closeCompare() {
@@ -737,6 +764,7 @@ export function openCompare(groupId: string) {
   useStore.setState((state) => ({
     compareGroupId: groupId,
     fleetBoardOpen: false,
+    brainOpen: false,
     jumpOpen: false,
     paletteOpen: false,
     settingsOpen: false,

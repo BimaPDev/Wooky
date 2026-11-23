@@ -28,6 +28,14 @@ function renderBlock(block: Block, index: number): ReactNode {
   }
 }
 
+function linkHost(href: string): string {
+  try {
+    return new URL(href).host || href;
+  } catch {
+    return href;
+  }
+}
+
 function renderInlines(nodes: Inline[]): ReactNode[] {
   return nodes.map((node, index) => {
     switch (node.type) {
@@ -41,7 +49,13 @@ function renderInlines(nodes: Inline[]): ReactNode[] {
         return <em key={index}>{renderInlines(node.children)}</em>;
       case "link":
         return (
-          <a key={index} href={node.href} target="_blank" rel="noreferrer noopener">
+          <a
+            key={index}
+            href={node.href}
+            title={linkHost(node.href)}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
             {renderInlines(node.children)}
           </a>
         );

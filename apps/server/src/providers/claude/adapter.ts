@@ -19,7 +19,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { resolveCommand } from "../../process/resolve-command.ts";
-import { fleetChildEnv, instructionsForRole } from "../agent-env.ts";
+import { AGENT_INTERNAL_ENV_KEYS, fleetChildEnv, instructionsForRole } from "../agent-env.ts";
 import { claudeExtraArgs, resolveLaunch, withUserEnv } from "../settings.ts";
 import type { ProviderAdapter, TurnInput } from "../types.ts";
 import { editPreview } from "./diff.ts";
@@ -77,6 +77,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
   return {
     kind: "claude",
     supportsResumeAt: true,
+    supportsToolless: true,
 
     async probe(): Promise<ProviderStatus> {
       const base = {
@@ -183,25 +184,39 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
       const claudeExecutable = resolved?.prefixArgs.length
         ? undefined
         : (resolved?.command ?? options.claudeBin);
-      const sdkOptions: Options = {
-        cwd: input.cwd,
-        abortController: abort,
-        includePartialMessages: true,
-        ...(input.model !== "default" ? { model: input.model } : {}),
-        ...(input.effort ? { effort: input.effort } : {}),
-        ...sessionSettings(input),
-        ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
-        ...(input.resumeSessionId && input.resumeAt
-          ? { resumeSessionAt: input.resumeAt, forkSession: true }
-          : {}),
-        ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
-        ...permissionOptions(input, emit, input.cwd, lastPlanWritePath),
-        ...fleetQueryOptions(input, launch.env),
-        ...(launch.extraArgs.length > 0 ? { extraArgs: claudeExtraArgs(launch.extraArgs) } : {}),
-        stderr: (data) => {
-          stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
-        },
-      };
+      const sdkOptions: Options = input.toolless
+        ? {
+            cwd: input.cwd,
+            abortController: abort,
+            includePartialMessages: true,
+            ...(input.model !== "default" ? { model: input.model } : {}),
+            ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
+            ...toolessOptions(launch.env),
+            stderr: (data) => {
+              stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
+            },
+          }
+        : {
+            cwd: input.cwd,
+            abortController: abort,
+            includePartialMessages: true,
+            ...(input.model !== "default" ? { model: input.model } : {}),
+            ...(input.effort ? { effort: input.effort } : {}),
+            ...sessionSettings(input),
+            ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
+            ...(input.resumeSessionId && input.resumeAt
+              ? { resumeSessionAt: input.resumeAt, forkSession: true }
+              : {}),
+            ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
+            ...permissionOptions(input, emit, input.cwd, lastPlanWritePath),
+            ...fleetQueryOptions(input, launch.env),
+            ...(launch.extraArgs.length > 0
+              ? { extraArgs: claudeExtraArgs(launch.extraArgs) }
+              : {}),
+            stderr: (data) => {
+              stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
+            },
+          };
 
       let running: ReturnType<typeof sdkQuery> | undefined;
       try {
@@ -256,6 +271,28 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): Provide
 
 const ABORTED = Symbol("aborted");
 const WOKEN = Symbol("woken");
+
+/**
+ * A text-only completion. Allow rules, hooks, MCP servers and CLAUDE.md all come from the user's
+ * settings files, and allow rules are checked before any callback, so none of them may load.
+ * The environment keeps the user's own variables but not the fleet's server URL, shim or token.
+ */
+function toolessOptions(userEnv: Readonly<Record<string, string>>): Partial<Options> {
+  const env: NodeJS.ProcessEnv = { ...withUserEnv(userEnv) };
+  for (const key of AGENT_INTERNAL_ENV_KEYS) delete env[key];
+  return {
+    tools: [],
+    allowedTools: [],
+    settingSources: [],
+    strictMcpConfig: true,
+    mcpServers: {},
+    persistSession: false,
+    permissionMode: "dontAsk",
+    canUseTool: async () => ({ behavior: "deny", message: "This turn has no tools." }),
+    systemPrompt: "You are a text-only assistant. You have no tools; answer in plain text.",
+    env,
+  };
+}
 
 function fleetQueryOptions(
   input: TurnInput,

@@ -42,10 +42,20 @@ export interface ScanBudget {
   used: number;
   /** True once an entry was left unread because the budget ran out. */
   truncated: boolean;
+  /** Asked now and then; when it says yes the walk ends as if the budget had run out. */
+  stop?: () => boolean;
 }
 
-export function createScanBudget(limit: number = MAX_SCAN_ENTRIES): ScanBudget {
-  return { remaining: limit, used: 0, truncated: false };
+/** A walk asks `stop` this often, in directory entries, as well as once per folder. */
+const STOP_EVERY = 128;
+
+export function createScanBudget(
+  limit: number = MAX_SCAN_ENTRIES,
+  stop?: () => boolean,
+): ScanBudget {
+  return stop === undefined
+    ? { remaining: limit, used: 0, truncated: false }
+    : { remaining: limit, used: 0, truncated: false, stop };
 }
 
 export interface ScanResult {
@@ -322,9 +332,20 @@ export class BrainRoot {
     if (!found.stat.isDirectory()) return null;
     const entries: ChildList["entries"] = [];
     let complete = true;
+    if (budget.stop?.() === true) {
+      budget.remaining = 0;
+      budget.truncated = true;
+      return { entries, complete: false };
+    }
     const dir = opendirSync(found.abs);
     try {
       for (let entry = dir.readSync(); entry !== null; entry = dir.readSync()) {
+        if (budget.used % STOP_EVERY === STOP_EVERY - 1 && budget.stop?.() === true) {
+          budget.remaining = 0;
+          budget.truncated = true;
+          complete = false;
+          break;
+        }
         if (budget.remaining <= 0) {
           if (!budget.truncated) {
             this.log(
@@ -347,6 +368,28 @@ export class BrainRoot {
     }
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     return { entries, complete };
+  }
+
+  /**
+   * Whether there is at least one memory file anywhere in the brain. It stops at the first one,
+   * so a brain of any size costs a few directory reads; `false` also when the budget ran out first.
+   */
+  hasMemory(budget: ScanBudget = createScanBudget()): boolean {
+    const visit = (dir: readonly string[]): boolean => {
+      const listing = this.children(dir, budget);
+      if (listing === null) return false;
+      for (const entry of listing.entries) {
+        if (entry.name === BRAIN_OVERVIEW_FILE || !isBrainSegment(entry.name)) continue;
+        if (!entry.isDir && entry.name.endsWith(".md")) return true;
+      }
+      for (const entry of listing.entries) {
+        if (!entry.isDir || entry.name.endsWith(".md") || !isBrainSegment(entry.name)) continue;
+        const next = [...dir, entry.name];
+        if (next.length < BRAIN_MAX_SEGMENTS && visit(next)) return true;
+      }
+      return false;
+    };
+    return visit([]);
   }
 
   /**
@@ -426,7 +469,8 @@ export function openRoot(
   try {
     realRoot = realpathSync.native(root);
   } catch (error) {
-    if (isMissing(error)) throw new ServiceError("not_found", `Project folder is missing: ${root}`);
+    if (isMissing(error))
+      throw new ServiceError("not_found", `Project folder is missing for ${scope.projectId}.`);
     throw error;
   }
   const projectBrain = fold(realpathNearest(join(realRoot, ".wooky", "brain")));

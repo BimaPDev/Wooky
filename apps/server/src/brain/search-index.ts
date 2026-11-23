@@ -69,6 +69,16 @@ export interface BrainIndexOptions {
   log?: BrainLog;
   /** How long a query waits for another connection's write lock. */
   busyTimeoutMs?: number;
+  /** How long opening the file waits for a lock; the usual wait applies once it is open. */
+  openWaitMs?: number;
+}
+
+export interface SyncOptions {
+  /**
+   * Asked before each file is read. When it says yes the sync ends there: what was done is kept,
+   * nothing is removed, and the report says `truncated`.
+   */
+  stop?: () => boolean;
 }
 
 function errcode(error: unknown): number | null {
@@ -126,17 +136,63 @@ interface HitRow {
   path_text?: string;
 }
 
+/** The size and time match, and the file was not edited so close to the last look that it may differ. */
+const unchangedByStat = (
+  row: Pick<FileRow, "mtime_ms" | "size" | "indexed_at">,
+  file: ScannedFile,
+): boolean =>
+  row.size === file.size &&
+  row.mtime_ms === file.mtimeMs &&
+  (file.mtimeMs < row.indexed_at - RACY_MS || file.mtimeMs > row.indexed_at + RACY_MS);
+
 const sha256 = (raw: Buffer) => createHash("sha256").update(raw).digest("hex");
 
 export class BrainIndex {
   readonly fts5: boolean;
   private readonly db: DatabaseSync;
   private readonly now: () => number;
+  private readonly busyMs: number;
 
-  constructor(db: DatabaseSync, fts5: boolean, now: () => number) {
+  constructor(db: DatabaseSync, fts5: boolean, now: () => number, busyMs = BUSY_TIMEOUT_MS) {
     this.db = db;
     this.fts5 = fts5;
     this.now = now;
+    this.busyMs = busyMs;
+  }
+
+  /** Runs with a different lock wait, then goes back to the usual one. */
+  withBusyTimeout<T>(ms: number, run: () => T): T {
+    this.db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(ms))}`);
+    try {
+      return run();
+    } finally {
+      this.db.exec(`PRAGMA busy_timeout = ${this.busyMs}`);
+    }
+  }
+
+  /** True when every scanned file matches its row by size and time and no row is left over. */
+  private isCurrent(scopeKey: string, scanned: readonly ScannedFile[]): boolean {
+    // A read transaction: it never takes the write lock, so a writer elsewhere does not block it.
+    this.db.exec("BEGIN");
+    try {
+      const rows = new Map(
+        (
+          this.db
+            .prepare("SELECT path, mtime_ms, size, indexed_at FROM files WHERE scope_key = ?")
+            .all(scopeKey) as unknown as Pick<
+            FileRow,
+            "path" | "mtime_ms" | "size" | "indexed_at"
+          >[]
+        ).map((row) => [row.path, row]),
+      );
+      if (rows.size !== scanned.length) return false;
+      return scanned.every((file) => {
+        const row = rows.get(file.path);
+        return row !== undefined && unchangedByStat(row, file);
+      });
+    } finally {
+      this.db.exec("COMMIT");
+    }
   }
 
   /** Brings one scope's rows in line with the files found on disk. */
@@ -144,7 +200,11 @@ export class BrainIndex {
     scopeKey: string,
     scanned: readonly ScannedFile[],
     load: (path: string) => LoadedFile | null,
+    options: SyncOptions = {},
   ): SyncReport {
+    if (this.isCurrent(scopeKey, scanned)) {
+      return { added: 0, updated: 0, removed: 0, unchanged: scanned.length };
+    }
     const report: SyncReport = { added: 0, updated: 0, removed: 0, unchanged: 0 };
     const rows = new Map(
       (
@@ -159,14 +219,13 @@ export class BrainIndex {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       for (const file of scanned) {
+        if (options.stop?.() === true) {
+          report.truncated = true;
+          break;
+        }
         const row = rows.get(file.path);
         rows.delete(file.path);
-        if (
-          row !== undefined &&
-          row.size === file.size &&
-          row.mtime_ms === file.mtimeMs &&
-          (file.mtimeMs < row.indexed_at - RACY_MS || file.mtimeMs > row.indexed_at + RACY_MS)
-        ) {
+        if (row !== undefined && unchangedByStat(row, file)) {
           report.unchanged += 1;
           continue;
         }
@@ -188,9 +247,11 @@ export class BrainIndex {
         if (row === undefined) report.added += 1;
         else report.updated += 1;
       }
-      for (const row of rows.values()) {
-        this.deleteRow(row.id);
-        report.removed += 1;
+      if (report.truncated !== true) {
+        for (const row of rows.values()) {
+          this.deleteRow(row.id);
+          report.removed += 1;
+        }
       }
       this.db.exec("COMMIT");
     } catch (error) {
@@ -282,6 +343,20 @@ export class BrainIndex {
     return this.fts5
       ? this.searchFts(terms, where, params, limit)
       : this.searchPlain(terms, where, params, limit);
+  }
+
+  /** Active pinned memories of the given scopes, newest first. */
+  pinned(scopeKeys: readonly string[], limit: number): IndexHit[] {
+    if (scopeKeys.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT scope_key, path, summary, kind, tags, status, updated_at, 0 AS rank
+         FROM files
+         WHERE scope_key IN (${scopeKeys.map(() => "?").join(", ")}) AND pinned = 1 AND status = 'active'
+         ORDER BY updated_at DESC, path LIMIT ?`,
+      )
+      .all(...scopeKeys, Math.max(1, Math.min(100, Math.floor(limit)))) as unknown as HitRow[];
+    return rows.map(toHit);
   }
 
   private searchFts(terms: string[], where: string, params: (string | number)[], limit: number) {
@@ -388,13 +463,14 @@ function prepare(db: DatabaseSync, fts5: boolean): void {
 function openOnce(file: string, options: BrainIndexOptions): BrainIndex {
   const db = new DatabaseSync(file);
   try {
-    db.exec(
-      `PRAGMA busy_timeout = ${Math.max(0, Math.floor(options.busyTimeoutMs ?? BUSY_TIMEOUT_MS))}`,
-    );
+    const busyMs = Math.max(0, Math.floor(options.busyTimeoutMs ?? BUSY_TIMEOUT_MS));
+    const openWait = Math.max(0, Math.floor(options.openWaitMs ?? busyMs));
+    db.exec(`PRAGMA busy_timeout = ${openWait}`);
     db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
     const fts5 = options.noFts5 !== true && hasFts5(db);
     prepare(db, fts5);
-    return new BrainIndex(db, fts5, options.now ?? Date.now);
+    db.exec(`PRAGMA busy_timeout = ${busyMs}`);
+    return new BrainIndex(db, fts5, options.now ?? Date.now, busyMs);
   } catch (error) {
     db.close();
     throw error;

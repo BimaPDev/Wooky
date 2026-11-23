@@ -7,8 +7,16 @@ import {
   type ProviderCapabilities,
   type ProviderKind,
 } from "@wooky/contracts";
+import { createRunStore } from "./brain/claims.ts";
+import { createBrainHooks } from "./brain/context.ts";
+import { createInboxGlobalProposals } from "./brain/extract.ts";
+import { createExtractor, createFinishHook } from "./brain/extract-hook.ts";
+import { createProviderComplete, extractionModelProblem } from "./brain/extract-model.ts";
+import { createBrainInbox } from "./brain/inbox.ts";
+import { createBrainService } from "./brain/service.ts";
+import { createBrainStore } from "./brain/store.ts";
 import { createEffectRunner } from "./effects/runner.ts";
-import { createAgentTokenService } from "./fleet/agent-token.ts";
+import { createAgentTokenService, type AgentTokenService } from "./fleet/agent-token.ts";
 import { createFleetService } from "./fleet/service.ts";
 import { createGhClient, type GhClient } from "./git/gh.ts";
 import { createShipService } from "./git/ship.ts";
@@ -41,6 +49,8 @@ import { createTransferService } from "./transfer/service.ts";
 import { createClaimFileSync } from "./transfer/file-sync.ts";
 
 const SERVE_OFF_TIMEOUT_MS = 3_000;
+/** At shutdown, how long to let an aborted brain extraction settle before the store closes. */
+const EXTRACT_SHUTDOWN_WAIT_MS = 2_000;
 
 async function stopServe(remote: RemoteRuntime): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -82,6 +92,8 @@ export interface ServerOptions {
   now?: () => number;
   /** Test seam. Production uses the socket's remote address. */
   remoteAddress?: (req: IncomingMessage) => string | undefined;
+  /** Test seam for issuing and verifying agent tokens against this server. */
+  agentTokens?: AgentTokenService;
   /** File sync around a claim. Defaults to the sync engine, bounded by `fileSyncTimeoutMs`. */
   transfer?: {
     syncNow?: import("./transfer/types.ts").SyncNow;
@@ -142,8 +154,45 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
+  const agentTokens = options.agentTokens ?? createAgentTokenService();
+  const resolveProjectRoot = (projectId: string) => store.model.projects[projectId]?.root ?? null;
+  const brainLog = (message: string) => console.error(message);
+  const brainStore = createBrainStore({
+    home: options.home,
+    resolveProjectRoot,
+    clock: ctx.now,
+    log: brainLog,
+  });
+  const brainInbox = createBrainInbox({
+    home: options.home,
+    store: brainStore,
+    clock: ctx.now,
+    log: brainLog,
+  });
+  const brainRuns = createRunStore({ home: options.home, log: brainLog });
+  // Every claim belongs to a turn, and no turn is running yet: whatever is left is from a crash.
+  try {
+    brainRuns.releaseAll();
+  } catch (error) {
+    console.error("Could not release brain claims left from the last run", error);
+  }
+  const brain = createBrainService({
+    home: options.home,
+    brainStore,
+    inbox: brainInbox,
+    runs: brainRuns,
+    eventStore: store,
+    tokens: agentTokens,
+    clock: ctx.now,
+    log: brainLog,
+  });
+  let storesClosed = false;
   const closeStore = () => {
+    if (storesClosed) return;
+    storesClosed = true;
     unwatchHeldNotices();
+    brainRuns.close();
+    brainStore.close();
     store.close();
   };
   const git = options.git ?? createGitService();
@@ -222,7 +271,29 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     hasProvider: (kind) => knownProviders.has(kind),
     broadcastSync: (message) => broadcastSync(message),
   });
+  const extractor = createExtractor({
+    deps: {
+      complete: createProviderComplete({
+        providers,
+        settings: () => themes.getSettings(),
+        home: options.home,
+      }),
+      brain: brainStore,
+      submitGlobalProposal: createInboxGlobalProposals(brainInbox, ctx.now),
+      inboxSummaries: () => brainInbox.list().map((item) => item.frontmatter.summary),
+      log: (message) => console.warn(message),
+    },
+    settings: () => themes.getSettings().brain,
+    projectBrain: (projectId) => store.model.projects[projectId]?.scratch !== true,
+    unavailable: () => extractionModelProblem(themes.getSettings()),
+    log: (message) => console.warn(message),
+  });
   const runner = createEffectRunner({
+    onTurnFinished: createFinishHook({
+      extractor,
+      model: () => store.model,
+      log: (message) => console.warn(message),
+    }),
     store,
     providers,
     git,
@@ -230,6 +301,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     dispatch: (command) => dispatchCommand(command),
     deviceSettings: () => themes.getSettings(),
     limits,
+    brain: createBrainHooks({ store: brainStore, runs: brainRuns }),
     now: ctx.now,
     runClaimThread: (effect) => transfer.runClaimThread(effect),
     recoverClaims: () => transfer.recoverClaims(),
@@ -252,7 +324,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   runner.recover();
   transfer.start();
   const queries = createQueries({ store, git, userHome: options.userHome ?? homedir() });
-  const agentTokens = createAgentTokenService();
   const fleet = createFleetService({ store, dispatcher, git, tokens: agentTokens });
   const ship = createShipService({ store, git, gh: options.gh ?? createGhClient() });
   const stopShipPolling = ship.startPolling();
@@ -289,6 +360,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       attachments: createAttachmentStore(options.home),
       transfer,
       remote,
+      brain,
     },
     new Set(options.allowedHosts ?? []),
     {
@@ -311,11 +383,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     setAgentTokenIssuer((threadId) => agentTokens.issue(threadId));
   } catch (error) {
     stopShipPolling();
+    extractor.stop();
     transfer.stop();
     sockets.close();
     remote.closeTunnels();
     await remote.closeServers();
     await sync.close();
+    await extractor.drain(EXTRACT_SHUTDOWN_WAIT_MS);
     closeStore();
     throw error;
   }
@@ -343,6 +417,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           httpServers.map((http) => new Promise<void>((resolve) => http.close(() => resolve()))),
         );
         for (const http of httpServers) http.closeIdleConnections();
+        extractor.stop();
         await runner.shutdown();
         sockets.close();
         remote.closeTunnels();
@@ -351,6 +426,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         await history.close();
         transfer.stop();
         await sync.close();
+        if (!(await extractor.drain(EXTRACT_SHUTDOWN_WAIT_MS))) {
+          console.warn("brain: extraction is still settling at shutdown");
+        }
         closeStore();
       })();
       return closing;
