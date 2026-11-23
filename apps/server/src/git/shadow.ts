@@ -35,7 +35,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import type { FileDiff } from "@wooky/contracts";
-import { userRepoGitEnv } from "./env.ts";
+import { shadowGitEnv } from "./env.ts";
 
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const ZERO_SHA = "0".repeat(40);
@@ -165,6 +165,9 @@ const CONFIG_OVERRIDES = [
   "transfer.fsckObjects=true",
   "core.protectNTFS=true",
   "core.protectHFS=true",
+  // The shadow never talks to a remote. Only a local file (a sync bundle) may be fetched.
+  "protocol.allow=never",
+  "protocol.file.allow=always",
 ].flatMap((entry) => ["-c", entry]);
 
 const EMPTY_BASE_REF = "refs/wooky/empty-base";
@@ -295,23 +298,17 @@ export function createShadowGit(
   const gitBin = options.gitBin ?? "git";
   const home = options.home;
 
-  function environment(repo: ShadowRepo | null, extra?: Record<string, string>) {
-    const env = userRepoGitEnv();
+  function environment(
+    repo: ShadowRepo | null,
+    inert: { config: string } | null,
+    extra?: Record<string, string>,
+  ) {
     // Nothing from the user's ambient git setup may reach the shadow repo: no dates, no
-    // global or system config, no hooks.
-    for (const key of [
-      "GIT_AUTHOR_DATE",
-      "GIT_COMMITTER_DATE",
-      "GIT_CONFIG_GLOBAL",
-      "GIT_CONFIG_SYSTEM",
-    ]) {
-      delete env[key];
-    }
+    // identity, no transport, no global or system config, no hooks. shadowGitEnv drops every GIT_*.
+    const env = shadowGitEnv();
     env.GIT_CONFIG_NOSYSTEM = "1";
     env.GIT_ATTR_NOSYSTEM = "1";
-    env.GIT_CONFIG_GLOBAL = repo
-      ? join(repo.gitDir, "wooky-empty.config")
-      : inertGitFiles(home).config;
+    env.GIT_CONFIG_GLOBAL = repo ? join(repo.gitDir, "wooky-empty.config") : (inert?.config ?? "");
     if (repo) {
       env.GIT_DIR = repo.gitDir;
       env.GIT_WORK_TREE = repo.workTree;
@@ -333,14 +330,16 @@ export function createShadowGit(
   }
 
   function launch(repo: ShadowRepo | null, args: string[], opts: RunOptions): ChildProcess {
+    // Without a repo the inert files stand in for its config and hooks. Checked once per launch.
+    const inert = repo ? null : inertGitFiles(home);
     const hooks = [
       "-c",
-      `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : inertGitFiles(home).hooks}`,
+      `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : (inert?.hooks ?? "")}`,
     ];
     return spawn(gitBin, [...CONFIG_OVERRIDES, ...hooks, ...args], {
       // The work tree, so git never computes a prefix when the shadow dir sits inside the project.
       cwd: repo?.workTree ?? process.cwd(),
-      env: environment(repo, opts.env),
+      env: environment(repo, inert, opts.env),
       windowsHide: true,
     });
   }
