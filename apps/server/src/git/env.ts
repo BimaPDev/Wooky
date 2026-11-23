@@ -32,6 +32,9 @@ export function gitChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
   env.LC_ALL = "C";
   env.GIT_TERMINAL_PROMPT = "0";
+  env.GCM_INTERACTIVE = "never";
+  env.GIT_EDITOR = "false";
+  env.GIT_PAGER = "cat";
   env.GIT_SSH_COMMAND = composeGitSshCommand(env.GIT_SSH_COMMAND);
   return { ...env, ...extra };
 }

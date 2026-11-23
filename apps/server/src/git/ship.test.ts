@@ -8,6 +8,7 @@ import type { Thread } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import { openEventStore } from "../store/event-store.ts";
 import { tempDir, waitForEvent } from "../testing.ts";
+import { gitChildEnv } from "./env.ts";
 import { createGhClient } from "./gh.ts";
 import { createShipService } from "./ship.ts";
 import { createGitService } from "./service.ts";
@@ -15,6 +16,7 @@ import { cleanupTestRepos, makeRepo } from "./test-repo.ts";
 
 const exec = promisify(execFile);
 const bases: string[] = [];
+const noGh = createGhClient({ resolveGh: () => null });
 
 afterEach(async () => {
   await cleanupTestRepos();
@@ -138,7 +140,7 @@ describe("ship service", () => {
     const store = openEventStore(home, () => "2026-01-01T00:00:00.000Z");
     seedThread(store, root, { id: "t-ship" });
     const git = createGitService();
-    const ship = createShipService({ store, git });
+    const ship = createShipService({ store, git, gh: noGh });
 
     await writeFile(join(root, "delta.txt"), "change\n");
     const commit = await ship.commit({ threadId: "t-ship", message: "Ship it" });
@@ -152,12 +154,20 @@ describe("ship service", () => {
     store.close();
   });
 
+  it("disables interactive git prompts, editors, and pagers in child env", () => {
+    const env = gitChildEnv();
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.GCM_INTERACTIVE).toBe("never");
+    expect(env.GIT_EDITOR).toBe("false");
+    expect(env.GIT_PAGER).toBe("cat");
+  });
+
   it("refuses commit with no changes, on detached HEAD, and while a turn runs", async () => {
     const root = await makeRepo();
     const home = await tempDir("ship-refuse");
     const store = openEventStore(home, () => "2026-01-01T00:00:00.000Z");
     seedThread(store, root, { id: "t1" });
-    const ship = createShipService({ store, git: createGitService() });
+    const ship = createShipService({ store, git: createGitService(), gh: noGh });
 
     await expect(ship.commit({ threadId: "t1", message: "empty" })).rejects.toMatchObject({
       code: "bad_request",
@@ -201,7 +211,7 @@ describe("ship service", () => {
     const home = await tempDir("ship-push");
     const store = openEventStore(home, () => "2026-01-01");
     seedThread(store, root, { id: "t-push" });
-    const ship = createShipService({ store, git: createGitService() });
+    const ship = createShipService({ store, git: createGitService(), gh: noGh });
     const started = Date.now();
     await expect(ship.push({ threadId: "t-push", setUpstream: true })).rejects.toBeInstanceOf(
       ServiceError,
@@ -235,6 +245,7 @@ if (args[0] === "push") {
     const ship = createShipService({
       store,
       git: createGitService(),
+      gh: noGh,
       gitBin: process.execPath,
       gitPrefixArgs: [hang],
       pushTimeoutMs: 1500,
@@ -260,7 +271,7 @@ if (args[0] === "push") {
     const home = await tempDir("ship-redact");
     const store = openEventStore(home, () => "2026-01-01");
     seedThread(store, root, { id: "t-redact" });
-    const ship = createShipService({ store, git: createGitService() });
+    const ship = createShipService({ store, git: createGitService(), gh: noGh });
     await expect(ship.push({ threadId: "t-redact", setUpstream: true })).rejects.toSatisfy(
       (error: unknown) => {
         if (!(error instanceof ServiceError)) return false;
@@ -278,7 +289,7 @@ if (args[0] === "push") {
     const home = await tempDir("ship-force-name");
     const store = openEventStore(home, () => "2026-01-01");
     seedThread(store, root, { id: "t-force" });
-    const ship = createShipService({ store, git: createGitService() });
+    const ship = createShipService({ store, git: createGitService(), gh: noGh });
     const head = await runGit(root, "rev-parse", "HEAD");
     await runGit(root, "update-ref", "refs/heads/--force", head);
     await runGit(root, "symbolic-ref", "HEAD", "refs/heads/--force");
@@ -299,7 +310,7 @@ if (args[0] === "push") {
     seedThread(store, root, { id: "t-iso", isolate: true, worktree });
     const rootBefore = await runGit(root, "rev-parse", "HEAD");
     await writeFile(join(worktree.path, "isolated.txt"), "only here\n");
-    const ship = createShipService({ store, git: gitSvc });
+    const ship = createShipService({ store, git: gitSvc, gh: noGh });
     await ship.commit({ threadId: "t-iso", message: "Worktree only" });
     const rootAfter = await runGit(root, "rev-parse", "HEAD");
     expect(rootAfter).toBe(rootBefore);
