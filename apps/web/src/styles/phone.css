@@ -198,8 +198,31 @@
     max-height: min(70dvh, 520px);
   }
 
+  .pk-row-main {
+    min-height: 44px;
+    padding: var(--space-2) 8px var(--space-2) 10px;
+  }
+
+  .pk-row-copy {
+    flex: 1;
+    flex-wrap: wrap;
+    gap: 2px var(--space-2);
+  }
+
+  .pk-row-copy .pk-row-name {
+    max-width: 100%;
+  }
+
+  .pk-row-copy .pk-row-note {
+    max-width: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
   .pk-kbd,
-  .approval-actions kbd {
+  .approval-actions kbd,
+  .palette-shortcut {
     display: none;
   }
 

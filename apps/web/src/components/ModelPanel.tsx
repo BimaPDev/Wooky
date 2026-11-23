@@ -310,11 +310,15 @@ export function ModelPanel({
                   onClick={() => pick(row)}
                 >
                   <ProviderMark kind={row.provider} size={18} />
-                  <span className="pk-row-name">{row.label}</span>
-                  {row.isDefault ? <span className="pk-row-note">Default</span> : null}
-                  {cooldown ? (
-                    <span className="pk-row-note">{limitedUntilLabel(cooldown.until, nowMs)}</span>
-                  ) : null}
+                  <span className="pk-row-copy">
+                    <span className="pk-row-name">{row.label}</span>
+                    {row.isDefault ? <span className="pk-row-note">Default</span> : null}
+                    {cooldown ? (
+                      <span className="pk-row-note">
+                        {limitedUntilLabel(cooldown.until, nowMs)}
+                      </span>
+                    ) : null}
+                  </span>
                   {selected ? (
                     <span className="pk-row-check" aria-hidden="true">
                       <IconCheckSmall />

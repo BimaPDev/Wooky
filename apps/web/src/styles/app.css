@@ -7092,7 +7092,19 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .pk-row-main:disabled {
-  opacity: 0.72;
+  opacity: 0.78;
+}
+
+.pk-row-main:disabled .pk-row-note {
+  color: var(--text-2);
+}
+
+.pk-row-copy {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
 }
 
 .pk-row-name {
