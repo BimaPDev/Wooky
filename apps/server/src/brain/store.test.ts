@@ -240,6 +240,16 @@ describe("expectedUpdatedAt", () => {
     store.write(g("n.md"), note("v4"), { expectedUpdatedAt: second.updatedAt });
   });
 
+  it("treats expectedUpdatedAt null as create-only", () => {
+    const { store } = setup();
+    expect(store.write(g("once.md"), note("v1"), { expectedUpdatedAt: null }).created).toBe(true);
+    expect(codeOf(() => store.write(g("once.md"), note("v2"), { expectedUpdatedAt: null }))).toBe(
+      "conflict",
+    );
+    expect(store.read(g("once.md"), 0).frontmatter.summary).toBe("v1");
+    expect(store.write(g("once.md"), note("v3")).created).toBe(false);
+  });
+
   it("moves updatedAt forward even when the clock stands still", () => {
     const { store } = setup({ fixedClock: true });
     const first = store.write(g("n.md"), note("v1"));

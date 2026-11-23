@@ -34,6 +34,7 @@ import {
   type ScanBudget,
 } from "./paths.ts";
 import { assertBodySize, assertFrontmatterHasNoSecret, assertNoSecret } from "./safety.ts";
+import { effectiveTrust } from "./trust.ts";
 import {
   briefDatabaseError,
   isBusyDatabase,
@@ -88,7 +89,7 @@ export interface BrainStore {
   write(
     uri: string,
     input: BrainWriteInput,
-    options?: { expectedUpdatedAt?: string },
+    options?: { expectedUpdatedAt?: string | null },
   ): BrainWriteResult;
   archive(uri: string): BrainWriteResult;
   remove(uri: string): void;
@@ -357,7 +358,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       scope: found.scope,
       path: found.path,
       type,
-      trust: brainTrust(found.scope),
+      trust: effectiveTrust({ trust: brainTrust(found.scope), frontmatter: parsed.frontmatter }),
       tier,
       frontmatter: parsed.frontmatter,
       body: tier === 0 ? "" : parsed.body,
@@ -512,6 +513,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
             nodes.push({
               ...base,
               type: "memory",
+              trust: effectiveTrust({ trust, frontmatter }),
               summary: frontmatter.summary,
               kind: frontmatter.kind,
               status: frontmatter.status,
@@ -546,12 +548,14 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       const existing = readMemory(found.root, found.segments);
       const current = existing?.parsed.frontmatter.updatedAt;
       const expected = writeOptions.expectedUpdatedAt;
-      if (expected !== undefined && current !== expected) {
+      if (expected !== undefined && current !== (expected ?? undefined)) {
         throw new ServiceError(
           "conflict",
-          current === undefined
-            ? `${uri} does not exist, so it cannot be updated from ${expected}`
-            : `${uri} changed since ${expected} (now ${current}). Read it again and retry.`,
+          expected === null
+            ? `${uri} already exists (updated ${current}). Read it, then update it with expectedUpdatedAt.`
+            : current === undefined
+              ? `${uri} does not exist, so it cannot be updated from ${expected}`
+              : `${uri} changed since ${expected} (now ${current}). Read it again and retry.`,
         );
       }
       // Its own budget: the overview refresh below walks the tree again with a fresh one.
@@ -625,6 +629,21 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
         return { hits, scopes };
       };
       const { hits, scopes } = withIndexRecovery(run);
+      // A global memory an agent wrote stays untrusted data after the user approves it.
+      const hitTrust = (scope: BrainScope, path: string) => {
+        const base = brainTrust(scope);
+        if (base === "repo") return base;
+        try {
+          const segments = parseBrainPath(path);
+          const root = openRoot(options.home, scope, options.resolveProjectRoot, log);
+          const memory = segments === null ? null : readMemory(root, segments);
+          return memory === null
+            ? ("repo" as const)
+            : effectiveTrust({ trust: base, frontmatter: memory.parsed.frontmatter });
+        } catch {
+          return "repo" as const;
+        }
+      };
       return hits.flatMap((hit) => {
         const scope = scopes.get(hit.scopeKey);
         if (scope === undefined) return [];
@@ -633,7 +652,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
             uri: formatBrainUri(scope, hit.path),
             scope,
             path: hit.path,
-            trust: brainTrust(scope),
+            trust: hitTrust(scope, hit.path),
             summary: hit.summary,
             kind: hit.kind,
             tags: hit.tags,
