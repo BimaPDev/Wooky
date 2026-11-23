@@ -692,7 +692,7 @@ describe("the cost of starting a turn (M2)", () => {
     }
   });
 
-  it("stops asking for more once its deadline has passed", () => {
+  it("skips the costly sources once its deadline has passed, and answers from the index it has", () => {
     const { store, runs, input } = setup();
     store.write(g("pin.md"), memory("Global pinned", { pinned: true }));
     store.write(p("pin.md"), memory("Project pinned", { pinned: true }));
@@ -703,8 +703,9 @@ describe("the cost of starting a turn (M2)", () => {
       ...store,
       refresh: (scopes, options) => {
         calls.push("refresh");
+        const usable = store.refresh(scopes, options);
         clock += 400;
-        return store.refresh(scopes, options);
+        return usable;
       },
       pinned: (...args) => {
         calls.push("pinned");
@@ -727,8 +728,10 @@ describe("the cost of starting a turn (M2)", () => {
       deadlineMs: 300,
     });
     const block = hooks.contextFor(input(worker({ prompt: "pinned deploy" }))) ?? "";
-    expect(calls).toEqual(["refresh"]);
+    expect(calls.filter((call) => call === "refresh")).toHaveLength(1);
+    expect(calls).not.toContain("read");
     expect(block).toContain("apps/server/** — owns the server");
+    expect(block).toContain("Global pinned");
   });
 
   it("cuts the walk of a brain that is too big for the deadline, however big it is", () => {

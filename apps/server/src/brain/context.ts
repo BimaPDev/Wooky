@@ -372,7 +372,9 @@ export function createBrainHooks(deps: BrainHooksDeps): BrainTurnHooks {
     const isUsable = (scope: BrainScope) =>
       usable.some((item) => brainScopeKey(item) === brainScopeKey(scope));
 
-    if (isUsable(global) && !stop()) {
+    // The index queries below are bounded and take a few milliseconds, so they run even when the
+    // deadline passed in `refresh`: a partly synced index still answers with what it has.
+    if (isUsable(global)) {
       userPinned.push(
         ...attempt("pinned memories", () =>
           deps.store
@@ -381,7 +383,7 @@ export function createBrainHooks(deps: BrainHooksDeps): BrainTurnHooks {
         ),
       );
     }
-    if (isUsable(project) && !stop()) {
+    if (isUsable(project)) {
       repoPinned.push(
         ...attempt("pinned memories", () =>
           deps.store
@@ -407,7 +409,7 @@ export function createBrainHooks(deps: BrainHooksDeps): BrainTurnHooks {
     const query = queryWords(input.prompt);
     if (query !== "") {
       for (const scope of [project, global]) {
-        if (!isUsable(scope) || stop()) continue;
+        if (!isUsable(scope)) continue;
         hits.push(
           ...attempt("search hits", () =>
             deps.store

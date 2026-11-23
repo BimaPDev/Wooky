@@ -272,9 +272,10 @@ directory listing each and leaves no files behind.
 
 It never throws, and it never waits long. A source that fails (pinned lookup, search, run state)
 is logged and left out; if everything fails the prompt goes out as the user wrote it. The whole
-call has a deadline of 300 ms (`BRAIN_CONTEXT_DEADLINE_MS`), checked before each source and inside
-the folder walk and the index sync: past it the block is built from what has been gathered, and
-run state is gathered first. To keep the cost of a turn start small:
+call has a deadline of 300 ms (`BRAIN_CONTEXT_DEADLINE_MS`), checked inside the folder walk, the
+index sync and before the overview: past it the block is built from what has been gathered. Run
+state is gathered first, and the index queries (a few milliseconds, bounded) still run, so a partly
+synced index answers with what it has. To keep the cost of a turn start small:
 
 - A scope is walked and synced at most once per call, and not again for 5 seconds. A write through
   the store forgets its scope. A file edited outside Wooky shows up within those 5 seconds.
