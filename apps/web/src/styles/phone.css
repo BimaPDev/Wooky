@@ -105,7 +105,19 @@
   }
 
   .fleet-tree-toggle {
+    position: relative;
     min-width: 28px;
+    margin-right: 8px;
+  }
+
+  .fleet-tree-toggle::after {
+    content: "";
+    position: absolute;
+    inset: 0 -8px;
+  }
+
+  .fleet-tree-item > .thread-row .thread-button {
+    padding-left: var(--space-1);
   }
 
   .toggle,
@@ -193,11 +205,22 @@
 
   .failover-row {
     gap: var(--space-1);
-    padding: 0 var(--space-1) 0 var(--space-2);
+    padding: 0 6px 0 var(--space-2);
+  }
+
+  .failover-row-actions {
+    gap: var(--space-3);
   }
 
   .failover-row-actions .icon-button {
+    position: relative;
     min-width: 32px;
+  }
+
+  .failover-row-actions .icon-button::after {
+    content: "";
+    position: absolute;
+    inset: 0 -6px;
   }
 
   /* Conversation and composer */
@@ -238,8 +261,10 @@
   .diff-wrap,
   .approval-diff,
   .conflict-side-body {
+    width: 100%;
     max-width: 100%;
     overflow-x: auto;
+    container-type: inline-size;
   }
 
   .diff {
@@ -250,8 +275,8 @@
   .review-compose {
     position: sticky;
     left: var(--space-3);
-    width: calc(100vw - 2 * var(--space-3));
-    max-width: calc(100vw - 2 * var(--space-3));
+    width: calc(100cqw - 2 * var(--space-3));
+    max-width: calc(100cqw - 2 * var(--space-3));
   }
 
   .markdown pre,
