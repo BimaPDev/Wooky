@@ -41,6 +41,7 @@ import {
   openBrainIndex,
   resetBrainIndexFiles,
   type BrainIndex,
+  type IndexHit,
   type LoadedFile,
   type SyncReport,
 } from "./search-index.ts";
@@ -93,6 +94,8 @@ export interface BrainStore {
   archive(uri: string): BrainWriteResult;
   remove(uri: string): void;
   search(query: string, options: BrainSearchOptions): BrainSearchHit[];
+  /** Active memories marked `pinned: true` in the given scopes, newest first. */
+  pinned(scopes: readonly BrainScope[], limit: number): BrainSearchHit[];
   overview(dirUri: string): BrainEntry;
   /** Brings the search index in line with the files of one scope. */
   reindex(scope: BrainScope): SyncReport;
@@ -463,6 +466,48 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     return truncated ? { ...report, truncated: true } : report;
   }
 
+  /** Syncs each scope's files into the index; a scope that cannot be opened is skipped and logged. */
+  function syncScopes(requested: readonly BrainScope[], what: string): Map<string, BrainScope> {
+    const scopes = new Map<string, BrainScope>();
+    for (const scope of requested) {
+      const key = brainScopeKey(scope);
+      if (scopes.has(key)) continue;
+      try {
+        const root = openRoot(options.home, scope, options.resolveProjectRoot, log);
+        syncScope(scope, root);
+        scopes.set(key, scope);
+      } catch (error) {
+        if (!(error instanceof ServiceError)) throw error;
+        log(`brain: skipping ${key} in ${what} (${error.message})`);
+      }
+    }
+    return scopes;
+  }
+
+  function toBrainHits(
+    hits: readonly IndexHit[],
+    scopes: ReadonlyMap<string, BrainScope>,
+  ): BrainSearchHit[] {
+    return hits.flatMap((hit) => {
+      const scope = scopes.get(hit.scopeKey);
+      if (scope === undefined) return [];
+      return [
+        {
+          uri: formatBrainUri(scope, hit.path),
+          scope,
+          path: hit.path,
+          trust: brainTrust(scope),
+          summary: hit.summary,
+          kind: hit.kind,
+          tags: hit.tags,
+          status: hit.status,
+          updatedAt: hit.updatedAt,
+          score: hit.score,
+        },
+      ];
+    });
+  }
+
   const raw: BrainStore = {
     list(dirUri, listOptions = {}) {
       const found = target(dirUri);
@@ -598,22 +643,10 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       ) {
         throw new ServiceError("bad_request", "pathPrefix is not a valid brain path");
       }
-      const run = () => {
-        const scopes = new Map<string, BrainScope>();
-        for (const scope of searchOptions.scopes) {
-          const key = brainScopeKey(scope);
-          if (scopes.has(key)) continue;
-          try {
-            const root = openRoot(options.home, scope, options.resolveProjectRoot, log);
-            syncScope(scope, root);
-            scopes.set(key, scope);
-          } catch (error) {
-            if (!(error instanceof ServiceError)) throw error;
-            log(`brain: skipping ${key} in a search (${error.message})`);
-          }
-        }
-        const hits = getIndex().search(query, {
-          scopeKeys: [...scopes.keys()],
+      const { hits, scopes } = withIndexRecovery(() => {
+        const synced = syncScopes(searchOptions.scopes, "a search");
+        const found = getIndex().search(query, {
+          scopeKeys: [...synced.keys()],
           limit: searchOptions.limit,
           ...(searchOptions.pathPrefix === undefined
             ? {}
@@ -622,27 +655,17 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
             ? {}
             : { includeArchived: searchOptions.includeArchived }),
         });
-        return { hits, scopes };
-      };
-      const { hits, scopes } = withIndexRecovery(run);
-      return hits.flatMap((hit) => {
-        const scope = scopes.get(hit.scopeKey);
-        if (scope === undefined) return [];
-        return [
-          {
-            uri: formatBrainUri(scope, hit.path),
-            scope,
-            path: hit.path,
-            trust: brainTrust(scope),
-            summary: hit.summary,
-            kind: hit.kind,
-            tags: hit.tags,
-            status: hit.status,
-            updatedAt: hit.updatedAt,
-            score: hit.score,
-          },
-        ];
+        return { hits: found, scopes: synced };
       });
+      return toBrainHits(hits, scopes);
+    },
+
+    pinned(pinnedScopes, limit) {
+      const { hits, scopes } = withIndexRecovery(() => {
+        const synced = syncScopes(pinnedScopes, "a pinned lookup");
+        return { hits: getIndex().pinned([...synced.keys()], limit), scopes: synced };
+      });
+      return toBrainHits(hits, scopes);
     },
 
     overview: (dirUri) => overview(dirUri, 1),
@@ -666,6 +689,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     archive: (uri) => guard("archive", () => raw.archive(uri)),
     remove: (uri) => guard("remove", () => raw.remove(uri)),
     search: (query, searchOptions) => guard("search", () => raw.search(query, searchOptions)),
+    pinned: (scopes, limit) => guard("pinned", () => raw.pinned(scopes, limit)),
     overview: (dirUri) => guard("overview", () => raw.overview(dirUri)),
     reindex: (scope) => guard("reindex", () => raw.reindex(scope)),
     close: () => raw.close(),

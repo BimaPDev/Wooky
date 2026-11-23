@@ -19,6 +19,7 @@ import {
   workerAlreadyReported,
   workerDiffStat,
 } from "../fleet/worker-report.ts";
+import { withBrainContext, type BrainTurnHooks } from "../brain/context.ts";
 import { rebuildMissingWorkerReports } from "../fleet/rebuild-reports.ts";
 import type { GitService } from "../git/types.ts";
 import {
@@ -58,6 +59,8 @@ interface RunnerDeps {
   dispatch?: (command: Command) => void;
   deviceSettings?: () => DeviceSettings;
   limits?: LimitsService;
+  /** Brain context for turn prompts and claim release when a turn ends. */
+  brain?: BrainTurnHooks;
   now?: () => string;
   runClaimThread?: (effect: Extract<Effect, { kind: "claimThread" }>) => Promise<void>;
   recoverClaims?: () => void;
@@ -97,6 +100,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     dispatch,
     deviceSettings,
     limits,
+    brain,
     now = () => new Date().toISOString(),
     runClaimThread,
     recoverClaims,
@@ -307,12 +311,41 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
     return worktree;
   }
 
+  function endBrainTurn(threadId: string) {
+    try {
+      brain?.turnEnded(threadId);
+    } catch (cause) {
+      console.error(`Could not release brain claims of ${threadId}`, cause);
+    }
+  }
+
+  /** The one place a turn's prompt gains brain context; the stored turn keeps the user's text. */
+  function promptWithBrain(thread: ReadModel["threads"][string], prompt: string): string {
+    if (!brain) return prompt;
+    try {
+      return withBrainContext(
+        prompt,
+        brain.contextFor({
+          projectId: thread.projectId,
+          prompt,
+          threadId: thread.id,
+          role: thread.role,
+          parentThreadId: thread.parentThreadId,
+        }),
+      );
+    } catch (cause) {
+      console.error(`Could not add brain context to the prompt of ${thread.id}`, cause);
+      return prompt;
+    }
+  }
+
   async function runTurn(threadId: string, turnId: string): Promise<void> {
     const controller = controllers.get(turnId) ?? new AbortController();
     const { signal } = controller;
     try {
       await runTurnBody(threadId, turnId, controller, signal);
     } finally {
+      endBrainTurn(threadId);
       // A throw after questions.set never reaches the promise's finally; abort settles it.
       controller.abort();
       controllers.delete(turnId);
@@ -426,7 +459,7 @@ export function createEffectRunner(deps: RunnerDeps): EffectRunner {
         threadId,
         turnId,
         cwd,
-        prompt: turn.prompt,
+        prompt: promptWithBrain(live, turn.prompt),
         model: turn.model,
         runtimeMode: live.runtimeMode,
         resumeSessionId: live.providerSessionId,

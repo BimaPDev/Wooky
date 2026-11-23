@@ -753,3 +753,33 @@ describe("trust", () => {
     });
   });
 });
+
+describe.each([false, true])("pinned memories (noFts5: %s)", (noFts5) => {
+  it("lists active pinned memories of the asked scopes, newest first", () => {
+    const { store } = setup({ noFts5 });
+    store.write(a("old.md"), note("Old pin", "", { pinned: true }));
+    store.write(a("plain.md"), note("Not pinned"));
+    store.write(a("proposed.md"), note("Proposed pin", "", { pinned: true, status: "proposed" }));
+    store.write(a("archived.md"), note("Archived pin", "", { pinned: true }));
+    store.archive(a("archived.md"));
+    store.write(a("new.md"), note("New pin", "", { pinned: true }));
+    store.write(g("pref.md"), note("Global pin", "", { pinned: true }));
+    store.write(b("other.md"), note("Other project pin", "", { pinned: true }));
+
+    const hits = store.pinned([A], 10);
+    expect(hits.map((hit) => hit.summary)).toEqual(["New pin", "Old pin"]);
+    expect(hits[0]).toMatchObject({ trust: "repo", uri: a("new.md"), status: "active" });
+    expect(store.pinned([GLOBAL], 10).map((hit) => hit.summary)).toEqual(["Global pin"]);
+    expect(store.pinned([GLOBAL, A], 10)).toHaveLength(3);
+    expect(store.pinned([A], 1)).toHaveLength(1);
+    expect(store.pinned([{ kind: "project", projectId: "unknown" }], 10)).toEqual([]);
+  });
+
+  it("follows edits: unpinning removes the memory from the list", () => {
+    const { store } = setup({ noFts5 });
+    const { updatedAt } = store.write(a("x.md"), note("Pinned", "", { pinned: true }));
+    expect(store.pinned([A], 10)).toHaveLength(1);
+    store.write(a("x.md"), note("Pinned", ""), { expectedUpdatedAt: updatedAt });
+    expect(store.pinned([A], 10)).toEqual([]);
+  });
+});

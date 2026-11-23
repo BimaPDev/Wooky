@@ -7,6 +7,9 @@ import {
   type ProviderCapabilities,
   type ProviderKind,
 } from "@wooky/contracts";
+import { createBrainHooks } from "./brain/context.ts";
+import { createRunStore } from "./brain/claims.ts";
+import { createBrainStore } from "./brain/store.ts";
 import { createEffectRunner } from "./effects/runner.ts";
 import { createAgentTokenService } from "./fleet/agent-token.ts";
 import { createFleetService } from "./fleet/service.ts";
@@ -142,8 +145,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     failoverSettings: FailoverSettings.parse({}),
   };
   const store = openEventStore(options.home, ctx.now);
+  const brainStore = createBrainStore({
+    home: options.home,
+    resolveProjectRoot: (projectId) => store.model.projects[projectId]?.root ?? null,
+    log: (message) => console.error(message),
+  });
+  const brainRuns = createRunStore({ home: options.home });
   const closeStore = () => {
     unwatchHeldNotices();
+    brainStore.close();
+    brainRuns.close();
     store.close();
   };
   const git = options.git ?? createGitService();
@@ -230,6 +241,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     dispatch: (command) => dispatchCommand(command),
     deviceSettings: () => themes.getSettings(),
     limits,
+    brain: createBrainHooks({ store: brainStore, runs: brainRuns }),
     now: ctx.now,
     runClaimThread: (effect) => transfer.runClaimThread(effect),
     recoverClaims: () => transfer.recoverClaims(),

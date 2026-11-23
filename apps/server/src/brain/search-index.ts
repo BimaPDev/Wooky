@@ -284,6 +284,20 @@ export class BrainIndex {
       : this.searchPlain(terms, where, params, limit);
   }
 
+  /** Active pinned memories of the given scopes, newest first. */
+  pinned(scopeKeys: readonly string[], limit: number): IndexHit[] {
+    if (scopeKeys.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT scope_key, path, summary, kind, tags, status, updated_at, 0 AS rank
+         FROM files
+         WHERE scope_key IN (${scopeKeys.map(() => "?").join(", ")}) AND pinned = 1 AND status = 'active'
+         ORDER BY updated_at DESC, path LIMIT ?`,
+      )
+      .all(...scopeKeys, Math.max(1, Math.min(100, Math.floor(limit)))) as unknown as HitRow[];
+    return rows.map(toHit);
+  }
+
   private searchFts(terms: string[], where: string, params: (string | number)[], limit: number) {
     const match = terms.map((term) => `"${term}"`).join(" OR ");
     const rows = this.db
