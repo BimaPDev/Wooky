@@ -2931,8 +2931,14 @@ button.tool-line:active {
   font-weight: 600;
 }
 
+.appearance-section > .settings-help {
+  padding: 0 var(--space-1) var(--space-3);
+  border-bottom: 0;
+}
+
 .appearance-section-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
@@ -3917,6 +3923,11 @@ button.tool-line:active {
   border-bottom: 1px solid var(--line);
 }
 
+.settings-plain-list .ghost-button {
+  align-self: flex-start;
+  margin: var(--space-1) 0 0 calc(-1 * var(--space-2));
+}
+
 .settings-plain-list li:last-child {
   border-bottom: 0;
 }
@@ -4721,6 +4732,7 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  margin: 0 calc(-1 * var(--space-2));
   padding: var(--space-2);
   border-radius: var(--radius-xl);
 }
