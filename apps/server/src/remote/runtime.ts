@@ -33,6 +33,8 @@ export interface RemoteRuntime {
   servePort(): number | null;
   servers(): import("node:http").Server[];
   addresses(): string[];
+  /** Addresses hosting wanted but could not open, as sentences. The RPC contract has no slot for them. */
+  warnings(): string[];
   port(): number;
   /** The port in use, and whether a command-line port overrides the hosting setting. */
   listenInfo(): { port: number; portExplicit: boolean };
@@ -185,6 +187,7 @@ export function createRemoteRuntime(options: {
     servePort: () => bind.servePort(),
     servers: () => bind.servers(),
     addresses: () => bind.addresses(),
+    warnings: () => bind.warnings(),
     port: () => bind.port(),
     listenInfo: () => ({ port: bind.port(), portExplicit: options.portExplicit === true }),
     url: () => bind.url(),

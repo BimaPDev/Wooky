@@ -63,6 +63,8 @@ export function createBindManager(options: {
   const retired = new Set<Server>();
   const sockets = new WeakMap<Server, Set<Socket>>();
   let assignedPort: number | null = null;
+  // Addresses the last apply() wanted but could not open while others came up.
+  let warnings: string[] = [];
   let serveServer: Server | null = null;
   let serveBound: number | null = null;
   let handler: (req: IncomingMessage, res: ServerResponse) => void = (_req, res) => {
@@ -139,6 +141,7 @@ export function createBindManager(options: {
       explicitPort: options.port,
       assignedPort,
     });
+    warnings = [];
     const portChanges = assignedPort !== null && port !== 0 && port !== assignedPort;
     if (portChanges) {
       const previous = [...listeners.entries()];
@@ -239,6 +242,17 @@ export function createBindManager(options: {
         }
         throw firstError ?? new Error("no listener could be started");
       }
+      // Something came up, but not everything asked for: say so, since apply() succeeds. With
+      // 0.0.0.0 down and :: up, IPv4 LAN clients are not served although hosting looks on.
+      warnings = hosts
+        .filter((host) => !listeners.has(host))
+        .map(
+          (host) =>
+            `Hosting is only partly on: could not listen on ${host}${
+              host === "0.0.0.0" ? ", so IPv4 clients on your network cannot connect" : ""
+            }.`,
+        );
+      for (const warning of warnings) console.error(warning);
     }
     const bound = assignedPort ?? port;
     return { url: primaryUrl(), port: bound };
@@ -298,6 +312,8 @@ export function createBindManager(options: {
     servePort: () => serveBound,
     servers: () => [...listeners.values(), ...(serveServer ? [serveServer] : [])],
     addresses: () => [...listeners.keys()],
+    /** Why hosting is only partly on after the last apply(); empty when every address came up. */
+    warnings: () => [...warnings],
     port: () => assignedPort ?? options.port,
     url: primaryUrl,
     setHandler(next: (req: IncomingMessage, res: ServerResponse) => void) {

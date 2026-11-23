@@ -193,6 +193,7 @@ describe("bind manager rollback", () => {
       spy.mockRestore();
       expect(manager.addresses()).toContain("127.0.0.1");
       expect(manager.addresses()).not.toContain("0.0.0.0");
+      expect(manager.warnings().join(" ")).toMatch(/0\.0\.0\.0.*IPv4/);
       expect(manager.url()).toBe(`http://127.0.0.1:${port}`);
       expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
     } finally {
