@@ -5811,6 +5811,9 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
 }
 
 .fleet-board-meta > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
