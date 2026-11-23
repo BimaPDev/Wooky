@@ -12,7 +12,9 @@ export function desiredHosts(options: {
 }): string[] {
   if (options.hostExplicit) return [options.explicitHost];
   if (!options.hosting.enabled || options.hosting.bind === "loopback") return ["127.0.0.1"];
-  if (options.hosting.bind === "all") return ["127.0.0.1", "0.0.0.0", "::"];
+  // 0.0.0.0 already answers on loopback. On Linux a wildcard bind also fails with EADDRINUSE
+  // while a 127.0.0.1 listener holds the port, so loopback is never listed beside it.
+  if (options.hosting.bind === "all") return ["0.0.0.0", "::"];
   return [...new Set(["127.0.0.1", ...options.tailnetIps])];
 }
 
@@ -28,6 +30,12 @@ export function desiredPort(options: {
   }
   if (options.hosting.enabled) return options.hosting.port;
   return options.assignedPort ?? options.explicitPort;
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  return (
+    address === "::1" || (address?.startsWith("127.") ?? false) || address === "::ffff:127.0.0.1"
+  );
 }
 
 function formatHost(host: string): string {
@@ -52,6 +60,9 @@ export function createBindManager(options: {
   tailnetIps: () => Promise<string[]>;
 }) {
   const listeners = new Map<string, Server>();
+  // Loopback listeners that stopped accepting to make room for a wildcard bind. Their
+  // established connections live on, so the client that asked for the change gets its reply.
+  const retired = new Set<Server>();
   const sockets = new WeakMap<Server, Set<Socket>>();
   let assignedPort: number | null = null;
   let serveServer: Server | null = null;
@@ -66,9 +77,10 @@ export function createBindManager(options: {
 
   function primaryUrl(): string {
     const port = assignedPort ?? options.port;
-    const host = listeners.has("127.0.0.1")
-      ? "127.0.0.1"
-      : (listeners.keys().next().value ?? options.host);
+    const host =
+      listeners.has("127.0.0.1") || listeners.has("0.0.0.0")
+        ? "127.0.0.1"
+        : (listeners.keys().next().value ?? options.host);
     return `http://${formatHost(host)}:${port}`;
   }
 
@@ -95,11 +107,20 @@ export function createBindManager(options: {
     });
   }
 
-  async function drop(host: string): Promise<void> {
+  /** With keepLoopback, local clients stay connected (they are still served) and only the rest are cut. */
+  async function drop(host: string, keepLoopback: boolean): Promise<void> {
     const server = listeners.get(host);
     if (!server) return;
     listeners.delete(host);
-    await closeServer(server);
+    if (!keepLoopback) {
+      await closeServer(server);
+      return;
+    }
+    for (const socket of sockets.get(server) ?? []) {
+      if (!isLoopbackAddress(socket.remoteAddress)) socket.destroy();
+    }
+    retired.add(server);
+    server.close(() => retired.delete(server));
   }
 
   async function apply(): Promise<{ url: string; port: number }> {
@@ -139,8 +160,10 @@ export function createBindManager(options: {
       listeners.clear();
       for (const [host, server] of opened) listeners.set(host, server);
     } else {
+      // Loopback stays served either by its own listener or by 0.0.0.0, so its clients keep their connections.
+      const keepLoopback = hosts.includes("127.0.0.1") || hosts.includes("0.0.0.0");
       for (const host of [...listeners.keys()]) {
-        if (!hosts.includes(host)) await drop(host);
+        if (!hosts.includes(host)) await drop(host, keepLoopback);
       }
       for (const host of hosts) {
         if (listeners.has(host)) continue;
@@ -223,8 +246,9 @@ export function createBindManager(options: {
       onUpgrade = next;
     },
     async closeServers(): Promise<void> {
-      const all = [...listeners.values(), ...(serveServer ? [serveServer] : [])];
+      const all = [...listeners.values(), ...retired, ...(serveServer ? [serveServer] : [])];
       listeners.clear();
+      retired.clear();
       serveServer = null;
       serveBound = null;
       await Promise.all(all.map((server) => closeServer(server)));

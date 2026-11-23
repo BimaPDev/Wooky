@@ -47,7 +47,7 @@ describe("hosting bind", () => {
     });
     expect(enabled.ok).toBe(true);
     expect(server.port).toBe(port);
-    expect(server.addresses()).toEqual(expect.arrayContaining(["127.0.0.1", "0.0.0.0"]));
+    expect(server.addresses()).toContain("0.0.0.0");
     expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
 
     const disabled = await call("settings.put", {
