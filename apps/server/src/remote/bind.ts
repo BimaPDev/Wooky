@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo, Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import type { HostingSettings } from "@wooky/contracts";
-import { requireDeviceToken } from "./auth.ts";
+import { isLoopbackAddress, requireDeviceToken } from "./auth.ts";
 
 export function desiredHosts(options: {
   hosting: HostingSettings;
@@ -30,12 +30,6 @@ export function desiredPort(options: {
   }
   if (options.hosting.enabled) return options.hosting.port;
   return options.assignedPort ?? options.explicitPort;
-}
-
-function isLoopbackAddress(address: string | undefined): boolean {
-  return (
-    address === "::1" || (address?.startsWith("127.") ?? false) || address === "::ffff:127.0.0.1"
-  );
 }
 
 function formatHost(host: string): string {
