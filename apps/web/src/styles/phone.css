@@ -104,6 +104,10 @@
     min-width: 44px;
   }
 
+  .fleet-tree-toggle {
+    min-width: 28px;
+  }
+
   .toggle,
   .checkbox-row {
     position: relative;

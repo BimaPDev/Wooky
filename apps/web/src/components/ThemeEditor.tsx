@@ -159,6 +159,7 @@ export function ThemeEditor({
   const hasOther = Boolean(theme.variants?.[otherMode]);
   const view = paletteView(theme, editMode);
   const savingLock = useRef(false);
+  const sectionRef = useRef<HTMLElement>(null);
 
   // sync: live-preview the draft in the document stylesheet; restore the saved theme on close
   useEffect(() => {
@@ -166,6 +167,10 @@ export function ThemeEditor({
   }, [theme, editMode]);
   // sync: undo the live preview when the editor unmounts
   useEffect(() => () => restoreSavedTheme(), []);
+  // sync: scroll the theme editor into view when opened
+  useEffect(() => {
+    sectionRef.current?.scrollIntoView?.({ block: "start" });
+  }, []);
 
   const palette = useMemo(() => resolvePalette(previewTheme(theme, editMode)), [theme, editMode]);
   const patch = (next: Partial<Theme>) => setTheme((current) => ({ ...current, ...next }));
@@ -215,7 +220,7 @@ export function ThemeEditor({
   };
 
   return (
-    <section className="theme-studio" aria-label="Theme editor">
+    <section ref={sectionRef} className="theme-studio" aria-label="Theme editor">
       <header className="theme-studio-head">
         <input
           className="theme-studio-name"
