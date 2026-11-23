@@ -77,3 +77,34 @@ describe("stage after a restart", () => {
     expect((await restarted.run(repo, ["cat-file", "-p", `${tree}:b.txt`])).text).toBe("changed\n");
   });
 });
+
+describe("a write between a scan and its stage", () => {
+  it("is not trusted as clean by the next snapshot", async () => {
+    const home = await dir("stage-home");
+    const root = await dir("stage-root");
+    const file = join(root, "f.txt");
+    const other = join(root, "g.txt");
+    const fixed = new Date("2025-01-01T00:00:00.000Z");
+    await writeFile(file, "aaaa\n");
+    await utimes(file, fixed, fixed);
+    await writeFile(other, "one\n");
+    const repo = { gitDir: join(home, "p.git"), workTree: root };
+    const shadow = createShadowGit({ home });
+    await shadow.ensure(repo);
+    // Mirrors Git for Windows, where ctime is not trusted and mtime has 1s resolution.
+    await shadow.run(repo, ["config", "core.trustctime", "false"]);
+    await snapshot(shadow, repo);
+
+    // Another file changes, so the stage below writes the index.
+    await writeFile(other, "two!\n");
+    const scanned = await shadow.scan(repo, SCAN);
+    // The write lands after the scan looked at f.txt and before the stage runs.
+    await writeFile(file, "bbbb\n");
+    await utimes(file, fixed, fixed);
+    await shadow.stage(repo, scanned);
+
+    const tree = await snapshot(shadow, repo);
+    const content = await shadow.run(repo, ["cat-file", "-p", `${tree}:f.txt`]);
+    expect(content.text).toBe("bbbb\n");
+  });
+});

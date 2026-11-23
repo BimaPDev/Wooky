@@ -31,6 +31,7 @@ import {
   rmdir,
   stat as statAsync,
   unlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -264,7 +265,12 @@ export interface ScanResult {
   remove: string[];
   skipped: Array<{ path: string; bytes: number }>;
   stamps: ReadonlyMap<string, string>;
+  /** Wall-clock ms at which the scan began, before it looked at any file. */
+  startedMs: number;
 }
+
+/** File clocks are coarse (up to ~16 ms on Windows); date the index this much before the scan began. */
+const INDEX_CLOCK_MARGIN_MS = 50;
 
 /** The ctime (ns) inside a scan stamp (`mtime:ctime:size:mode:ino`), or null if it has none. */
 function ctimeOfStamp(stamp: string | undefined): bigint | null {
@@ -508,6 +514,7 @@ export function createShadowGit(
 
   /** Lists what a snapshot would hold, applying the cap, the exclusions and the ignore rules. */
   async function scan(repo: ShadowRepo, opts: ScanOptions): Promise<ScanResult> {
+    const startedMs = Date.now();
     const args = ["ls-files", "-z", "-t", "-c", "-o"];
     if (!opts.includeIgnored) {
       args.push("--exclude-standard");
@@ -572,6 +579,7 @@ export function createShadowGit(
       remove: removed,
       skipped,
       stamps,
+      startedMs,
     };
   }
 
@@ -582,8 +590,11 @@ export function createShadowGit(
     // Git on Windows maps st_ctime to creation time and compares mtime at 1s resolution, so
     // update-index trusts stale entries after a same-size rewrite with a restored mtime. Node's
     // ctime is the NTFS ChangeTime, which moves on every write: any file whose ctime is not older
-    // than the index was written after it, so evict it and git must re-hash. This reads only the
-    // index's own mtime, so it also holds after a restart without re-hashing everything.
+    // than the index's mtime was written after the last staged scan began, so evict it and git
+    // must re-hash. The index's mtime is set back to that scan's start (below) rather than left
+    // at the moment it was written: a write landing between a scan and its stage is then still
+    // newer than the index. It lives in the file, so it also holds after a restart without
+    // re-hashing everything.
     const rehash: string[] = [];
     let indexWrittenNs: bigint | null = null;
     try {
@@ -611,6 +622,13 @@ export function createShadowGit(
       });
     }
     const tree = await run(repo, ["write-tree"], { env });
+    // Date the index at the start of this scan (less a margin for coarse file clocks), not at the
+    // moment git wrote it. A file written after the scan looked at it, but before the index was
+    // written, has a ctime between the two: left alone, the next scan would take that ctime for
+    // older than the index and trust a stale entry for good. Git only ever treats a back-dated
+    // index as more suspicious, so this costs a re-hash of recent files and nothing else.
+    const dated = new Date(Math.max(0, result.startedMs - INDEX_CLOCK_MARGIN_MS));
+    await utimes(index, dated, dated).catch(() => undefined);
     return tree.text.trim();
   }
 
