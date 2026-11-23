@@ -1,19 +1,21 @@
-/** Environment variables git hooks leak into a child; they must never reach our plumbing calls. */
-export const INHERITED_GIT_VARS = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_PREFIX",
-  "GIT_COMMON_DIR",
-  "GIT_NAMESPACE",
-  "GIT_CONFIG",
-  "GIT_CONFIG_PARAMETERS",
-  "GIT_CONFIG_COUNT",
-  "GIT_EXTERNAL_DIFF",
-  "GIT_PAGER",
-] as const;
+/**
+ * `GIT_*` variables that only describe how to reach a remote or authenticate to it. Every
+ * other `GIT_*` variable can redirect git to another repository, exec path, template or
+ * config, so it is dropped; these are user-owned transport settings that pushes rely on.
+ */
+const TRANSPORT_VARS = new Set([
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_SSH_VARIANT",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_SSL_CAINFO",
+  "GIT_SSL_CAPATH",
+  "GIT_SSL_CERT",
+  "GIT_SSL_KEY",
+  "GIT_SSL_NO_VERIFY",
+  "GIT_SSL_VERSION",
+]);
 
 const BATCH_SSH = "ssh -o BatchMode=yes";
 
@@ -23,19 +25,31 @@ export function composeGitSshCommand(existing: string | undefined): string {
   return `${trimmed} ${BATCH_SSH}`;
 }
 
-/** Env for argv-only git/gh children: no inherited git state, no prompts, batch SSH. */
+/**
+ * Env for argv-only git/gh children: no inherited git state, no prompts, batch SSH.
+ * Every variable whose upper-cased name starts with `GIT_` is dropped (Windows env names are
+ * case-insensitive, so `Git_Dir` counts) unless it is a transport setting, and the few
+ * Wooky sets itself are written afterwards.
+ */
 export function gitChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of INHERITED_GIT_VARS) delete env[key];
-  for (const key of Object.keys(env)) {
-    if (key.startsWith("GIT_CONFIG_KEY_") || key.startsWith("GIT_CONFIG_VALUE_")) delete env[key];
+  const env: NodeJS.ProcessEnv = {};
+  let sshCommand: string | undefined;
+  for (const [key, value] of Object.entries(process.env)) {
+    const name = key.toUpperCase();
+    if (name === "GIT_SSH_COMMAND") {
+      sshCommand = value;
+      continue;
+    }
+    if (name === "LC_ALL" || name === "GCM_INTERACTIVE") continue;
+    if (name.startsWith("GIT_") && !TRANSPORT_VARS.has(name)) continue;
+    env[key] = value;
   }
   env.LC_ALL = "C";
   env.GIT_TERMINAL_PROMPT = "0";
   env.GCM_INTERACTIVE = "never";
   env.GIT_EDITOR = "false";
   env.GIT_PAGER = "cat";
-  env.GIT_SSH_COMMAND = composeGitSshCommand(env.GIT_SSH_COMMAND);
+  env.GIT_SSH_COMMAND = composeGitSshCommand(sshCommand);
   return { ...env, ...extra };
 }
 
