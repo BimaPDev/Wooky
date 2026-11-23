@@ -7,9 +7,11 @@ import {
   type ProviderCapabilities,
   type ProviderKind,
 } from "@wooky/contracts";
-import { createEffectRunner } from "./effects/runner.ts";
+import { createRunStore } from "./brain/claims.ts";
+import { createBrainHooks } from "./brain/context.ts";
 import { createBrainService } from "./brain/service.ts";
 import { createBrainStore } from "./brain/store.ts";
+import { createEffectRunner } from "./effects/runner.ts";
 import { createAgentTokenService, type AgentTokenService } from "./fleet/agent-token.ts";
 import { createFleetService } from "./fleet/service.ts";
 import { createGhClient, type GhClient } from "./git/gh.ts";
@@ -147,22 +149,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const store = openEventStore(options.home, ctx.now);
   const agentTokens = options.agentTokens ?? createAgentTokenService();
+  const resolveProjectRoot = (projectId: string) => store.model.projects[projectId]?.root ?? null;
+  const brainLog = (message: string) => console.error(message);
   const brainStore = createBrainStore({
     home: options.home,
-    resolveProjectRoot: (projectId) => store.model.projects[projectId]?.root ?? null,
+    resolveProjectRoot,
     clock: ctx.now,
-    log: (message) => console.error(message),
+    log: brainLog,
   });
+  const brainRuns = createRunStore({ home: options.home });
+  // Every claim belongs to a turn, and no turn is running yet: whatever is left is from a crash.
+  try {
+    brainRuns.releaseAll();
+  } catch (error) {
+    console.error("Could not release brain claims left from the last run", error);
+  }
   const brain = createBrainService({
     home: options.home,
     brainStore,
     eventStore: store,
     tokens: agentTokens,
     clock: ctx.now,
-    log: (message) => console.error(message),
+    log: brainLog,
   });
   const closeStore = () => {
     unwatchHeldNotices();
+    brainRuns.close();
     brain.close();
     store.close();
   };
@@ -250,6 +262,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     dispatch: (command) => dispatchCommand(command),
     deviceSettings: () => themes.getSettings(),
     limits,
+    brain: createBrainHooks({ store: brainStore, runs: brainRuns }),
     now: ctx.now,
     runClaimThread: (effect) => transfer.runClaimThread(effect),
     recoverClaims: () => transfer.recoverClaims(),
