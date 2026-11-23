@@ -131,6 +131,14 @@ describe("ssh never prompts", () => {
   });
 });
 
+/** Stripped from the shadow repo too, but a user's repo keeps them: they restrict, never redirect. */
+const USER_RESTRICTIONS = [
+  "GIT_ALLOW_PROTOCOL",
+  "GIT_PROTOCOL_FROM_USER",
+  "GIT_CONFIG_NOSYSTEM",
+  "GIT_CONFIG_SYSTEM",
+];
+
 const REPO_REDIRECTING = [
   "GIT_DIR",
   "GIT_WORK_TREE",
@@ -147,8 +155,6 @@ const REPO_REDIRECTING = [
   "GIT_CONFIG_COUNT",
   "GIT_CONFIG_KEY_0",
   "GIT_CONFIG_VALUE_0",
-  "GIT_CONFIG_SYSTEM",
-  "GIT_CONFIG_NOSYSTEM",
   "GIT_TRACE",
   "GIT_TRACE_PACKET",
   "GIT_TRACE2_EVENT",
@@ -164,6 +170,12 @@ function namesOf(env: NodeJS.ProcessEnv): string[] {
 }
 
 describe("userRepoGitEnv profile", () => {
+  it("keeps the user's protocol restrictions and system config settings", () => {
+    for (const name of USER_RESTRICTIONS) setEnv(mixed(name), "kept");
+    const env = userRepoGitEnv();
+    for (const name of USER_RESTRICTIONS) expect(env[mixed(name)]).toBe("kept");
+  });
+
   it("keeps the user's transport, identity, user config, LFS, HTTP and curl settings", () => {
     const keep = {
       GIT_SSH: "/usr/bin/plink",
@@ -204,6 +216,7 @@ describe("shadowGitEnv profile", () => {
       "GIT_CONFIG_GLOBAL",
       "GIT_LFS_SKIP_SMUDGE",
       ...REPO_REDIRECTING,
+      ...USER_RESTRICTIONS,
     ];
     for (const name of inherited) setEnv(mixed(name), "x");
     setEnv("WOOKY_GIT_ENV_KEEP", "yes");

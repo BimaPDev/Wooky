@@ -4,8 +4,8 @@
  *
  * - `userRepoGitEnv` runs git in the user's own repositories (ship, checkpoints, project
  *   info). The user's transport, identity, config file and LFS/HTTP/curl settings are theirs
- *   and stay. Anything that could point git at another repository, exec path, template,
- *   system config or inline config is dropped.
+ *   and stay, as do their protocol restrictions and a relocated system config. Anything that
+ *   could point git at another repository, exec path, template or inline config is dropped.
  * - `shadowGitEnv` runs git in Wooky's private shadow repository and drops every `GIT_*`.
  *
  * Windows env names are case-insensitive, so `Git_Dir` counts as `GIT_DIR`.
@@ -19,8 +19,13 @@ const USER_REPO_KEEP = new Set([
   "GIT_SSH_VARIANT",
   "GIT_ASKPASS",
   "GIT_PROXY_COMMAND",
-  // User-level config (credential helpers, signing).
+  // User-level config (credential helpers, signing) and a relocated or disabled system config.
   "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_NOSYSTEM",
+  // The user's own protocol restrictions. They can only narrow what git will talk to.
+  "GIT_ALLOW_PROTOCOL",
+  "GIT_PROTOCOL_FROM_USER",
 ]);
 
 /** Prefixes kept for the same reason: transport, identity, LFS, HTTP and curl settings. */
