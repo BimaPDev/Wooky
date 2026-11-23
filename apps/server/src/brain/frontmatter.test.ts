@@ -47,7 +47,7 @@ describe("frontmatter", () => {
 
   describe("writing is strict", () => {
     it.each([
-      [{ summary: "s", kind: "note", bogus: 1 }, /bogus/],
+      [{ summary: "s", kind: "note", bogus: 1 }, /not allowed/],
       [{ summary: "s", kind: "rant" }, /kind/],
       [{ summary: "", kind: "note" }, /summary/],
       [{ summary: "a\nb", kind: "note" }, /single line/],
@@ -125,5 +125,97 @@ describe("frontmatter", () => {
       expect(deriveSummary("y".repeat(500))).toHaveLength(200);
       expect(deriveSummary("\n\n")).toBe("Empty note");
     });
+  });
+});
+
+describe("hostile files never make a read throw", () => {
+  it.each(["10000-01-01", "+010000-01-01T00:00:00.000Z", "-000001-01-01T00:00:00Z", "99999-12-31"])(
+    "falls back to the file time for updatedAt %s",
+    (updatedAt) => {
+      const parsed = parseMemory(
+        `---\nsummary: "ok"\nkind: "note"\nupdatedAt: ${JSON.stringify(updatedAt)}\n---\n\nBody\n`,
+        mtime,
+      );
+      expect(parsed.frontmatter.updatedAt).toBe(mtime);
+      expect(parsed.frontmatter.summary).toBe("ok");
+    },
+  );
+
+  it("survives a file time the schema cannot hold", () => {
+    expect(parseMemory("plain text", "+010000-01-01T00:00:00.000Z").frontmatter.updatedAt).toBe(
+      "1970-01-01T00:00:00.000Z",
+    );
+    expect(parseMemory("---\nsummary: x\n---\n", "garbage").frontmatter.updatedAt).toBe(
+      "1970-01-01T00:00:00.000Z",
+    );
+  });
+
+  it("never throws on random and hostile frontmatter (fuzz)", () => {
+    let state = 0x2f6e2b1;
+    const next = (limit: number) => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state % limit;
+    };
+    const values = [
+      '"10000-01-01"',
+      '"+010000-01-01T00:00:00.000Z"',
+      '"-000001-01-01"',
+      '"2026-13-45T99:99:99Z"',
+      "null",
+      "true",
+      "[]",
+      "{}",
+      "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[",
+      '{"a":{"b":{"c":[1,2,3]}}}',
+      '"\\u0000\\ud800"',
+      "__proto__",
+      "[a, b,, c",
+      '"x"'.repeat(50),
+      "9".repeat(400),
+      '{"threadId":1,"at":"nope"}',
+      '["Bad Tag", 5, null, "ok"]',
+      "'single quoted'",
+      "",
+    ];
+    const keys = [
+      "summary",
+      "kind",
+      "tags",
+      "status",
+      "pinned",
+      "updatedAt",
+      "source",
+      "__proto__",
+      "constructor",
+      "toString",
+      "x y",
+      "",
+    ];
+    const pieces = ["---\n", "---", "\r\n", "\n", "\u0000", "﻿", "# heading\n", "text ", " "];
+    for (let run = 0; run < 800; run += 1) {
+      let text = next(4) === 0 ? "" : "---\n";
+      for (let line = next(8); line > 0; line -= 1) {
+        text += `${keys[next(keys.length)] ?? ""}: ${values[next(values.length)] ?? ""}\n`;
+        if (next(4) === 0) text += pieces[next(pieces.length)] ?? "";
+      }
+      text += next(5) === 0 ? "" : `---\n\n${pieces[next(pieces.length)] ?? ""}body\n`;
+      const parsed = parseMemory(text, next(3) === 0 ? "nope" : mtime);
+      expect(parsed.frontmatter.summary.length).toBeGreaterThan(0);
+      expect(Number.isNaN(Date.parse(parsed.frontmatter.updatedAt))).toBe(false);
+    }
+  });
+
+  it("names a field path but never an unrecognized key or a rejected value", () => {
+    const secretKey = "zzunique_key_name";
+    let message = "";
+    try {
+      parseFrontmatterInput({ summary: "s", kind: "note", [secretKey]: "zzunique_value" }, at);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/not allowed/);
+    expect(message).not.toContain(secretKey);
+    expect(message).not.toContain("zzunique_value");
+    expect(message).not.toMatch(/ZodError|origin|pattern/);
   });
 });

@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BrainScope, MemoryFrontmatterInput } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
@@ -56,7 +57,12 @@ interface Fixture {
 }
 
 function setup(
-  options: { noFts5?: boolean; fixedClock?: boolean; now?: () => number } = {},
+  options: {
+    noFts5?: boolean;
+    fixedClock?: boolean;
+    now?: () => number;
+    indexBusyTimeoutMs?: number;
+  } = {},
 ): Fixture {
   const home = dir("home");
   const rootA = dir("a");
@@ -73,6 +79,9 @@ function setup(
     log: (message) => logs.push(message),
     ...(options.noFts5 === undefined ? {} : { noFts5: options.noFts5 }),
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.indexBusyTimeoutMs === undefined
+      ? {}
+      : { indexBusyTimeoutMs: options.indexBusyTimeoutMs }),
   });
   return { store, home, rootA, rootB, logs, brainA: join(rootA, ".wooky", "brain") };
 }
@@ -247,7 +256,7 @@ describe("limits and secrets", () => {
     const { store, rootA } = setup();
     const bad = (frontmatter: unknown) =>
       store.write(a("n.md"), { frontmatter: frontmatter as MemoryFrontmatterInput, body: "" });
-    expect(() => bad({ summary: "s", kind: "note", bogus: true })).toThrow(/bogus/);
+    expect(() => bad({ summary: "s", kind: "note", bogus: true })).toThrow(/not allowed/);
     expect(() => bad({ summary: "x".repeat(201), kind: "note" })).toThrow(/summary/);
     expect(() => bad({ summary: "s", kind: "unknown" })).toThrow(/kind/);
     expect(existsSync(join(rootA, ".wooky"))).toBe(false);
@@ -598,6 +607,28 @@ describe("reindexing", () => {
     utimesSync(file, before.atime, before.mtime);
     expect(store.reindex(GLOBAL).updated).toBe(1);
     expect(store.search("bbbb", { scopes: [GLOBAL], limit: 5 })).toHaveLength(1);
+  });
+
+  it("reports a busy index as unavailable and keeps the file", () => {
+    const { store, home, logs } = setup({ indexBusyTimeoutMs: 20 });
+    store.write(g("n.md"), note("hello", "needle"));
+    expect(store.search("needle", { scopes: [GLOBAL], limit: 5 })).toHaveLength(1);
+    const indexFile = join(home, "brain", "index.sqlite");
+    const inode = statSync(indexFile).ino;
+
+    const other = new DatabaseSync(indexFile);
+    other.exec("BEGIN IMMEDIATE");
+    store.write(g("m.md"), note("second", "needle"));
+    expect(codeOf(() => store.search("needle", { scopes: [GLOBAL], limit: 5 }))).toBe(
+      "unavailable",
+    );
+    other.exec("ROLLBACK");
+    other.close();
+
+    expect(logs.some((line) => /search failed/.test(line))).toBe(true);
+    expect(logs.some((line) => /rebuilding/.test(line))).toBe(false);
+    expect(statSync(indexFile).ino).toBe(inode);
+    expect(store.search("needle", { scopes: [GLOBAL], limit: 5 })).toHaveLength(2);
   });
 
   it("rebuilds from the files when the index is deleted or damaged", () => {

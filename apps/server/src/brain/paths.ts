@@ -5,9 +5,9 @@ import {
   fstatSync,
   lstatSync,
   mkdirSync,
+  opendirSync,
   openSync,
   readSync,
-  readdirSync,
   realpathSync,
   renameSync,
   rmdirSync,
@@ -15,7 +15,7 @@ import {
   writeFileSync,
   type Stats,
 } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   BRAIN_MAX_SEGMENTS,
   BRAIN_OVERVIEW_FILE,
@@ -31,6 +31,28 @@ const MAX_SCAN_ENTRIES = 5000;
 
 export type BrainLog = (message: string) => void;
 
+/**
+ * Directory entries one operation may read in total. A list, a write (its memory count and the
+ * overviews it refreshes) or a reindex makes one budget and hands it to every walk, so a hostile
+ * tree costs at most this much however many folders it has.
+ */
+export interface ScanBudget {
+  remaining: number;
+  used: number;
+  /** True once an entry was left unread because the budget ran out. */
+  truncated: boolean;
+}
+
+export function createScanBudget(limit: number = MAX_SCAN_ENTRIES): ScanBudget {
+  return { remaining: limit, used: 0, truncated: false };
+}
+
+export interface ChildList {
+  entries: { name: string; isDir: boolean }[];
+  /** False when the budget ran out before every entry was read. */
+  complete: boolean;
+}
+
 function isMissing(error: unknown): boolean {
   const code = (error as { code?: string }).code;
   return code === "ENOENT" || code === "ENOTDIR";
@@ -40,11 +62,77 @@ function forbidden(message: string): ServiceError {
   return new ServiceError("forbidden", message);
 }
 
+/** The real path of a path that may not exist yet: its nearest existing ancestor, resolved, plus the rest. */
+export function realpathNearest(path: string): string {
+  const start = resolve(path);
+  const rest: string[] = [];
+  let current = start;
+  for (;;) {
+    try {
+      const real = realpathSync.native(current);
+      return rest.length === 0 ? real : join(real, ...rest);
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      const parent = dirname(current);
+      if (parent === current) return start;
+      rest.unshift(basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** Opens without following a link and without blocking on a pipe swapped in after the lstat. */
+export const READ_FLAGS =
+  constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+export interface RegularFile {
+  raw: Buffer;
+  mtimeMs: number;
+  size: number;
+}
+
+/** Reads a regular file by descriptor. Anything else, or a hard-linked file when asked, is refused. */
+export function readRegularFile(
+  abs: string,
+  label: string,
+  options: { refuseHardLinks?: boolean } = {},
+): RegularFile {
+  const fd = openSync(abs, READ_FLAGS);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw forbidden(`${label} is not a regular file`);
+    if (options.refuseHardLinks === true && stat.nlink > 1) {
+      throw forbidden(`${label} has other hard links and is not read`);
+    }
+    if (stat.size > MAX_FILE_BYTES) {
+      throw new ServiceError(
+        "bad_request",
+        `${label} is ${stat.size} bytes; brain files over ${MAX_FILE_BYTES} are not read`,
+      );
+    }
+    const raw = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < raw.length) {
+      const count = readSync(fd, raw, offset, raw.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    return { raw: raw.subarray(0, offset), mtimeMs: stat.mtimeMs, size: offset };
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export interface ScannedFile {
   /** Scope-relative path, for example `lessons/pnpm.md`. */
   path: string;
   mtimeMs: number;
   size: number;
+}
+
+export interface BrainRootOptions {
+  /** A project brain comes from a repo: refuse files with other hard links, which could alias outside data. */
+  refuseHardLinks?: boolean;
 }
 
 /**
@@ -57,12 +145,20 @@ export class BrainRoot {
   readonly base: string;
   private readonly parts: readonly string[];
   private readonly log: BrainLog;
+  private readonly refuseHardLinks: boolean;
+  private realBase: string | null = null;
 
   /** `base` must already be a real path; we never lstat it, only what is under it. */
-  constructor(base: string, parts: readonly string[], log: BrainLog) {
+  constructor(
+    base: string,
+    parts: readonly string[],
+    log: BrainLog,
+    options: BrainRootOptions = {},
+  ) {
     this.base = base;
     this.parts = parts;
     this.log = log;
+    this.refuseHardLinks = options.refuseHardLinks === true;
   }
 
   private absolute(segments: readonly string[]): string {
@@ -73,11 +169,20 @@ export class BrainRoot {
     return [...this.parts, ...segments].join("/");
   }
 
+  private nativeBase(): string {
+    return (this.realBase ??= realpathSync.native(this.base));
+  }
+
   /**
    * lstat every component below base. Returns the final stat, or null when something is
-   * missing. A symlink, or a file where a folder should be, is an error.
+   * missing. A symlink, or a file where a folder should be, is an error. On a filesystem that
+   * ignores case, `hidden.md` also finds `Hidden.md`; a name whose on-disk spelling differs
+   * from the one asked for is "missing" for a read and an error for a write.
    */
-  inspect(segments: readonly string[]): { abs: string; stat: Stats } | null {
+  inspect(
+    segments: readonly string[],
+    onCaseMismatch: "missing" | "refuse" = "missing",
+  ): { abs: string; stat: Stats } | null {
     let current = this.base;
     let stat: Stats | null = null;
     const all = [...this.parts, ...segments];
@@ -99,40 +204,32 @@ export class BrainRoot {
       }
     }
     if (stat === null) return null;
-    if (!isInside(this.base, realpathSync(current))) {
+    const real = realpathSync.native(current);
+    const realBase = this.nativeBase();
+    if (!isInside(realBase, real)) {
       throw forbidden(`Brain path resolves outside its root: ${this.describe(segments)}`);
+    }
+    if (real.slice(realBase.length + 1) !== all.join(sep)) {
+      if (onCaseMismatch === "refuse") {
+        throw forbidden(
+          `${this.describe(segments)} differs only in letter case from a file that exists`,
+        );
+      }
+      return null;
     }
     return { abs: current, stat };
   }
 
   /** Reads a regular file without following links. Null when it does not exist. */
-  read(segments: readonly string[]): { raw: Buffer; mtimeMs: number; size: number } | null {
+  read(segments: readonly string[]): RegularFile | null {
     const found = this.inspect(segments);
     if (found === null) return null;
     if (!found.stat.isFile()) {
       throw new ServiceError("bad_request", `${this.describe(segments)} is not a file`);
     }
-    const fd = openSync(found.abs, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile()) throw forbidden(`${this.describe(segments)} is not a regular file`);
-      if (stat.size > MAX_FILE_BYTES) {
-        throw new ServiceError(
-          "bad_request",
-          `${this.describe(segments)} is ${stat.size} bytes; brain files over ${MAX_FILE_BYTES} are not read`,
-        );
-      }
-      const raw = Buffer.alloc(stat.size);
-      let offset = 0;
-      while (offset < raw.length) {
-        const count = readSync(fd, raw, offset, raw.length - offset, offset);
-        if (count === 0) break;
-        offset += count;
-      }
-      return { raw: raw.subarray(0, offset), mtimeMs: stat.mtimeMs, size: offset };
-    } finally {
-      closeSync(fd);
-    }
+    return readRegularFile(found.abs, this.describe(segments), {
+      refuseHardLinks: this.refuseHardLinks,
+    });
   }
 
   /** Creates the folder chain, one lstat-checked step at a time. */
@@ -151,6 +248,9 @@ export class BrainRoot {
       }
       if (stat.isSymbolicLink()) throw forbidden(`Refusing a symbolic link: ${current}`);
       if (!stat.isDirectory()) throw forbidden(`Brain folder is a file: ${current}`);
+      if (basename(realpathSync.native(current)) !== part) {
+        throw forbidden(`Brain folder differs only in letter case from one that exists: ${part}`);
+      }
     }
     return current;
   }
@@ -158,7 +258,7 @@ export class BrainRoot {
   /** Temp file in the target's folder, then rename over it. */
   writeAtomic(dir: readonly string[], name: string, content: string): void {
     const dirAbs = this.ensureDir(dir);
-    const existing = this.inspect([...dir, name]);
+    const existing = this.inspect([...dir, name], "refuse");
     if (existing !== null && !existing.stat.isFile()) {
       throw new ServiceError("bad_request", `${this.describe([...dir, name])} is not a file`);
     }
@@ -178,7 +278,7 @@ export class BrainRoot {
 
   /** Returns false when the file was not there. */
   unlink(segments: readonly string[]): boolean {
-    const found = this.inspect(segments);
+    const found = this.inspect(segments, "refuse");
     if (found === null) return false;
     if (!found.stat.isFile()) {
       throw new ServiceError("bad_request", `${this.describe(segments)} is not a file`);
@@ -199,39 +299,68 @@ export class BrainRoot {
     }
   }
 
-  /** Immediate children that are real folders or files. Symlinks are logged and left out. */
-  children(segments: readonly string[]): { name: string; isDir: boolean }[] | null {
+  /**
+   * Immediate children that are real folders or files, sorted. Symlinks are logged and left
+   * out. Reads entries until the budget runs out and then stops, so a huge folder costs the
+   * budget and no more.
+   */
+  children(segments: readonly string[], budget: ScanBudget = createScanBudget()): ChildList | null {
     const found = this.inspect(segments);
     if (found === null) return null;
     if (!found.stat.isDirectory()) return null;
-    const result: { name: string; isDir: boolean }[] = [];
-    for (const entry of readdirSync(found.abs, { withFileTypes: true })) {
-      if (entry.isSymbolicLink()) {
-        this.log(`brain: skipping symbolic link ${this.describe([...segments, entry.name])}`);
-        continue;
+    const entries: ChildList["entries"] = [];
+    let complete = true;
+    const dir = opendirSync(found.abs);
+    try {
+      for (let entry = dir.readSync(); entry !== null; entry = dir.readSync()) {
+        if (budget.remaining <= 0) {
+          if (!budget.truncated) {
+            this.log(
+              `brain: stopped reading ${this.describe([])} after ${budget.used} directory entries`,
+            );
+          }
+          budget.truncated = true;
+          complete = false;
+          break;
+        }
+        budget.remaining -= 1;
+        budget.used += 1;
+        if (entry.isSymbolicLink()) {
+          this.log(`brain: skipping symbolic link ${this.describe([...segments, entry.name])}`);
+        } else if (entry.isDirectory()) entries.push({ name: entry.name, isDir: true });
+        else if (entry.isFile()) entries.push({ name: entry.name, isDir: false });
       }
-      if (entry.isDirectory()) result.push({ name: entry.name, isDir: true });
-      else if (entry.isFile()) result.push({ name: entry.name, isDir: false });
+    } finally {
+      dir.closeSync();
     }
-    return result.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return { entries, complete };
   }
 
-  /** Every memory file under a folder (default: the whole root), sorted by path. Overviews and odd names are left out. */
-  scan(under: readonly string[] = []): { files: ScannedFile[]; truncated: boolean } {
+  /**
+   * Every memory file under a folder (default: the whole root), sorted by path. Overviews, odd
+   * names and hard-linked files are left out. `truncated` is true when the walk stopped early:
+   * the budget ran out or `maxFiles` was reached.
+   */
+  scan(
+    under: readonly string[] = [],
+    budget: ScanBudget = createScanBudget(),
+    maxFiles: number = Number.POSITIVE_INFINITY,
+  ): { files: ScannedFile[]; truncated: boolean } {
     const files: ScannedFile[] = [];
-    let seen = 0;
     let truncated = false;
     const visit = (dir: readonly string[]): void => {
-      const entries = this.children(dir);
-      if (entries === null) return;
-      for (const entry of entries) {
-        if (truncated) return;
-        seen += 1;
-        if (seen > MAX_SCAN_ENTRIES) {
+      if (budget.remaining <= 0) {
+        truncated = true;
+        return;
+      }
+      const listing = this.children(dir, budget);
+      if (listing === null) return;
+      if (!listing.complete) truncated = true;
+      for (const entry of listing.entries) {
+        if (truncated && budget.remaining <= 0 && entry.isDir) return;
+        if (files.length >= maxFiles) {
           truncated = true;
-          this.log(
-            `brain: stopped scanning ${this.describe([])} after ${MAX_SCAN_ENTRIES} entries`,
-          );
           return;
         }
         if (entry.name === BRAIN_OVERVIEW_FILE || !isBrainSegment(entry.name)) continue;
@@ -245,14 +374,22 @@ export class BrainRoot {
             this.log(`brain: skipping oversized file ${this.describe(next)}`);
             continue;
           }
+          if (this.refuseHardLinks && stat.nlink > 1) {
+            this.log(`brain: skipping hard-linked file ${this.describe(next)}`);
+            continue;
+          }
           files.push({ path: next.join("/"), mtimeMs: stat.mtimeMs, size: stat.size });
         }
       }
     };
     visit(under);
+    files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     return { files, truncated };
   }
 }
+
+const foldsCase = process.platform === "darwin" || process.platform === "win32";
+const fold = (path: string) => (foldsCase ? path.toLowerCase() : path);
 
 /** Where a scope's brain lives. Project roots come from the caller and are resolved once per call. */
 export function openRoot(
@@ -261,23 +398,30 @@ export function openRoot(
   resolveProjectRoot: (projectId: string) => string | null,
   log: BrainLog,
 ): BrainRoot {
-  if (scope.kind === "global") {
-    let base = resolve(home);
-    try {
-      base = realpathSync(base);
-    } catch (error) {
-      if (!isMissing(error)) throw error;
-    }
-    return new BrainRoot(base, ["brain", "global"], log);
-  }
+  const realHome = realpathNearest(home);
+  if (scope.kind === "global") return new BrainRoot(realHome, ["brain", "global"], log);
   const root = resolveProjectRoot(scope.projectId);
   if (root === null) throw new ServiceError("not_found", `Unknown project: ${scope.projectId}`);
+  let realRoot: string;
   try {
-    return new BrainRoot(realpathSync(root), [".wooky", "brain"], log);
+    realRoot = realpathSync.native(root);
   } catch (error) {
     if (isMissing(error)) throw new ServiceError("not_found", `Project folder is missing: ${root}`);
     throw error;
   }
+  const projectBrain = fold(realpathNearest(join(realRoot, ".wooky", "brain")));
+  const globalBrain = fold(join(realHome, "brain"));
+  if (
+    fold(realRoot) === fold(realHome) ||
+    projectBrain === globalBrain ||
+    isInside(projectBrain, globalBrain) ||
+    isInside(globalBrain, projectBrain)
+  ) {
+    throw forbidden(
+      "This project's brain overlaps Wooky's own data folder, so it is not used. Open a project folder that is not the home of WOOKY_HOME.",
+    );
+  }
+  return new BrainRoot(realRoot, [".wooky", "brain"], log, { refuseHardLinks: true });
 }
 
 function isInside(parent: string, child: string): boolean {

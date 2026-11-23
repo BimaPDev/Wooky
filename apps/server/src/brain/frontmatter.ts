@@ -17,6 +17,8 @@ import { ServiceError } from "../errors.ts";
 
 const FIELD_ORDER = ["summary", "kind", "tags", "status", "pinned", "updatedAt", "source"] as const;
 
+const WRITABLE_FIELDS = FIELD_ORDER.filter((key) => key !== "updatedAt").join(", ");
+
 export function serializeMemory(frontmatter: MemoryFrontmatter, body: string): string {
   const lines = FIELD_ORDER.flatMap((key) => {
     const value = frontmatter[key];
@@ -31,13 +33,23 @@ export function normalizeBody(body: string): string {
   return text === "" ? "" : `${text}\n`;
 }
 
+/**
+ * Messages name a field path and what is wrong with it. They never carry an unrecognized key or
+ * the value that was rejected: either could be a credential a writer pasted by mistake.
+ */
 function describeIssues(label: string, error: z.ZodError): string {
-  return error.issues
-    .map((issue) => {
-      const path = issue.path.length > 0 ? `.${issue.path.join(".")}` : "";
-      return `${label}${path}: ${issue.message}`;
-    })
-    .join("; ");
+  const messages = error.issues.map((issue) => {
+    if (issue.code === "unrecognized_keys") {
+      const where = issue.path.length > 0 ? `${label}.${issue.path.join(".")}` : label;
+      if (issue.path.length === 0 && issue.keys.includes("updatedAt")) {
+        return `${where}.updatedAt: is stamped by the store and cannot be written`;
+      }
+      return `${where}: contains a field that is not allowed (allowed: ${WRITABLE_FIELDS})`;
+    }
+    const path = issue.path.length > 0 ? `.${issue.path.join(".")}` : "";
+    return `${label}${path}: ${issue.message}`;
+  });
+  return [...new Set(messages)].slice(0, 8).join("; ");
 }
 
 /** Validates what a writer supplied. Unknown fields and malformed values are errors. */
@@ -122,31 +134,41 @@ function cleanTags(value: unknown): string[] {
   return [...new Set(tags)].slice(0, 12);
 }
 
-function cleanTime(value: unknown, fallback: string): string {
-  if (typeof value !== "string") return fallback;
+const EPOCH = "1970-01-01T00:00:00.000Z";
+const UpdatedAt = MemoryFrontmatter.shape.updatedAt;
+
+/** The ISO form of a time, or the fallback when it is not one the schema accepts (year 10000, NaN). */
+export function safeIso(value: string | number | Date, fallback: string = EPOCH): string {
   const time = new Date(value);
-  return Number.isNaN(time.getTime()) ? fallback : time.toISOString();
+  if (Number.isNaN(time.getTime())) return fallback;
+  const iso = time.toISOString();
+  return UpdatedAt.safeParse(iso).success ? iso : fallback;
+}
+
+function cleanTime(value: unknown, fallback: string): string {
+  return typeof value === "string" ? safeIso(value, fallback) : fallback;
+}
+
+function plainNote(text: string, mtimeIso: string): MemoryFrontmatter {
+  return {
+    summary: deriveSummary(text),
+    kind: "note",
+    tags: [],
+    status: "active",
+    updatedAt: mtimeIso,
+  };
 }
 
 /**
  * Reads a memory file. A hand-edited file never fails to load: bad fields fall back to
  * defaults, and a file without frontmatter is a note whose summary is its first line.
  */
-export function parseMemory(raw: string, mtimeIso: string): ParsedMemory {
+export function parseMemory(raw: string, mtime: string): ParsedMemory {
+  const mtimeIso = safeIso(mtime);
   const text = raw.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
   const fence = splitFence(text);
   if (fence === null) {
-    return {
-      frontmatter: MemoryFrontmatter.parse({
-        summary: deriveSummary(text),
-        kind: "note",
-        tags: [],
-        status: "active",
-        updatedAt: mtimeIso,
-      }),
-      body: text,
-      plain: true,
-    };
+    return { frontmatter: plainNote(text, mtimeIso), body: text, plain: true };
   }
   const fields = readFields(fence.header);
   const body = fence.body.replace(/^\n+/, "");
@@ -158,17 +180,17 @@ export function parseMemory(raw: string, mtimeIso: string): ParsedMemory {
   const kind = BrainKind.safeParse(fields["kind"]);
   const status = BrainStatus.safeParse(fields["status"]);
   const pinned = fields["pinned"] === true || fields["pinned"] === "true" ? true : undefined;
-  return {
-    frontmatter: MemoryFrontmatter.parse({
-      summary,
-      kind: kind.success ? kind.data : "note",
-      tags: cleanTags(fields["tags"]),
-      status: status.success ? status.data : "active",
-      ...(pinned === undefined ? {} : { pinned }),
-      updatedAt: cleanTime(fields["updatedAt"], mtimeIso),
-      ...(source.success ? { source: source.data } : {}),
-    }),
-    body,
-    plain: false,
-  };
+  const frontmatter = MemoryFrontmatter.safeParse({
+    summary,
+    kind: kind.success ? kind.data : "note",
+    tags: cleanTags(fields["tags"]),
+    status: status.success ? status.data : "active",
+    ...(pinned === undefined ? {} : { pinned }),
+    updatedAt: cleanTime(fields["updatedAt"], mtimeIso),
+    ...(source.success ? { source: source.data } : {}),
+  });
+  if (!frontmatter.success) {
+    return { frontmatter: plainNote(body, mtimeIso), body, plain: true };
+  }
+  return { frontmatter: frontmatter.data, body, plain: false };
 }

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { ZodError } from "zod";
 import {
   BRAIN_MAX_MEMORIES,
   BRAIN_OVERVIEW_FILE,
@@ -21,13 +22,24 @@ import {
   normalizeBody,
   parseFrontmatterInput,
   parseMemory,
+  safeIso,
   serializeMemory,
   type ParsedMemory,
 } from "./frontmatter.ts";
-import { openRoot, type BrainLog, type BrainRoot } from "./paths.ts";
+import {
+  createScanBudget,
+  openRoot,
+  type BrainLog,
+  type BrainRoot,
+  type ScanBudget,
+} from "./paths.ts";
 import { assertBodySize, assertNoSecret } from "./safety.ts";
 import {
+  briefDatabaseError,
+  isBusyDatabase,
+  isCorruptDatabase,
   openBrainIndex,
+  resetBrainIndexFiles,
   type BrainIndex,
   type LoadedFile,
   type SyncReport,
@@ -43,6 +55,8 @@ export interface BrainStoreOptions {
   /** Test hook: behave as if this SQLite had no FTS5. */
   noFts5?: boolean;
   now?: () => number;
+  /** Test hook: how long the search index waits for another connection's lock. */
+  indexBusyTimeoutMs?: number;
 }
 
 export interface BrainWriteInput {
@@ -98,17 +112,50 @@ interface Target {
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+/** "12 memories", or "5000+ memories" when the count stopped at the scan budget. */
+const pluralCapped = (count: number, capped: boolean, one: string, many: string) =>
+  `${count}${capped ? "+" : ""} ${count === 1 && !capped ? one : many}`;
+
+/** A log-safe description of a failure: no Zod issue dump, no file contents, no raw message. */
+function brief(error: unknown): string {
+  if (error instanceof ServiceError) return error.message;
+  if (error instanceof ZodError) return "invalid value";
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string") return code;
+  return error instanceof Error ? error.name : "unknown error";
+}
 
 export function createBrainStore(options: BrainStoreOptions): BrainStore {
   const clock = options.clock ?? (() => new Date().toISOString());
   const log: BrainLog = options.log ?? (() => {});
   let index: BrainIndex | null = null;
+  const indexFile = join(options.home, "brain", "index.sqlite");
+
+  /** Nothing but a ServiceError leaves the store: anything else is logged here and mapped. */
+  function guard<T>(operation: string, run: () => T): T {
+    try {
+      return run();
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+      const detail = isBusyDatabase(error) ? briefDatabaseError(error) : brief(error);
+      log(`brain: ${operation} failed (${detail})`);
+      throw new ServiceError(
+        isBusyDatabase(error) ? "unavailable" : "internal",
+        isBusyDatabase(error)
+          ? "The brain search index is busy. Try again in a moment."
+          : `Brain ${operation} failed.`,
+      );
+    }
+  }
 
   const getIndex = (): BrainIndex =>
-    (index ??= openBrainIndex(join(options.home, "brain", "index.sqlite"), {
+    (index ??= openBrainIndex(indexFile, {
       log,
       ...(options.noFts5 === undefined ? {} : { noFts5: options.noFts5 }),
       ...(options.now === undefined ? {} : { now: options.now }),
+      ...(options.indexBusyTimeoutMs === undefined
+        ? {}
+        : { busyTimeoutMs: options.indexBusyTimeoutMs }),
     }));
 
   function target(uri: string): Target {
@@ -142,7 +189,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
   function readMemory(root: BrainRoot, segments: readonly string[]) {
     const file = root.read(segments);
     if (file === null) return null;
-    const mtimeIso = new Date(file.mtimeMs).toISOString();
+    const mtimeIso = safeIso(file.mtimeMs);
     return { ...file, parsed: parseMemory(file.raw.toString("utf8"), mtimeIso) };
   }
 
@@ -157,17 +204,20 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
   }
 
   /** The deterministic L1 of a folder: each memory's summary and kind, each subfolder and its count. */
-  function buildOverview(root: BrainRoot, segments: readonly string[]) {
+  function buildOverview(root: BrainRoot, segments: readonly string[], budget: ScanBudget) {
     const memories: { name: string; summary: string; kind: string }[] = [];
-    const folders: { name: string; count: number }[] = [];
-    for (const child of root.children(segments) ?? []) {
+    const folders: { name: string; count: number; capped: boolean }[] = [];
+    const listing = root.children(segments, budget);
+    for (const child of listing?.entries ?? []) {
       if (child.name === BRAIN_OVERVIEW_FILE || !isBrainSegment(child.name)) continue;
       if (child.isDir) {
         if (child.name.endsWith(".md")) continue;
-        folders.push({
-          name: child.name,
-          count: root.scan([...segments, child.name]).files.length,
-        });
+        if (budget.remaining <= 0) {
+          folders.push({ name: child.name, count: 0, capped: true });
+        } else {
+          const walked = root.scan([...segments, child.name], budget);
+          folders.push({ name: child.name, count: walked.files.length, capped: walked.truncated });
+        }
       } else if (child.name.endsWith(".md")) {
         try {
           const found = readMemory(root, [...segments, child.name]);
@@ -179,7 +229,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
             });
           }
         } catch (error) {
-          log(`brain: leaving ${child.name} out of an overview (${(error as Error).message})`);
+          log(`brain: leaving ${child.name} out of an overview (${brief(error)})`);
         }
       }
     }
@@ -187,7 +237,9 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     if (folders.length > 0) {
       lines.push("", "## Folders", "");
       for (const folder of folders.slice(0, MAX_OVERVIEW_FOLDERS)) {
-        lines.push(`- \`${folder.name}/\` — ${plural(folder.count, "memory", "memories")}`);
+        lines.push(
+          `- \`${folder.name}/\` — ${pluralCapped(folder.count, folder.capped, "memory", "memories")}`,
+        );
       }
       if (folders.length > MAX_OVERVIEW_FOLDERS) {
         lines.push(`- and ${folders.length - MAX_OVERVIEW_FOLDERS} more folders`);
@@ -207,6 +259,8 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       body: normalizeBody(lines.join("\n")),
       summary: `${plural(memories.length, "memory", "memories")}, ${plural(folders.length, "folder", "folders")}`,
       empty: folders.length === 0 && memories.length === 0,
+      /** The folder itself had more entries than the budget allowed, so this listing is partial. */
+      incomplete: listing !== null && !listing.complete,
     };
   }
 
@@ -215,14 +269,22 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
    * changed too. An overview without the `auto` tag was written by a person or a model and is
    * left alone. The memory change already happened, so a failure here is logged, not thrown.
    */
-  function regenerateOverviews(root: BrainRoot, folder: readonly string[]): void {
+  function regenerateOverviews(
+    root: BrainRoot,
+    folder: readonly string[],
+    budget: ScanBudget,
+  ): void {
     for (let depth = folder.length; depth >= 0; depth -= 1) {
       const segments = folder.slice(0, depth);
       try {
         if (root.inspect(segments) === null) continue;
         const existing = readMemory(root, [...segments, BRAIN_OVERVIEW_FILE]);
         if (existing !== null && !existing.parsed.frontmatter.tags.includes(AUTO_TAG)) continue;
-        const built = buildOverview(root, segments);
+        const built = buildOverview(root, segments, budget);
+        if (built.incomplete) {
+          log(`brain: left the overview of /${segments.join("/")} as it was (folder too large)`);
+          continue;
+        }
         if (built.empty) {
           if (existing !== null) root.unlink([...segments, BRAIN_OVERVIEW_FILE]);
           root.rmdirIfEmpty(segments);
@@ -235,9 +297,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
           serializeMemory(overviewFrontmatter(built.summary), built.body),
         );
       } catch (error) {
-        log(
-          `brain: could not refresh the overview of /${segments.join("/")} (${(error as Error).message})`,
-        );
+        log(`brain: could not refresh the overview of /${segments.join("/")} (${brief(error)})`);
       }
     }
   }
@@ -270,7 +330,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     }
     const stored = readMemory(found.root, [...found.segments, BRAIN_OVERVIEW_FILE]);
     if (stored !== null) return entry(found, "overview", tier, stored.parsed);
-    const built = buildOverview(found.root, found.segments);
+    const built = buildOverview(found.root, found.segments, createScanBudget());
     return entry(found, "overview", tier, {
       frontmatter: overviewFrontmatter(built.summary),
       body: built.body,
@@ -282,11 +342,12 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     frontmatter: MemoryFrontmatter,
     body: string,
     created: boolean,
+    budget: ScanBudget,
   ): BrainWriteResult {
     const name = found.segments.at(-1) ?? "";
     const folder = found.segments.slice(0, -1);
     found.root.writeAtomic(folder, name, serializeMemory(frontmatter, body));
-    regenerateOverviews(found.root, folder);
+    regenerateOverviews(found.root, folder, budget);
     return {
       uri: formatBrainUri(found.scope, found.path),
       updatedAt: frontmatter.updatedAt,
@@ -320,7 +381,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
           },
         };
       } catch (error) {
-        log(`brain: not indexing ${path} (${(error as Error).message})`);
+        log(`brain: not indexing ${path} (${brief(error)})`);
         return null;
       }
     };
@@ -328,29 +389,32 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
 
   function syncScope(scope: BrainScope, root: BrainRoot): SyncReport {
     let files: ReturnType<BrainRoot["scan"]>["files"] = [];
+    let truncated = false;
     try {
-      files = root.scan().files;
+      ({ files, truncated } = root.scan([], createScanBudget()));
     } catch (error) {
       if (!(error instanceof ServiceError)) throw error;
       log(`brain: not indexing ${brainScopeKey(scope)} (${error.message})`);
     }
-    return getIndex().sync(brainScopeKey(scope), files, loadForIndex(root));
+    const report = getIndex().sync(brainScopeKey(scope), files, loadForIndex(root));
+    return truncated ? { ...report, truncated: true } : report;
   }
 
-  return {
+  const raw: BrainStore = {
     list(dirUri, listOptions = {}) {
       const found = target(dirUri);
       if (found.isMemory) {
         throw new ServiceError("bad_request", "list takes a folder, not a memory");
       }
-      const children = found.root.children(found.segments);
-      if (children === null) {
+      const budget = createScanBudget();
+      const listing = found.root.children(found.segments, budget);
+      if (listing === null) {
         if (found.segments.length === 0) return [];
         throw new ServiceError("not_found", `No such folder: ${dirUri}`);
       }
       const trust = brainTrust(found.scope);
       const nodes: BrainTreeNode[] = [];
-      for (const child of children) {
+      for (const child of listing.entries) {
         if (child.name === BRAIN_OVERVIEW_FILE || !isBrainSegment(child.name)) continue;
         const childSegments = [...found.segments, child.name];
         const path = childSegments.join("/");
@@ -363,11 +427,19 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
         };
         if (child.isDir) {
           if (child.name.endsWith(".md")) continue;
-          nodes.push({
-            ...base,
-            type: "folder",
-            count: found.root.scan(childSegments).files.length,
-          });
+          // Counts come from one walk that shares the listing's budget; a folder it could not
+          // finish is marked capped instead of being walked again.
+          if (budget.remaining <= 0) {
+            nodes.push({ ...base, type: "folder", count: 0, capped: true });
+          } else {
+            const walked = found.root.scan(childSegments, budget);
+            nodes.push({
+              ...base,
+              type: "folder",
+              count: walked.files.length,
+              ...(walked.truncated ? { capped: true } : {}),
+            });
+          }
         } else if (child.name.endsWith(".md")) {
           try {
             const memory = readMemory(found.root, childSegments);
@@ -383,7 +455,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
               updatedAt: frontmatter.updatedAt,
             });
           } catch (error) {
-            log(`brain: leaving ${path} out of a listing (${(error as Error).message})`);
+            log(`brain: leaving ${path} out of a listing (${brief(error)})`);
           }
         }
       }
@@ -401,13 +473,12 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     write(uri, input, writeOptions = {}) {
       const found = memoryTarget(uri);
       const now = clock();
-      const frontmatter = parseFrontmatterInput(input.frontmatter, now);
       const body = normalizeBody(input.body);
       assertBodySize(body);
-      assertNoSecret(frontmatter.summary, "summary");
-      assertNoSecret(frontmatter.tags.join("\n"), "tags");
-      assertNoSecret(JSON.stringify(frontmatter.source ?? {}), "source");
+      // Before validation, so a rejected field cannot echo a credential back in an error.
+      assertFrontmatterHasNoSecret(input.frontmatter);
       assertNoSecret(body, "body");
+      const frontmatter = parseFrontmatterInput(input.frontmatter, now);
 
       const existing = readMemory(found.root, found.segments);
       const current = existing?.parsed.frontmatter.updatedAt;
@@ -420,13 +491,23 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
             : `${uri} changed since ${expected} (now ${current}). Read it again and retry.`,
         );
       }
-      if (existing === null && found.root.scan().files.length >= BRAIN_MAX_MEMORIES) {
+      const budget = createScanBudget();
+      if (
+        existing === null &&
+        found.root.scan([], budget, BRAIN_MAX_MEMORIES).files.length >= BRAIN_MAX_MEMORIES
+      ) {
         throw new ServiceError(
           "bad_request",
           `This brain already holds ${BRAIN_MAX_MEMORIES} memories. Archive or remove some first.`,
         );
       }
-      return commit(found, { ...frontmatter, updatedAt: stamp(current) }, body, existing === null);
+      return commit(
+        found,
+        { ...frontmatter, updatedAt: stamp(current) },
+        body,
+        existing === null,
+        budget,
+      );
     },
 
     archive(uri) {
@@ -442,6 +523,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
         { ...frontmatter, status: "archived", updatedAt: stamp(frontmatter.updatedAt) },
         body,
         false,
+        createScanBudget(),
       );
     },
 
@@ -450,7 +532,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       if (!found.root.unlink(found.segments)) {
         throw new ServiceError("not_found", `No such memory: ${uri}`);
       }
-      regenerateOverviews(found.root, found.segments.slice(0, -1));
+      regenerateOverviews(found.root, found.segments.slice(0, -1), createScanBudget());
     },
 
     search(query, searchOptions) {
@@ -460,27 +542,45 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       ) {
         throw new ServiceError("bad_request", "pathPrefix is not a valid brain path");
       }
-      const scopes = new Map<string, BrainScope>();
-      for (const scope of searchOptions.scopes) {
-        const key = brainScopeKey(scope);
-        if (scopes.has(key)) continue;
-        try {
-          const root = openRoot(options.home, scope, options.resolveProjectRoot, log);
-          syncScope(scope, root);
-          scopes.set(key, scope);
-        } catch (error) {
-          if (!(error instanceof ServiceError)) throw error;
-          log(`brain: skipping ${key} in a search (${error.message})`);
+      const run = () => {
+        const scopes = new Map<string, BrainScope>();
+        for (const scope of searchOptions.scopes) {
+          const key = brainScopeKey(scope);
+          if (scopes.has(key)) continue;
+          try {
+            const root = openRoot(options.home, scope, options.resolveProjectRoot, log);
+            syncScope(scope, root);
+            scopes.set(key, scope);
+          } catch (error) {
+            if (!(error instanceof ServiceError)) throw error;
+            log(`brain: skipping ${key} in a search (${error.message})`);
+          }
         }
+        const hits = getIndex().search(query, {
+          scopeKeys: [...scopes.keys()],
+          limit: searchOptions.limit,
+          ...(searchOptions.pathPrefix === undefined
+            ? {}
+            : { pathPrefix: searchOptions.pathPrefix }),
+          ...(searchOptions.includeArchived === undefined
+            ? {}
+            : { includeArchived: searchOptions.includeArchived }),
+        });
+        return { hits, scopes };
+      };
+      let outcome: ReturnType<typeof run>;
+      try {
+        outcome = run();
+      } catch (error) {
+        if (!isCorruptDatabase(error)) throw error;
+        // The index is only a cache: a damaged one is rebuilt from the files, once.
+        log(`brain: rebuilding the search index (${briefDatabaseError(error)})`);
+        index?.close();
+        index = null;
+        resetBrainIndexFiles(indexFile);
+        outcome = run();
       }
-      const hits = getIndex().search(query, {
-        scopeKeys: [...scopes.keys()],
-        limit: searchOptions.limit,
-        ...(searchOptions.pathPrefix === undefined ? {} : { pathPrefix: searchOptions.pathPrefix }),
-        ...(searchOptions.includeArchived === undefined
-          ? {}
-          : { includeArchived: searchOptions.includeArchived }),
-      });
+      const { hits, scopes } = outcome;
       return hits.flatMap((hit) => {
         const scope = scopes.get(hit.scopeKey);
         if (scope === undefined) return [];
@@ -512,4 +612,35 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       index = null;
     },
   };
+
+  return {
+    list: (dirUri, listOptions) => guard("list", () => raw.list(dirUri, listOptions)),
+    read: (uri, tier) => guard("read", () => raw.read(uri, tier)),
+    write: (uri, input, writeOptions) => guard("write", () => raw.write(uri, input, writeOptions)),
+    archive: (uri) => guard("archive", () => raw.archive(uri)),
+    remove: (uri) => guard("remove", () => raw.remove(uri)),
+    search: (query, searchOptions) => guard("search", () => raw.search(query, searchOptions)),
+    overview: (dirUri) => guard("overview", () => raw.overview(dirUri)),
+    reindex: (scope) => guard("reindex", () => raw.reindex(scope)),
+    close: () => raw.close(),
+  };
+}
+
+const WRITABLE_FIELD_NAMES = new Set(["summary", "kind", "tags", "status", "pinned", "source"]);
+
+/**
+ * Scans every frontmatter key and value a writer sent, as it would be serialized. The error
+ * names a known field, or just "frontmatter", never an unrecognized key.
+ */
+function assertFrontmatterHasNoSecret(input: unknown): void {
+  if (typeof input !== "object" || input === null) return;
+  for (const [key, value] of Object.entries(input)) {
+    let json: string | undefined;
+    try {
+      json = JSON.stringify(value);
+    } catch {
+      throw new ServiceError("bad_request", "frontmatter: a value cannot be serialized");
+    }
+    assertNoSecret(`${key}: ${json ?? ""}`, WRITABLE_FIELD_NAMES.has(key) ? key : "frontmatter");
+  }
 }

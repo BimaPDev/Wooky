@@ -3,18 +3,21 @@ import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { BrainKind, BrainStatus } from "@wooky/contracts";
+import { ServiceError } from "../errors.ts";
 import type { BrainLog, ScannedFile } from "./paths.ts";
 
 /**
  * Search cache at `<home>/brain/index.sqlite`. It holds nothing the Markdown files do not, so a
- * damaged or out-of-date index is deleted and rebuilt. FTS5 with BM25 when this SQLite has it,
- * otherwise a plain table searched with LIKE.
+ * corrupt or out-of-date index is deleted and rebuilt. A busy or unreadable one is not: that is
+ * reported, and the file is left alone. FTS5 with BM25 when this SQLite has it, otherwise a
+ * plain table scored in code.
  */
 
 const SCHEMA_VERSION = 1;
 /** A file edited this close to when it was indexed may share its mtime with a later edit. */
 const RACY_MS = 2000;
 const MAX_TERMS = 16;
+const BUSY_TIMEOUT_MS = 2000;
 
 export interface IndexedDoc {
   summary: string;
@@ -36,6 +39,8 @@ export interface SyncReport {
   updated: number;
   removed: number;
   unchanged: number;
+  /** Present when the scan stopped at its entry budget, so some files were not looked at. */
+  truncated?: boolean;
 }
 
 export interface IndexHit {
@@ -62,6 +67,31 @@ export interface BrainIndexOptions {
   noFts5?: boolean;
   now?: () => number;
   log?: BrainLog;
+  /** How long a query waits for another connection's write lock. */
+  busyTimeoutMs?: number;
+}
+
+function errcode(error: unknown): number | null {
+  const code = (error as { errcode?: unknown } | null)?.errcode;
+  return typeof code === "number" ? code & 0xff : null;
+}
+
+/** The database's own short description of a failure, never a dump of the error object. */
+export function briefDatabaseError(error: unknown): string {
+  const text = (error as { errstr?: unknown } | null)?.errstr;
+  return typeof text === "string" ? text : "database error";
+}
+
+/** SQLITE_CORRUPT (11) or SQLITE_NOTADB (26): the file is damaged, so rebuilding it is right. */
+export function isCorruptDatabase(error: unknown): boolean {
+  const code = errcode(error);
+  return code === 11 || code === 26;
+}
+
+/** SQLITE_BUSY (5) or SQLITE_LOCKED (6): another connection holds the lock; the file is fine. */
+export function isBusyDatabase(error: unknown): boolean {
+  const code = errcode(error);
+  return code === 5 || code === 6;
 }
 
 /** Plain lowercase words. Anything FTS5 would read as syntax is dropped here, not escaped. */
@@ -126,7 +156,7 @@ export class BrainIndex {
       ).map((row) => [row.path, row]),
     );
     const indexedAt = this.now();
-    this.db.exec("BEGIN");
+    this.db.exec("BEGIN IMMEDIATE");
     try {
       for (const file of scanned) {
         const row = rows.get(file.path);
@@ -135,7 +165,7 @@ export class BrainIndex {
           row !== undefined &&
           row.size === file.size &&
           row.mtime_ms === file.mtimeMs &&
-          file.mtimeMs < row.indexed_at - RACY_MS
+          (file.mtimeMs < row.indexed_at - RACY_MS || file.mtimeMs > row.indexed_at + RACY_MS)
         ) {
           report.unchanged += 1;
           continue;
@@ -244,14 +274,10 @@ export class BrainIndex {
     }
     const where = filters.join(" AND ");
     const limit = Math.max(1, Math.min(100, Math.floor(options.limit)));
-    try {
-      return this.fts5
-        ? this.searchFts(terms, where, params, limit)
-        : this.searchPlain(terms, where, params, limit);
-    } catch {
-      // Terms are plain words, so this is a damaged index, not a bad query.
-      return [];
-    }
+    // Terms are plain words, so a failure here is the database's, and the caller decides what to do.
+    return this.fts5
+      ? this.searchFts(terms, where, params, limit)
+      : this.searchPlain(terms, where, params, limit);
   }
 
   private searchFts(terms: string[], where: string, params: (string | number)[], limit: number) {
@@ -352,12 +378,15 @@ function prepare(db: DatabaseSync, fts5: boolean): void {
       ? "CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(summary, tags, body, path_text, tokenize = 'porter unicode61')"
       : "CREATE TABLE IF NOT EXISTS docs (rowid INTEGER PRIMARY KEY, summary TEXT, tags TEXT, body TEXT, path_text TEXT)",
   );
-  db.exec(`PRAGMA user_version = ${version}`);
+  if (current !== version) db.exec(`PRAGMA user_version = ${version}`);
 }
 
 function openOnce(file: string, options: BrainIndexOptions): BrainIndex {
   const db = new DatabaseSync(file);
   try {
+    db.exec(
+      `PRAGMA busy_timeout = ${Math.max(0, Math.floor(options.busyTimeoutMs ?? BUSY_TIMEOUT_MS))}`,
+    );
     db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
     const fts5 = options.noFts5 !== true && hasFts5(db);
     prepare(db, fts5);
@@ -368,14 +397,32 @@ function openOnce(file: string, options: BrainIndexOptions): BrainIndex {
   }
 }
 
-/** Opens the index, deleting and recreating it once if it cannot be read. */
+/**
+ * Opens the index. Only a damaged file (SQLITE_CORRUPT, SQLITE_NOTADB) is deleted and recreated,
+ * once. A locked or otherwise unopenable index throws and keeps its file: deleting a healthy
+ * index because another process held it would throw away work for nothing.
+ */
 export function openBrainIndex(file: string, options: BrainIndexOptions = {}): BrainIndex {
   mkdirSync(dirname(file), { recursive: true });
   try {
     return openOnce(file, options);
   } catch (error) {
-    options.log?.(`brain: rebuilding the search index (${(error as Error).message})`);
-    for (const suffix of ["", "-wal", "-shm"]) rmSync(file + suffix, { force: true });
+    if (!isCorruptDatabase(error)) {
+      options.log?.(`brain: could not open the search index (${briefDatabaseError(error)})`);
+      throw new ServiceError(
+        isBusyDatabase(error) ? "unavailable" : "internal",
+        isBusyDatabase(error)
+          ? "The brain search index is busy. Try again in a moment."
+          : "The brain search index could not be opened.",
+      );
+    }
+    options.log?.("brain: rebuilding the search index (the file is damaged)");
+    resetBrainIndexFiles(file);
     return openOnce(file, options);
   }
+}
+
+/** Deletes the index database and its journal files. */
+export function resetBrainIndexFiles(file: string): void {
+  for (const suffix of ["", "-wal", "-shm"]) rmSync(file + suffix, { force: true });
 }

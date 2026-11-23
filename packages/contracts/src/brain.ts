@@ -220,5 +220,7 @@ export const BrainTreeNode = z.object({
   updatedAt: z.string().optional(),
   /** Folders only: memories below it, at any depth. */
   count: z.number().int().nonnegative().optional(),
+  /** Folders only: the count stopped at the scan budget, so there are at least this many. */
+  capped: z.boolean().optional(),
 });
 export type BrainTreeNode = z.infer<typeof BrainTreeNode>;

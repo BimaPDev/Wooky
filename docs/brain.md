@@ -111,8 +111,11 @@ Search is SQLite FTS5 with BM25 ranking at `<WOOKY_HOME>/brain/index.sqlite`, wi
 scope and path prefix. Columns are weighted: summary 6, tags 3, path 2, body 1. Terms use the
 `porter unicode61` tokenizer, so `install` finds `installing`. There are no embeddings in v1.
 
-The index is a cache. Everything in it can be rebuilt from the files, so a missing, damaged or
-old-schema index is deleted and rebuilt on open. A search first syncs the scopes it covers:
+The index is a cache. Everything in it can be rebuilt from the files, so a missing, corrupt
+(`SQLITE_CORRUPT`, `SQLITE_NOTADB`) or old-schema index is deleted and rebuilt. A locked or
+otherwise unopenable index is not: that is reported as `unavailable` or `internal`, and the file
+stays. Queries wait up to 2 seconds for another connection's lock (`busy_timeout`), and a sync
+takes the write lock up front (`BEGIN IMMEDIATE`). A search first syncs the scopes it covers:
 
 1. Scan the scope's root (symbolic links skipped and logged).
 2. Compare each file's mtime and size to the indexed row. Equal means unchanged.
@@ -120,7 +123,9 @@ old-schema index is deleted and rebuilt on open. A search first syncs the scopes
 4. Rows whose files are gone are dropped.
 
 A file modified within 2 seconds of when it was indexed is always re-hashed, because a second edit
-in the same filesystem clock tick can keep the same mtime and size.
+in the same filesystem clock tick can keep the same mtime and size. A file whose mtime is more than
+2 seconds in the future is hashed once and then trusted while its mtime and size stay the same, so
+a skewed clock or a `touch -d` does not make every search re-read it.
 
 The query is reduced to lowercase letter and digit words (at most 16, each quoted and joined with
 `OR`) before it reaches FTS5. Operators, quotes, `NEAR`, column filters and `*` have no meaning;
@@ -130,8 +135,9 @@ The query is reduced to lowercase letter and digit words (at most 16, each quote
 
 FTS5 is probed at runtime: opening the index tries `CREATE VIRTUAL TABLE temp.fts5_probe USING
 fts5(x)`. On Node 24.18.0 (macOS) that succeeds, and tests run both modes. If a build ever lacks
-FTS5, the index falls back to an ordinary table and a `LIKE` search scored in code (summary 6,
-tags 3, path 2, body 1 per matching term). It returns the same shape with cruder ranking. The mode is
+FTS5, the index falls back to an ordinary table, and the search reads the candidate rows and scores
+them in JavaScript (summary 6, tags 3, path 2, body 1 per matching term). There is no `LIKE`. It
+returns the same shape with cruder ranking. The mode is
 part of the schema version, so switching rebuilds the tables.
 
 ## Approval policy
@@ -158,17 +164,46 @@ repo, and the store treats it that way.
   and never follow them. A hostile brain therefore cannot make Wooky read or overwrite
   `~/.ssh/...` through a link. A race that swaps a path after the check is not defended
   against beyond `O_NOFOLLOW`; the attacker would need to be running code on the machine already.
-- **Bounded.** A scan stops after 5000 directory entries and goes at most 6 levels deep.
+- **Bounded.** One operation gets one budget of 5000 directory entries, shared by everything it
+  walks: a listing and its folder counts, a write's memory-count check and the overviews it
+  refreshes (including every ancestor), a reindex. Directories are read entry by entry and reading
+  stops when the budget is gone. Walks go at most 6 levels deep. A folder count that was cut short
+  is marked `capped` in a listing and written as `5000+` in an overview.
 - **Trust field.** Every result (`BrainEntry`, `BrainSearchHit`, `BrainTreeNode`) carries `trust`:
   `"user"` for global, `"repo"` for project. B3 uses it to fence repo content in prompts as data
   to consider, not instructions to follow. Frontmatter `summary` text is repo content too.
-- **No secrets.** Writes are scanned and rejected for AWS keys (`AKIA…`), GitHub tokens (`ghp_`,
-  `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), `sk-` and `sk-ant-` keys, Slack tokens
-  (`xox[abpr]-`), PEM private keys, JWT-shaped tokens, and
-  `password|secret|token|api_key = <16+ character value with letters, digits and high entropy>`.
-  The error names the pattern and the line, never the value. The scan is a net for accidents, not
+- **No secrets.** Writes are scanned and rejected for AWS access keys (`AKIA…`) and secret keys
+  (only next to `aws…secret` context), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+  `github_pat_`), GitLab (`glpat-`), `sk-` and `sk-ant-` keys, Stripe (`sk_live_`, `rk_live_`,
+  `sk_test_`), Google (`AIza…`), npm (`npm_…`), Hugging Face (`hf_…`), SendGrid (`SG.…`), Slack
+  tokens (`xox?-`) and webhook URLs, PEM and PGP private keys, JWT-shaped tokens, URLs with
+  `user:password@`, `Authorization: Bearer …`, and
+  `password|passwd|secret|token|api_key|api key = <16+ character value>` (letters and digits with
+  high entropy; for an api key, letters alone are enough). The scan runs over every frontmatter key
+  and value as serialized, and the body, before the frontmatter is validated. The error names the
+  pattern and the line, never the value, and no error ever contains an unrecognized key or a
+  rejected value. The scan is a net for accidents, not
   a guarantee: do not rely on it to make a hostile write safe.
 - **Capped.** Body, summary and count caps above.
+
+## Hardening
+
+What a hostile repo or a bad file cannot do to the store, and where the test is.
+
+| Defense                                                                                                                                      | Test                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Every secret pattern is linear: bounded repetitions, lookbehind anchors, lines scanned one at a time in windows of 4096                      | `safety.test.ts` (time)                 |
+| A project brain that overlaps the global brain's folder, or a project that is the data folder, is `forbidden`                                | `hardening.test.ts` (overlaps)          |
+| `read` never throws on file content: a bad `updatedAt` (year 10000, `+010000`, `-000001`) or mtime falls back; unknown frontmatter is a note | `frontmatter.test.ts`, fuzz             |
+| Nothing but a `ServiceError` leaves the store; logs name an error code, never a dump                                                         | `hardening.test.ts` (non-ServiceError)  |
+| One scan budget per operation, entries read until it runs out, truncation reported                                                           | `hardening.test.ts` (scan budget)       |
+| Case-insensitive filesystems: a path whose on-disk spelling differs is not found for reads and refused for writes                            | `hardening.test.ts` (letter case)       |
+| Project files with other hard links are not read, listed or indexed                                                                          | `hardening.test.ts` (hard links)        |
+| Secrets are scanned before validation and never echoed, including keys                                                                       | `hardening.test.ts`, `safety.test.ts`   |
+| A `WOOKY_HOME` that does not exist yet is resolved through its nearest existing ancestor, so a symlinked parent is fine                      | `hardening.test.ts` (symlink)           |
+| The index is deleted only when corrupt; lock waits and `BEGIN IMMEDIATE`; search errors are logged and surfaced                              | `search-index.test.ts`, `store.test.ts` |
+| A future mtime is hashed once, not on every search                                                                                           | `search-index.test.ts`                  |
+| Reads open with `O_NOFOLLOW` and `O_NONBLOCK`, and refuse anything that is not a regular file after `fstat`                                  | `hardening.test.ts` (pipe)              |
 
 ## Code map (B1)
 
