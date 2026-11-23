@@ -87,4 +87,26 @@ describe("inert git files", () => {
     await shadow.version();
     expect(statSync(dir).mode & 0o022).toBe(0);
   });
+
+  it.skipIf(!posix)("replaces a symlinked run directory instead of following it", async () => {
+    const { shadow, home, config } = await setup();
+    await shadow.version();
+    const run = join(home, "run");
+    const elsewhere = join(home, "elsewhere");
+    mkdirSync(elsewhere);
+    rmSync(run, { recursive: true });
+    symlinkSync(elsewhere, run, "dir");
+    await shadow.version();
+    expect(lstatSync(run).isSymbolicLink()).toBe(false);
+    expect(readdirSync(elsewhere)).toEqual([]);
+    expect(existsSync(config)).toBe(true);
+  });
+
+  it.skipIf(!posix)("tightens a group or world writable run directory", async () => {
+    const { shadow, home } = await setup();
+    await shadow.version();
+    chmodSync(join(home, "run"), 0o777);
+    await shadow.version();
+    expect(statSync(join(home, "run")).mode & 0o022).toBe(0);
+  });
 });

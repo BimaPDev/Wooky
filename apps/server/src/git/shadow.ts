@@ -16,6 +16,7 @@ import {
   mkdtempSync,
   readdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
   type Stats,
 } from "node:fs";
@@ -73,6 +74,38 @@ function isInertDir(path: string, empty: boolean): boolean {
 let fallbackInertDir: string | null = null;
 
 /**
+ * The `run` directory the inert files live in must itself be ours: if it were a symlink or
+ * writable by others, the checks on `git-inert` below would be checking a place someone else
+ * controls. A symlink is replaced, a loose mode is tightened, and anything not ours is refused.
+ * Windows has no uid or mode bits to check; it relies on WOOKY_HOME sitting under the user's
+ * profile (`%USERPROFILE%`), whose ACLs already keep other users out.
+ */
+function ensurePrivateRunDir(path: string): void {
+  if (onWindows) {
+    mkdirSync(path, { recursive: true });
+    return;
+  }
+  let info: Stats | null = null;
+  try {
+    info = lstatSync(path);
+  } catch {
+    // Missing: created below.
+  }
+  if (info?.isSymbolicLink()) {
+    unlinkSync(path);
+    info = null;
+  }
+  if (!info) {
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    return;
+  }
+  if (!info.isDirectory() || !ownedByUs(info)) {
+    throw new Error(`${path} must be a directory owned by the current user`);
+  }
+  if ((info.mode & 0o022) !== 0) chmodSync(path, info.mode & 0o755 & ~0o022);
+}
+
+/**
  * An empty git config file and an empty hooks directory. Calls that have no shadow repo yet
  * (init, --version, plumbing on a project) still need "no global config, no hooks"; the null
  * device cannot stand in, because git on Windows opens `\\.\nul` as a path and fails with
@@ -86,7 +119,9 @@ let fallbackInertDir: string | null = null;
 function inertGitFiles(home: string | undefined): { config: string; hooks: string } {
   let dir: string;
   if (home) {
-    dir = join(home, "run", "git-inert");
+    const runDir = join(home, "run");
+    ensurePrivateRunDir(runDir);
+    dir = join(runDir, "git-inert");
   } else {
     // No home (tests, tools): a private per-process directory instead.
     if (!fallbackInertDir) {
