@@ -60,6 +60,28 @@ describe("hosting bind", () => {
   });
 });
 
+type Failing = (host: string, port: number) => boolean;
+/** Makes listen() fail with EADDRINUSE for the (host, port) pairs the predicate selects. */
+async function failListen(fails: Failing) {
+  const { Server } = await import("node:net");
+  const realListen = Server.prototype.listen;
+  return vi.spyOn(Server.prototype, "listen").mockImplementation(function (
+    this: InstanceType<typeof Server>,
+    ...args: unknown[]
+  ) {
+    const first = args[0] as { host?: string; port?: number } | number | undefined;
+    const host = typeof first === "object" ? first.host : (args[1] as string | undefined);
+    const port = typeof first === "object" ? first.port : first;
+    if (!host || !fails(host, port ?? 0)) {
+      return (realListen as (...a: unknown[]) => unknown).apply(this, args) as never;
+    }
+    process.nextTick(() =>
+      this.emit("error", Object.assign(new Error("address in use"), { code: "EADDRINUSE" })),
+    );
+    return this;
+  } as never);
+}
+
 describe("bind manager rollback", () => {
   it("keeps serving loopback when the wildcard bind fails", async () => {
     const { createBindManager } = await import("./bind.ts");
@@ -104,28 +126,6 @@ describe("bind manager rollback", () => {
       await manager.closeServers();
     }
   });
-
-  type Failing = (host: string, port: number) => boolean;
-  /** Makes listen() fail with EADDRINUSE for the (host, port) pairs the predicate selects. */
-  async function failListen(fails: Failing) {
-    const { Server } = await import("node:net");
-    const realListen = Server.prototype.listen;
-    return vi.spyOn(Server.prototype, "listen").mockImplementation(function (
-      this: InstanceType<typeof Server>,
-      ...args: unknown[]
-    ) {
-      const first = args[0] as { host?: string; port?: number } | number | undefined;
-      const host = typeof first === "object" ? first.host : (args[1] as string | undefined);
-      const port = typeof first === "object" ? first.port : first;
-      if (!host || !fails(host, port ?? 0)) {
-        return (realListen as (...a: unknown[]) => unknown).apply(this, args) as never;
-      }
-      process.nextTick(() =>
-        this.emit("error", Object.assign(new Error("address in use"), { code: "EADDRINUSE" })),
-      );
-      return this;
-    } as never);
-  }
 
   async function newManager(hosting: HostingSettings) {
     const { createBindManager } = await import("./bind.ts");
@@ -194,6 +194,52 @@ describe("bind manager rollback", () => {
       expect(manager.addresses()).toContain("127.0.0.1");
       expect(manager.addresses()).not.toContain("0.0.0.0");
       expect(manager.url()).toBe(`http://127.0.0.1:${port}`);
+      expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+    } finally {
+      await manager.closeServers();
+    }
+  });
+
+  it("keeps no wildcard or tailnet listener when narrowing together with a port change fails", async () => {
+    const hosting = { enabled: true, bind: "all", port: 0 } as HostingSettings;
+    const manager = await newManager(hosting);
+    try {
+      const { port } = await manager.apply();
+      expect(manager.addresses()).toContain("0.0.0.0");
+      const { createServer } = await import("node:net");
+      const probe = createServer();
+      await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+      const other = (probe.address() as { port: number }).port;
+      await new Promise((resolve) => probe.close(resolve));
+      // Narrow to loopback on a different port, and the new loopback bind fails.
+      const spy = await failListen((host, p) => host === "127.0.0.1" && p === other);
+      Object.assign(hosting, { enabled: true, bind: "loopback", port: other });
+      await expect(manager.apply()).rejects.toThrow(/address in use/);
+      spy.mockRestore();
+      expect(manager.addresses().filter(isWildcard)).toEqual([]);
+      expect(manager.addresses()).toEqual(["127.0.0.1"]);
+      expect(manager.port()).toBe(port);
+      expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+    } finally {
+      await manager.closeServers();
+    }
+  });
+
+  it("restores the previous listeners when a widening with a port change fails", async () => {
+    const hosting = { enabled: true, bind: "loopback", port: 0 } as HostingSettings;
+    const manager = await newManager(hosting);
+    try {
+      const { port } = await manager.apply();
+      const { createServer } = await import("node:net");
+      const probe = createServer();
+      await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+      const other = (probe.address() as { port: number }).port;
+      await new Promise((resolve) => probe.close(resolve));
+      const spy = await failListen((host, p) => isWildcard(host) && p === other);
+      Object.assign(hosting, { enabled: true, bind: "all", port: other });
+      await expect(manager.apply()).rejects.toThrow(/address in use/);
+      spy.mockRestore();
+      expect(manager.addresses()).toEqual(["127.0.0.1"]);
       expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
     } finally {
       await manager.closeServers();
@@ -273,5 +319,56 @@ describe("hosting settings rollback", () => {
     const hosting = (settings as { result: { hosting: { enabled: boolean } } }).result.hosting;
     expect(hosting.enabled).toBe(false);
     expect(server.addresses()).toEqual(["127.0.0.1"]);
+  });
+
+  it("never widens exposure when a narrowing fails: the narrower settings stay saved and no wildcard listens", async () => {
+    const home = await tempDir("bind-narrow");
+    const server = await startServer({
+      home,
+      port: 0,
+      host: "127.0.0.1",
+      portExplicit: true,
+      adapters: [createDemoAdapter({ stepMs: 0 })],
+    });
+    servers.push(server);
+    const socket = new WebSocket(`${server.url.replace("http", "ws")}${WOOKY_WS_PATH}`);
+    sockets.push(socket);
+    const pending = new Map<number, (response: RpcResponse) => void>();
+    socket.on("message", (data) => {
+      const message = JSON.parse(String(data)) as { id?: unknown };
+      if (typeof message.id !== "number") return;
+      const response = RpcResponse.parse(message);
+      pending.get(response.id)?.(response);
+    });
+    await new Promise((resolve, reject) => socket.once("open", resolve).once("error", reject));
+    let next = 1;
+    const call = (method: string, params: unknown) =>
+      new Promise<RpcResponse>((resolve) => {
+        const id = next++;
+        pending.set(id, resolve);
+        socket.send(JSON.stringify({ id, method, params }));
+      });
+
+    const enabled = await call("settings.put", {
+      settings: { hosting: { enabled: true, bind: "all" } },
+    });
+    expect(enabled.ok).toBe(true);
+    expect(server.addresses()).toContain("0.0.0.0");
+
+    let message = "";
+    // Every loopback bind fails from now on, so the narrowing cannot complete.
+    const spy = await failListen((host) => host === "127.0.0.1");
+    try {
+      const failed = await call("settings.put", { settings: { hosting: { enabled: false } } });
+      expect(failed.ok).toBe(false);
+      message = JSON.stringify(failed);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(server.addresses().filter((host) => host === "0.0.0.0" || host === "::")).toEqual([]);
+    const settings = await call("settings.get", {});
+    const hosting = (settings as { result: { hosting: { enabled: boolean } } }).result.hosting;
+    expect(hosting.enabled).toBe(false);
+    expect(message).toMatch(/could not listen/i);
   });
 });

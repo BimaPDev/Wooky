@@ -152,6 +152,23 @@ export function createBindManager(options: {
         assignedPort = previousPort;
         listeners.clear();
         for (const [host, server] of previous) listeners.set(host, server);
+        // A listener is put back only if the target would have served it too. A failed narrowing
+        // must not leave the wildcard or tailnet listeners it was asked to remove.
+        const widest = hosts.includes("0.0.0.0") || hosts.includes("::");
+        for (const [host] of previous) {
+          if (!widest && !isLoopbackHost(host) && !hosts.includes(host)) await drop(host, true);
+        }
+        const wantsLoopback = hosts.includes("127.0.0.1") || hosts.includes("0.0.0.0");
+        if (wantsLoopback && !listeners.has("127.0.0.1") && !listeners.has("0.0.0.0")) {
+          try {
+            listeners.set("127.0.0.1", await listen("127.0.0.1", previousPort ?? port));
+          } catch (restoreError) {
+            console.error(
+              "could not restore 127.0.0.1",
+              restoreError instanceof Error ? restoreError.message : restoreError,
+            );
+          }
+        }
         throw error;
       }
       for (const [, server] of previous) await closeServer(server);
