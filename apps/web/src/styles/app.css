@@ -6803,6 +6803,10 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
 }
 
 .topbar-draft-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text);
   font-weight: 500;
 }

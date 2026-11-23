@@ -74,6 +74,11 @@
     overflow: hidden;
   }
 
+  .topbar-title .crumb-project,
+  .topbar-title .crumb-sep {
+    display: none;
+  }
+
   .topbar-lead .icon-button:not([aria-label="Show sidebar"]) {
     display: none;
   }
