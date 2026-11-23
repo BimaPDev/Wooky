@@ -7,7 +7,14 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, constants as fsConstants } from "node:fs";
+import {
+  existsSync,
+  constants as fsConstants,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import {
   lstat,
   mkdir,
@@ -20,7 +27,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { devNull } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import type { FileDiff } from "@wooky/contracts";
@@ -28,6 +35,25 @@ import { gitChildEnv } from "./env.ts";
 
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const ZERO_SHA = "0".repeat(40);
+
+/**
+ * An empty git config file and an empty hooks directory, owned by this process. Calls that
+ * have no shadow repo yet (init, --version, plumbing on a project) still need "no global
+ * config, no hooks"; the null device cannot stand in, because git on Windows opens
+ * `\\.\nul` as a path and fails with "Invalid argument".
+ */
+let inert: { config: string; hooks: string } | null = null;
+function inertGitFiles(): { config: string; hooks: string } {
+  if (inert) return inert;
+  const dir = mkdtempSync(join(tmpdir(), "wooky-git-"));
+  const config = join(dir, "empty.config");
+  const hooks = join(dir, "no-hooks");
+  writeFileSync(config, "");
+  mkdirSync(hooks);
+  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+  inert = { config, hooks };
+  return inert;
+}
 
 export class ShadowGitError extends Error {
   constructor(
@@ -218,7 +244,7 @@ export function createShadowGit(
     }
     env.GIT_CONFIG_NOSYSTEM = "1";
     env.GIT_ATTR_NOSYSTEM = "1";
-    env.GIT_CONFIG_GLOBAL = repo ? join(repo.gitDir, "wooky-empty.config") : devNull;
+    env.GIT_CONFIG_GLOBAL = repo ? join(repo.gitDir, "wooky-empty.config") : inertGitFiles().config;
     if (repo) {
       env.GIT_DIR = repo.gitDir;
       env.GIT_WORK_TREE = repo.workTree;
@@ -240,7 +266,10 @@ export function createShadowGit(
   }
 
   function launch(repo: ShadowRepo | null, args: string[], opts: RunOptions): ChildProcess {
-    const hooks = ["-c", `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : devNull}`];
+    const hooks = [
+      "-c",
+      `core.hooksPath=${repo ? join(repo.gitDir, "wooky-no-hooks") : inertGitFiles().hooks}`,
+    ];
     return spawn(gitBin, [...CONFIG_OVERRIDES, ...hooks, ...args], {
       // The work tree, so git never computes a prefix when the shadow dir sits inside the project.
       cwd: repo?.workTree ?? process.cwd(),
