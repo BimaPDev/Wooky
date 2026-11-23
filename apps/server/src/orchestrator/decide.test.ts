@@ -230,7 +230,12 @@ describe("decide project.remove", () => {
     );
     expect(events).toMatchObject([{ type: "project.removed", projectId: "p1" }]);
     expect(effects).toEqual([
-      { kind: "worktree.remove", threadId: "t1", projectRoot: "/work/demo", worktree },
+      {
+        kind: "worktree.remove",
+        threadId: "t1",
+        projectRoot: normalize("/work/demo"),
+        worktree,
+      },
     ]);
   });
 });
@@ -265,7 +270,7 @@ describe("decide thread.create", () => {
   it("asks for a worktree when isolated", () => {
     const { effects } = accepted(run(seed(), create({ isolate: true, title: "Spike" })));
     expect(effects).toEqual([
-      { kind: "worktree.create", threadId: "thread-1", projectRoot: "/work/demo" },
+      { kind: "worktree.create", threadId: "thread-1", projectRoot: normalize("/work/demo") },
     ]);
   });
 });
