@@ -126,7 +126,16 @@ export function createRemoteRuntime(options: {
   ): Promise<void> {
     if (patch.environments) peers.retain(after.environments.map((environment) => environment.id));
     if (!patch.hosting) return;
-    await bind.apply();
+    try {
+      await bind.apply();
+    } catch (error) {
+      // settings.put has already saved the new hosting settings. Put the old ones back so the UI
+      // reports what is actually listening, then try to bring those listeners back (best effort:
+      // zero listeners beats a network listener the saved settings do not allow).
+      options.themes.putSettings({ hosting: before.hosting });
+      await bind.apply().catch(() => undefined);
+      throw error;
+    }
     await syncServe(before.hosting, after.hosting);
   }
 

@@ -32,6 +32,10 @@ export function desiredPort(options: {
   return options.assignedPort ?? options.explicitPort;
 }
 
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1";
+}
+
 function formatHost(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
 }
@@ -161,22 +165,46 @@ export function createBindManager(options: {
       // listeners must go first. If nothing new comes up they are put back below.
       for (const host of dropped) await drop(host, keepLoopback);
       let firstError: unknown;
-      for (const host of hosts) {
-        if (listeners.has(host)) continue;
-        const bindPort = assignedPort ?? port;
+      const opened: string[] = [];
+      const tryBind = async (host: string, bindPort: number): Promise<boolean> => {
         try {
           listeners.set(host, await listen(host, bindPort));
+          opened.push(host);
+          return true;
         } catch (error) {
           firstError ??= error;
           console.error(
             `could not listen on ${host}`,
             error instanceof Error ? error.message : error,
           );
+          return false;
         }
+      };
+      for (const host of hosts) {
+        if (!listeners.has(host)) await tryBind(host, assignedPort ?? port);
+      }
+      const servesLoopback = () => listeners.has("127.0.0.1") || listeners.has("0.0.0.0");
+      const wantsLoopback = hosts.includes("127.0.0.1") || hosts.includes("0.0.0.0");
+      // A loopback-only target that lost its port (something grabbed it while hosting was on) comes
+      // back on a fresh one rather than leaving no listener; the new port shows in url().
+      if (
+        wantsLoopback &&
+        !servesLoopback() &&
+        assignedPort !== null &&
+        hosts.every(isLoopbackHost)
+      ) {
+        await tryBind("127.0.0.1", 0);
       }
       if (listeners.size === 0) {
-        // Nothing is accepting connections: restore what was serving before, then report.
-        for (const host of dropped) {
+        // Not usable from this machine: drop what this round opened and put back only the loopback
+        // listeners that were serving. Wildcard or tailnet listeners are never restored here,
+        // because the caller asked for them to go and the settings may already say so.
+        for (const host of opened) {
+          const server = listeners.get(host);
+          listeners.delete(host);
+          if (server) await closeServer(server);
+        }
+        for (const host of dropped.filter(isLoopbackHost)) {
           try {
             listeners.set(host, await listen(host, assignedPort ?? port));
           } catch (error) {
