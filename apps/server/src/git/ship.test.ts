@@ -9,7 +9,7 @@ import { ServiceError } from "../errors.ts";
 import { openEventStore } from "../store/event-store.ts";
 import { tempDir, waitForEvent } from "../testing.ts";
 import { killTree } from "../process/kill-tree.ts";
-import { gitChildEnv } from "./env.ts";
+import { userRepoGitEnv } from "./env.ts";
 import { createGhClient } from "./gh.ts";
 import { createShipService } from "./ship.ts";
 import { createGitService } from "./service.ts";
@@ -156,7 +156,7 @@ describe("ship service", () => {
   });
 
   it("disables interactive git prompts, editors, and pagers in child env", () => {
-    const env = gitChildEnv();
+    const env = userRepoGitEnv();
     expect(env.GIT_TERMINAL_PROMPT).toBe("0");
     expect(env.GCM_INTERACTIVE).toBe("never");
     expect(env.GIT_EDITOR).toBe("false");

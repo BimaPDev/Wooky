@@ -35,7 +35,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import type { FileDiff } from "@wooky/contracts";
-import { gitChildEnv } from "./env.ts";
+import { userRepoGitEnv } from "./env.ts";
 
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const ZERO_SHA = "0".repeat(40);
@@ -296,7 +296,7 @@ export function createShadowGit(
   const home = options.home;
 
   function environment(repo: ShadowRepo | null, extra?: Record<string, string>) {
-    const env = gitChildEnv();
+    const env = userRepoGitEnv();
     // Nothing from the user's ambient git setup may reach the shadow repo: no dates, no
     // global or system config, no hooks.
     for (const key of [

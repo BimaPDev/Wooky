@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { normalizeRemoteUrl } from "@wooky/domain";
-import { gitChildEnv } from "./env.ts";
+import { userRepoGitEnv } from "./env.ts";
 
 export interface ProjectGitFacts {
   /** The normalized origin remote (no scheme, no credentials), or null. */
@@ -17,7 +17,7 @@ function git(root: string, args: string[], gitBin: string): Promise<string | nul
     execFile(
       gitBin,
       ["-C", root, ...args],
-      { env: gitChildEnv(), timeout: TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true },
+      { env: userRepoGitEnv(), timeout: TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true },
       (error, stdout) => resolve(error ? null : String(stdout).trim() || null),
     );
   });

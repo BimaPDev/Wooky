@@ -6,7 +6,7 @@ import type { PendingEvent, PullRequest, RpcParams, RpcResult, Thread } from "@w
 import { ServiceError } from "../errors.ts";
 import { killTree as defaultKillTree } from "../process/kill-tree.ts";
 import type { EventStore } from "../store/event-store.ts";
-import { gitChildEnv } from "./env.ts";
+import { userRepoGitEnv } from "./env.ts";
 import { createGhClient, type GhClient, type GhPrViewJson } from "./gh.ts";
 import { redactCliError } from "./redact.ts";
 import type { GitService } from "./types.ts";
@@ -73,7 +73,7 @@ export function createShipService(deps: {
 
       const child = spawn(gitBin, [...gitPrefixArgs, ...args], {
         cwd: opts.cwd,
-        env: gitChildEnv(),
+        env: userRepoGitEnv(),
         windowsHide: true,
         ...(process.platform !== "win32" ? { detached: true } : {}),
       });

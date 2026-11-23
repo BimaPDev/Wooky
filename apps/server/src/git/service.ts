@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { FileDiff, Worktree } from "@wooky/contracts";
 import { commitWorktreeChanges as commitWorktreeImpl } from "./commit-worktree.ts";
-import { gitChildEnv } from "./env.ts";
+import { userRepoGitEnv } from "./env.ts";
 import { createMergeOps } from "./merge-ops.ts";
 import type { GitService } from "./types.ts";
 
@@ -78,7 +78,7 @@ export function createGitService(options?: {
   const listCap = options?.listFilesCap ?? LIST_FILES_CAP;
   const chains = new Map<string, Promise<void>>();
 
-  const baseEnv = gitChildEnv;
+  const baseEnv = userRepoGitEnv;
 
   /** Spawn git with a wall-clock timeout and a stdout cap; both kill only the child we spawned. */
   function run(args: string[], opts: RunOptions): Promise<RunResult> {

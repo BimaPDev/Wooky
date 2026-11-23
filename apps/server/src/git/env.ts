@@ -1,21 +1,41 @@
 /**
- * `GIT_*` variables that only describe how to reach a remote or authenticate to it. Every
- * other `GIT_*` variable can redirect git to another repository, exec path, template or
- * config, so it is dropped; these are user-owned transport settings that pushes rely on.
+ * Env for argv-only git/gh children: no prompts, no editor, no pager, no locale surprises.
+ * Two profiles, because the two kinds of child trust the user's environment differently:
+ *
+ * - `userRepoGitEnv` runs git in the user's own repositories (ship, checkpoints, project
+ *   info). The user's transport, identity, config file and LFS/HTTP/curl settings are theirs
+ *   and stay. Anything that could point git at another repository, exec path, template,
+ *   system config or inline config is dropped.
+ * - `shadowGitEnv` runs git in Wooky's private shadow repository and drops every `GIT_*`.
+ *
+ * Windows env names are case-insensitive, so `Git_Dir` counts as `GIT_DIR`.
  */
-const TRANSPORT_VARS = new Set([
+
+/** Exact `GIT_*` names a user repo child inherits. Everything else starting `GIT_` is dropped. */
+const USER_REPO_KEEP = new Set([
+  // Remote transport and authentication.
   "GIT_SSH",
   "GIT_SSH_COMMAND",
   "GIT_SSH_VARIANT",
   "GIT_ASKPASS",
   "GIT_PROXY_COMMAND",
-  "GIT_SSL_CAINFO",
-  "GIT_SSL_CAPATH",
-  "GIT_SSL_CERT",
-  "GIT_SSL_KEY",
-  "GIT_SSL_NO_VERIFY",
-  "GIT_SSL_VERSION",
+  // User-level config (credential helpers, signing).
+  "GIT_CONFIG_GLOBAL",
 ]);
+
+/** Prefixes kept for the same reason: transport, identity, LFS, HTTP and curl settings. */
+const USER_REPO_KEEP_PREFIXES = [
+  "GIT_SSL_",
+  "GIT_HTTP_",
+  "GIT_CURL_",
+  "GIT_LFS_",
+  "GIT_AUTHOR_",
+  "GIT_COMMITTER_",
+];
+
+function keptForUserRepo(name: string): boolean {
+  return USER_REPO_KEEP.has(name) || USER_REPO_KEEP_PREFIXES.some((p) => name.startsWith(p));
+}
 
 /** Appends `-o BatchMode=yes` to the user's own ssh command so it can never wait for input. */
 export function composeGitSshCommand(existing: string): string {
@@ -24,23 +44,17 @@ export function composeGitSshCommand(existing: string): string {
   return `${trimmed} -o BatchMode=yes`;
 }
 
-/**
- * Env for argv-only git/gh children: no inherited git state, no prompts, batch SSH.
- * Every variable whose upper-cased name starts with `GIT_` is dropped (Windows env names are
- * case-insensitive, so `Git_Dir` counts) unless it is a transport setting, and the few
- * Wooky sets itself are written afterwards.
- */
-export function gitChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function baseEnv(keep: (name: string) => boolean, extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   let sshCommand: string | undefined;
   for (const [key, value] of Object.entries(process.env)) {
     const name = key.toUpperCase();
-    if (name === "GIT_SSH_COMMAND") {
+    if (name === "LC_ALL" || name === "GCM_INTERACTIVE") continue;
+    if (name === "GIT_SSH_COMMAND" && keep(name)) {
       sshCommand = value;
       continue;
     }
-    if (name === "LC_ALL" || name === "GCM_INTERACTIVE") continue;
-    if (name.startsWith("GIT_") && !TRANSPORT_VARS.has(name)) continue;
+    if (name.startsWith("GIT_") && !keep(name)) continue;
     env[key] = value;
   }
   env.LC_ALL = "C";
@@ -55,9 +69,18 @@ export function gitChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
+export function userRepoGitEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return baseEnv(keptForUserRepo, extra);
+}
+
+/** For Wooky's own shadow repository: no inherited `GIT_*` at all, transport included. */
+export function shadowGitEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return baseEnv(() => false, extra);
+}
+
 export function ghChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
-    ...gitChildEnv(extra),
+    ...userRepoGitEnv(extra),
     GH_PROMPT_DISABLED: "1",
     GH_NO_UPDATE_NOTIFIER: "1",
   };

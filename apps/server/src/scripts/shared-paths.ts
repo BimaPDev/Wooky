@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { cp, lstat, mkdir, realpath, symlink, link } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { isSharedRelPath, type SharedPath } from "@wooky/contracts";
-import { gitChildEnv } from "../git/env.ts";
+import { userRepoGitEnv } from "../git/env.ts";
 
 export type SharedPathAction = "linked" | "copied" | "skipped" | "refused";
 
@@ -207,7 +207,7 @@ function gitLsIgnored(cwd: string): Promise<string> {
     const child = spawn(
       "git",
       ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
-      { cwd, env: gitChildEnv(), windowsHide: true },
+      { cwd, env: userRepoGitEnv(), windowsHide: true },
     );
     const out: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => out.push(chunk));

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { gitChildEnv } from "./env.ts";
+import { shadowGitEnv, userRepoGitEnv } from "./env.ts";
 
 const touched = new Map<string, string | undefined>();
 function setEnv(key: string, value: string): void {
@@ -15,7 +15,7 @@ afterEach(() => {
   touched.clear();
 });
 
-describe("gitChildEnv", () => {
+describe("userRepoGitEnv", () => {
   it("drops every GIT_ variable whatever its case, and keeps unrelated ones", () => {
     setEnv("GIT_EXEC_PATH", "/evil");
     setEnv("GIT_TEMPLATE_DIR", "/evil/templates");
@@ -25,7 +25,7 @@ describe("gitChildEnv", () => {
     setEnv("git_work_tree", "/elsewhere");
     setEnv("WOOKY_GIT_ENV_KEEP", "yes");
     setEnv("PATH", process.env.PATH ?? "/usr/bin");
-    const env = gitChildEnv();
+    const env = userRepoGitEnv();
     const names = Object.keys(env).map((key) => key.toUpperCase());
     for (const gone of [
       "GIT_EXEC_PATH",
@@ -46,7 +46,7 @@ describe("gitChildEnv", () => {
     setEnv("GIT_ASKPASS", "/bin/askpass");
     setEnv("GIT_EDITOR", "vim");
     setEnv("Git_Terminal_Prompt", "1");
-    const env = gitChildEnv({ GIT_AUTHOR_NAME: "Wooky" });
+    const env = userRepoGitEnv({ GIT_AUTHOR_NAME: "Wooky" });
     expect(env.GIT_SSH_COMMAND).toBe("ssh -i /keys/id -o BatchMode=yes");
     expect(env.GIT_ASKPASS).toBe("/bin/askpass");
     expect(env.GIT_EDITOR).toBe("false");
@@ -60,13 +60,100 @@ describe("gitChildEnv", () => {
   it("does not invent GIT_SSH_COMMAND, so core.sshCommand and GIT_SSH keep working", () => {
     delete process.env.GIT_SSH_COMMAND;
     setEnv("GIT_SSH", "/usr/bin/plink");
-    const env = gitChildEnv();
+    const env = userRepoGitEnv();
     expect(env.GIT_SSH).toBe("/usr/bin/plink");
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
   });
 
   it("does not repeat BatchMode when the user already set it", () => {
     setEnv("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -i /k");
-    expect(gitChildEnv().GIT_SSH_COMMAND).toBe("ssh -o BatchMode=yes -i /k");
+    expect(userRepoGitEnv().GIT_SSH_COMMAND).toBe("ssh -o BatchMode=yes -i /k");
+  });
+});
+
+const REPO_REDIRECTING = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_NAMESPACE",
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+  "GIT_EXEC_PATH",
+  "GIT_TEMPLATE_DIR",
+  "GIT_CONFIG_PARAMETERS",
+  "GIT_CONFIG_COUNT",
+  "GIT_CONFIG_KEY_0",
+  "GIT_CONFIG_VALUE_0",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_NOSYSTEM",
+  "GIT_TRACE",
+  "GIT_TRACE_PACKET",
+  "GIT_TRACE2_EVENT",
+];
+
+/** Mixed case, the way a Windows shell may spell it. */
+function mixed(name: string): string {
+  return name.replace(/(?<=_)[A-Z]+/g, (word) => word[0] + word.slice(1).toLowerCase());
+}
+
+function namesOf(env: NodeJS.ProcessEnv): string[] {
+  return Object.keys(env).map((key) => key.toUpperCase());
+}
+
+describe("userRepoGitEnv profile", () => {
+  it("keeps the user's transport, identity, user config, LFS, HTTP and curl settings", () => {
+    const keep = {
+      GIT_SSH: "/usr/bin/plink",
+      GIT_SSH_VARIANT: "putty",
+      GIT_PROXY_COMMAND: "/bin/proxy",
+      Git_Author_Name: "Ada",
+      GIT_AUTHOR_EMAIL: "ada@example.com",
+      git_committer_name: "Ada",
+      GIT_COMMITTER_EMAIL: "ada@example.com",
+      GIT_CONFIG_GLOBAL: "/home/ada/.gitconfig-work",
+      Git_Lfs_Skip_Smudge: "1",
+      GIT_HTTP_PROXY_AUTHMETHOD: "basic",
+      GIT_CURL_VERBOSE: "0",
+      Git_Ssl_Cainfo: "/ca.pem",
+    };
+    for (const [key, value] of Object.entries(keep)) setEnv(key, value);
+    const env = userRepoGitEnv();
+    for (const [key, value] of Object.entries(keep)) expect(env[key]).toBe(value);
+  });
+
+  it("strips every repo-redirecting variable, in any case", () => {
+    for (const name of REPO_REDIRECTING) setEnv(mixed(name), "/elsewhere");
+    for (const name of REPO_REDIRECTING) setEnv(name.toLowerCase(), "/elsewhere");
+    const names = namesOf(userRepoGitEnv());
+    for (const name of REPO_REDIRECTING) expect(names).not.toContain(name);
+  });
+});
+
+describe("shadowGitEnv profile", () => {
+  it("strips every GIT_ variable, transport and identity included, whatever its case", () => {
+    const inherited = [
+      "GIT_SSH",
+      "GIT_SSH_COMMAND",
+      "GIT_ASKPASS",
+      "GIT_PROXY_COMMAND",
+      "GIT_SSL_NO_VERIFY",
+      "GIT_AUTHOR_NAME",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_LFS_SKIP_SMUDGE",
+      ...REPO_REDIRECTING,
+    ];
+    for (const name of inherited) setEnv(mixed(name), "x");
+    setEnv("WOOKY_GIT_ENV_KEEP", "yes");
+    const env = shadowGitEnv({ GIT_DIR: "/shadow/.git" });
+    const names = namesOf(env);
+    for (const name of inherited.filter((n) => n !== "GIT_DIR")) expect(names).not.toContain(name);
+    expect(env.WOOKY_GIT_ENV_KEEP).toBe("yes");
+    // What Wooky sets itself, and the explicit extras, still arrive.
+    expect(env.GIT_DIR).toBe("/shadow/.git");
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.GIT_EDITOR).toBe("false");
   });
 });
