@@ -67,7 +67,7 @@ export function chipModelName(
 ): string {
   const entry = modelEntry(status, modelId);
   if (entry?.resolvedModel) return shortModelName(entry.resolvedModel);
-  if (modelId === "default") return "Default";
+  if (!modelId.trim() || modelId === "default") return "Default";
   if (isAlias(modelId) && !modelId.includes("[")) return shortModelName(modelId);
   const label = entry ? plainLabel(entry.label) : "";
   if (label && label.toLowerCase() !== modelId.toLowerCase() && label.length <= 28) return label;

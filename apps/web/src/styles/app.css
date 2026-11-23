@@ -7071,7 +7071,7 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .pk-row-main:disabled {
-  opacity: 0.5;
+  opacity: 0.72;
 }
 
 .pk-row-name {
@@ -7082,8 +7082,12 @@ html[data-wallpaper] .popover.popover-picker {
 }
 
 .pk-row-note {
-  flex: none;
-  color: var(--text-4);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
   font-size: var(--text-xs);
 }
 

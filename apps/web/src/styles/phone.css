@@ -182,6 +182,20 @@
     max-height: min(70dvh, 520px);
   }
 
+  .pk-kbd,
+  .approval-actions kbd {
+    display: none;
+  }
+
+  .failover-row {
+    gap: var(--space-1);
+    padding: 0 var(--space-1) 0 var(--space-2);
+  }
+
+  .failover-row-actions .icon-button {
+    min-width: 32px;
+  }
+
   /* Conversation and composer */
   .main {
     border-right: 0;

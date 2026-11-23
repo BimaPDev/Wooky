@@ -49,6 +49,7 @@ describe("chipModelName", () => {
   it("shows Default when it maps to nothing the status can name", () => {
     expect(chipModelName(bare, "default")).toBe("Default");
     expect(chipModelName(undefined, "default")).toBe("Default");
+    expect(chipModelName(undefined, "")).toBe("Default");
   });
 
   it("names plain aliases and explicit ids", () => {
