@@ -12,8 +12,12 @@ import { createFakeGit } from "../testing.ts";
 import { remoteDispatch } from "./remote-rpc.ts";
 
 const servers: RunningServer[] = [];
+const dirs: string[] = [];
 afterEach(async () => {
   for (const server of servers.splice(0)) await server.close();
+  for (const dir of dirs.splice(0)) {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 });
 
 function captureDemo(stepMs = 0): { adapter: ProviderAdapter; inputs: TurnInput[] } {
@@ -30,7 +34,9 @@ function captureDemo(stepMs = 0): { adapter: ProviderAdapter; inputs: TurnInput[
 }
 
 async function tempRoot(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "wooky-transfer-"));
+  const dir = await mkdtemp(join(tmpdir(), "wooky-transfer-"));
+  dirs.push(dir);
+  return dir;
 }
 
 async function pairServers(
@@ -227,9 +233,6 @@ describe("transfer journey", () => {
         prompt: "Nope",
       }),
     ).rejects.toThrow(/moved to/);
-
-    await rm(rootA, { recursive: true, force: true });
-    await rm(rootB, { recursive: true, force: true });
   }, 60_000);
 
   it("recovers and imports after a crash between owner release and local import", async () => {
@@ -386,8 +389,5 @@ describe("transfer journey", () => {
     expect(imported).toBeDefined();
     expect(snapB.pendingClaims).toEqual({});
     expect(snapB.turns[imported?.id ?? ""]?.length).toBe(1);
-
-    await rm(rootA, { recursive: true, force: true });
-    await rm(rootB, { recursive: true, force: true });
   }, 60_000);
 });
