@@ -112,9 +112,9 @@ export function visibleThreadIds(
   state: Pick<
     AppState,
     "selectedThreadId" | "panes" | "model" | "fleetBoardOpen" | "compareGroupId" | "settingsOpen"
-  >,
+  > & { brainOpen?: boolean },
 ): string[] {
-  if (state.fleetBoardOpen || state.compareGroupId) return [];
+  if (state.fleetBoardOpen || state.brainOpen || state.compareGroupId) return [];
   const split = splitLayout(state.panes, (id) => Boolean(state.model.threads[id]));
   if (split) return [...split.threadIds];
   return state.selectedThreadId ? [state.selectedThreadId] : [];

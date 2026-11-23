@@ -75,6 +75,7 @@ export function PhoneDrawer() {
         state.selectedThreadId !== prev.selectedThreadId ||
         (state.newThread !== null && prev.newThread === null) ||
         (state.fleetBoardOpen && !prev.fleetBoardOpen) ||
+        (state.brainOpen && !prev.brainOpen) ||
         (state.compareGroupId !== null && prev.compareGroupId === null) ||
         (state.settingsOpen && !prev.settingsOpen)
       )

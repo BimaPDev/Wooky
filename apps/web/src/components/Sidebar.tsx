@@ -6,6 +6,7 @@ import {
   partitionSidebarThreads,
 } from "../lib/sidebar-sections.ts";
 import {
+  openBrain,
   openCompare,
   openFleetBoard,
   openInSplit,
@@ -37,6 +38,7 @@ import {
 import { EnvironmentSwitcher } from "./anywhere/EnvironmentSwitcher.tsx";
 import { ConflictBadge } from "./anywhere/conflicts/ConflictBadge.tsx";
 import { ReplicaSections } from "./anywhere/replicas/ReplicaSections.tsx";
+import { IconBrain } from "./brain/BrainIcons.tsx";
 import { InlineRename } from "./InlineRename.tsx";
 import { providerLabels } from "./labels.ts";
 import { ProjectMonogram } from "./ProjectMonogram.tsx";
@@ -78,6 +80,8 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
   const status = useStore((state) => state.status);
   const fixture = useStore((state) => state.fixture);
   const pickingFolder = useStore((state) => state.pickingFolder);
+  const brainOpen = useStore((state) => state.brainOpen);
+  const brainInboxCount = useStore((state) => state.brainInboxCount);
   const [query, setQuery] = useState("");
   const [workingOpen, setWorkingOpen] = useState(true);
   const [settledOpen, setSettledOpen] = useState(false);
@@ -333,6 +337,21 @@ export function Sidebar({ macDesktop = false }: { macDesktop?: boolean }) {
               onClick={() => openSettings("usage")}
             >
               <IconChart />
+            </button>
+          </Tooltip>
+          <Tooltip label="Brain">
+            <button
+              type="button"
+              className={brainOpen ? "sidebar-brain-button pressed" : "sidebar-brain-button"}
+              aria-label={brainInboxCount > 0 ? `Brain (${brainInboxCount} pending)` : "Brain"}
+              aria-pressed={brainOpen}
+              onClick={openBrain}
+            >
+              <IconBrain />
+              <span>Brain</span>
+              {brainInboxCount > 0 ? (
+                <span className="sidebar-brain-badge">{brainInboxCount}</span>
+              ) : null}
             </button>
           </Tooltip>
         </div>
@@ -779,7 +798,7 @@ function useSplitContextMenu(threadId: string): {
           className="fleet-context-item"
           role="menuitem"
           onClick={() => {
-            useStore.setState({ fleetBoardOpen: false, compareGroupId: null });
+            useStore.setState({ fleetBoardOpen: false, brainOpen: false, compareGroupId: null });
             openInSplit(threadId);
             setMenu(null);
           }}

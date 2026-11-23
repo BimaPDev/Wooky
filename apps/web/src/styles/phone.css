@@ -414,6 +414,78 @@
     width: calc(100vw - 2 * var(--space-4));
     justify-content: space-between;
   }
+
+  /* Brain panel */
+  .sidebar-brain-button,
+  .brain-tab,
+  .brain-scope-btn,
+  .brain-tree-row,
+  .brain-hit-row,
+  .brain-tier-btn,
+  .brain-filter-toggle,
+  .checkbox-row {
+    min-height: 44px;
+  }
+
+  .brain-tier-btn {
+    min-width: 44px;
+  }
+
+  .brain-search-clear {
+    width: auto;
+    height: auto;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .brain-head {
+    flex-wrap: wrap;
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .brain-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .brain-workspace.mobile-list .brain-detail-col {
+    display: none;
+  }
+
+  .brain-workspace.mobile-detail .brain-nav-col {
+    display: none;
+  }
+
+  .brain-nav-col {
+    border-right: 0;
+  }
+
+  .brain-detail-mobile-bar,
+  .brain-detail-back {
+    display: inline-flex;
+  }
+
+  .brain-detail-head {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .brain-detail-scroll,
+  .brain-inbox-scroll {
+    padding: var(--space-3);
+  }
+
+  .brain-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .brain-form .field input,
+  .brain-form .field textarea,
+  .brain-form .field select.settings-select,
+  .brain-inbox-edit .field input,
+  .brain-inbox-edit .field textarea,
+  .brain-inbox-edit .field select.settings-select,
+  .brain-search-input input {
+    font-size: 16px;
+  }
 }
 
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {

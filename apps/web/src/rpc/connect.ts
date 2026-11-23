@@ -8,7 +8,7 @@ import {
   noteSyncPush,
 } from "../state/environments.ts";
 import { handleThemesPush, loadDeviceSettings } from "../state/appearance.ts";
-import { refreshProviders } from "../state/actions.ts";
+import { refreshBrainInboxCount, refreshProviders } from "../state/actions.ts";
 import { setBackend } from "../state/backend.ts";
 import { receiveSyncPush, refreshSync } from "../state/anywhere-history.ts";
 import { receiveTerminal } from "../state/terminal.ts";
@@ -36,6 +36,7 @@ export function startConnection() {
       }
     });
     void refreshProviders();
+    void refreshBrainInboxCount();
     void loadDeviceSettings().then(() => {
       void bootEnvironments();
       void refreshSync();
@@ -62,7 +63,10 @@ export function startConnection() {
     onStatus: (status) => {
       useStore.setState({ status });
       noteConnectionStatus(status);
-      if (status === "open") void refreshSync();
+      if (status === "open") {
+        void refreshSync();
+        void refreshBrainInboxCount();
+      }
       if (status === "open" && firstOpen) {
         firstOpen = false;
         void refreshProviders();

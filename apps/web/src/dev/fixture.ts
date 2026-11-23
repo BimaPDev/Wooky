@@ -31,6 +31,7 @@ import {
 import type { Backend } from "../state/backend.ts";
 import { RpcCallError } from "../rpc/client.ts";
 import { FIXTURE_ENVIRONMENTS, respondAnywhere } from "./fixture-anywhere.ts";
+import { brainRespond } from "./fixture-brain.ts";
 import {
   anywhereHistoryCommand,
   anywhereHistoryRespond,
@@ -1745,6 +1746,8 @@ export function createFixtureBackend(): Backend {
       if (history) return Promise.resolve(history.value as RpcResult<M>);
       const anywhere = respondAnywhere(method, params);
       if (anywhere !== undefined) return Promise.resolve(anywhere as RpcResult<M>);
+      const brain = brainRespond(method, params);
+      if (brain !== undefined) return Promise.resolve(brain as RpcResult<M>);
       return Promise.resolve(respond(method, params) as RpcResult<M>);
     },
   };

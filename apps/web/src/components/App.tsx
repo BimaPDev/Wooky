@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
-import { dismissNotice, setPaletteOpen } from "../state/actions.ts";
+import { dismissNotice, refreshBrainInboxCount, setPaletteOpen } from "../state/actions.ts";
 import { useAnywhereHistory } from "../state/anywhere-history.ts";
+import { useEnvironmentSession } from "../state/environments.ts";
 import { titleWithBadge, useWaitingCount } from "../state/notifications.ts";
 import { isElectronShell, isMacDesktopShell } from "../lib/shell.ts";
 import { isDraftView, useStore, type Theme } from "../state/store.ts";
@@ -17,6 +18,7 @@ import { CoordinatorStrip } from "./fleet/CoordinatorStrip.tsx";
 import { FanoutDialog } from "./fleet/FanoutDialog.tsx";
 import { FleetBoard } from "./fleet/FleetBoard.tsx";
 import { JumpSwitcher } from "./fleet/JumpSwitcher.tsx";
+import { BrainPanel } from "./brain/BrainPanel.tsx";
 import { NewThreadView } from "./NewThreadView.tsx";
 import { Dialogs } from "./Dialogs.tsx";
 import { PaneDock } from "./panes/PaneRow.tsx";
@@ -65,6 +67,8 @@ export function App() {
     (state) => splitLayout(state.panes, (id) => Boolean(state.model.threads[id])) !== null,
   );
   const fleetBoardOpen = useStore((state) => state.fleetBoardOpen);
+  const brainOpen = useStore((state) => state.brainOpen);
+  const session = useEnvironmentSession();
   const compareGroupId = useStore((state) => state.compareGroupId);
   const replicaView = useAnywhereHistory((state) => state.replicaView !== null);
   const waiting = useWaitingCount();
@@ -132,6 +136,15 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // sync: refresh brain inbox count when the window regains focus
+  useEffect(() => {
+    const onFocus = () => {
+      if (useStore.getState().status === "open") void refreshBrainInboxCount();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
   usePaneShortcuts();
 
   const bodyClass = changesOpen && threadId ? "workspace-body split" : "workspace-body";
@@ -158,6 +171,8 @@ export function App() {
               <main className="main">
                 {mainView({
                   fleetBoardOpen,
+                  brainOpen,
+                  sessionId: session.id,
                   compareGroupId,
                   splitActive,
                   threadId,
@@ -201,6 +216,8 @@ export function App() {
 
 function mainView({
   fleetBoardOpen,
+  brainOpen,
+  sessionId,
   compareGroupId,
   splitActive,
   threadId,
@@ -208,12 +225,15 @@ function mainView({
   replicaView,
 }: {
   fleetBoardOpen: boolean;
+  brainOpen: boolean;
+  sessionId: string;
   compareGroupId: string | null;
   splitActive: boolean;
   threadId: string | null;
   draftView: boolean;
   replicaView: boolean;
 }): ReactNode {
+  if (brainOpen) return <BrainPanel key={sessionId} />;
   if (fleetBoardOpen) return <FleetBoard />;
   if (compareGroupId) return <CompareView groupId={compareGroupId} />;
   if (replicaView) {
