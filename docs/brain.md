@@ -13,7 +13,7 @@ This page is the design for all five steps. B1 through B4 exist today.
 | B2   | Server RPC, caller permissions, the inbox, and `wooky mcp` tools `brain_ls`, `brain_read`, `brain_search`, `brain_write` | done                     |
 | B3   | L0 injection into turn prompts within a token budget; fleet-run claims and handoffs                                      | done                     |
 | B4   | Post-turn and post-fleet-run extraction by a cheap model; the inbox; LLM-written overviews                               | done (overviews pending) |
-| B5   | Web Brain panel: tree, viewer, editor, inbox                                                                             | next                     |
+| B5   | Web Brain panel: tree, viewer, editor, inbox                                                                             | done                     |
 
 ## Two scopes
 
@@ -579,8 +579,9 @@ global ones go to B2's inbox as `proposed`. Built in `apps/server/src/brain/extr
 - **Routing.** The extractor never updates a memory, its own included: every write takes the
   first free numbered path (`x.md`, `x-2.md`, ...) and nothing it writes is pinned. The extractor
   holds no way to write the global brain; global candidates go through `submitGlobalProposal`,
-  which `server.ts` points at a disabled stand-in that logs once and drops them
-  (`TODO(integration)`: B2's `propose`).
+  which `server.ts` wires to B2's inbox `propose`. Proposals are agent-authored, never pinned,
+  and count toward the per-thread and global inbox caps; if the target is already waiting, the sink
+  returns `conflict` and the extractor retries with its next numbered path.
 - **No tools.** The call is one throwaway agent turn in an empty folder with `toolless` set. For
   Claude that means no tools, no allowed tools, no user or project settings (so no allow rules,
   hooks or CLAUDE.md), no MCP servers, `dontAsk` permissions, no saved session and none of the
@@ -609,6 +610,8 @@ global ones go to B2's inbox as `proposed`. Built in `apps/server/src/brain/extr
 - **Not yet.** LLM-written `_overview.md`: the store cannot write the reserved file, so this needs a
   store method first.
 
-**B5, UI.** A Brain panel in the web app: a tree of both scopes, a viewer with the three tiers, an
-editor that sends `expectedUpdatedAt`, and the inbox with approve (with edits) and reject. It
-should show `overwrites` and `stale` before the user approves.
+**B5, UI.** The web Brain panel shows a tree of both scopes, a viewer with the three tiers, an
+editor that sends `expectedUpdatedAt` (and create-only writes with `expectedUpdatedAt: null`),
+and the inbox with approve, edit-before-approve (`brain.inbox.approve` with `edits`), and reject.
+Inbox cards show `overwrites`, `existingSummary`, and `stale`; trust badges use the server's
+returned `trust`, so an agent-authored global memory shows "from an agent".

@@ -95,5 +95,18 @@ the client's env when this process should talk to a server that is not the defau
 | `wooky_interrupt`    | `threadId`.                                                                                                                                                                           |
 | `wooky_approve`      | `threadId`, `approvalId`, `decision` of `approve` or `deny`. Only with `--allow-approvals`.                                                                                           |
 
-Brain tools (`brain_ls`, `brain_read`, `brain_search`, `brain_write`) read and write Wooky Brain
-memories. `brain_write` is hidden by `--read-only`. They are described in `docs/brain.md`.
+Brain tools read and write Wooky Brain memories and coordinate fleet runs. They are hidden by
+`--read-only` where noted, and all require a valid agent token when the server enforces it.
+
+| Tool            | What it does                                                        | Flags / notes                                                                                                                                        |
+| --------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `brain_ls`      | List a brain folder.                                                | read-only ok                                                                                                                                         |
+| `brain_read`    | Read a memory at tier 0/1/2.                                        | read-only ok                                                                                                                                         |
+| `brain_search`  | Search memories by query/scope/prefix.                              | read-only ok                                                                                                                                         |
+| `brain_write`   | Write a project memory, or queue a global memory in the inbox.      | hidden by `--read-only`; `--projects` restricts project scope; `--allow-global-write` allows direct global write only when no agent token is present |
+| `brain_claim`   | Claim a path/glob/label in the current fleet run.                   | hidden by `--read-only`; requires fleet agent token; held result is fenced as untrusted worker output                                                |
+| `brain_release` | Release a claim owned by the caller thread.                         | hidden by `--read-only`; requires fleet agent token                                                                                                  |
+| `brain_handoff` | Record a handoff for the coordinator/sibling in the same fleet run. | hidden by `--read-only`; requires fleet agent token                                                                                                  |
+| `brain_finding` | Record a live finding for the current fleet run.                    | hidden by `--read-only`; requires fleet agent token                                                                                                  |
+
+See `docs/brain.md` for scopes, trust, inbox, prompt injection, and claim semantics.
