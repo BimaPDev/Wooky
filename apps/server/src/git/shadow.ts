@@ -404,7 +404,7 @@ export function createShadowGit(
   }
 
   const prepared = new Set<string>();
-  const stagedStamps = new Map<string, Map<string, string>>();
+  const stagedStamps = new Map<string, ReadonlyMap<string, string>>();
 
   /** Creates the shadow repo on first use and points core.worktree at the project. */
   async function ensure(repo: ShadowRepo): Promise<void> {
@@ -568,7 +568,7 @@ export function createShadowGit(
       });
     }
     const tree = await run(repo, ["write-tree"], { env });
-    stagedStamps.set(repo.gitDir, new Map(result.stamps));
+    stagedStamps.set(repo.gitDir, result.stamps);
     return tree.text.trim();
   }
 
