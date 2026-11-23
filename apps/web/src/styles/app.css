@@ -784,6 +784,7 @@ button.chip:active {
 .thread-time {
   color: var(--text-4);
   font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
   flex: none;
 }
 
@@ -843,9 +844,9 @@ button.chip:active {
 .provider-badge {
   display: inline-grid;
   place-items: center;
-  min-width: 20px;
+  width: 22px;
   height: 16px;
-  padding: 0 4px;
+  padding: 0;
   border-radius: 999px;
   background: var(--bg-3);
   color: var(--text-3);
@@ -949,6 +950,7 @@ button.chip:active {
 
 .sidebar-section-count {
   color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .working-label {
@@ -5757,6 +5759,7 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
 
 .fleet-board-group-count {
   color: var(--text-4);
+  font-variant-numeric: tabular-nums;
 }
 
 .fleet-board-list {
@@ -5807,6 +5810,10 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
   border-color: color-mix(in srgb, var(--amber) 40%, var(--line));
 }
 
+.fleet-board-meta > span {
+  white-space: nowrap;
+}
+
 .fleet-board-status {
   display: inline-grid;
   place-items: center;
@@ -5831,8 +5838,9 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
 
 .fleet-board-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  column-gap: var(--space-2);
   min-width: 0;
   color: var(--text-4);
   font-size: var(--text-xs);
@@ -5880,6 +5888,7 @@ html[data-wallpaper] .modal:not(.app-route-modal) {
 .fleet-strip-count {
   color: var(--text-3);
   font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
   flex: none;
 }
 
