@@ -29,6 +29,7 @@ import {
   rename,
   rm,
   rmdir,
+  stat as statAsync,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -265,6 +266,12 @@ export interface ScanResult {
   stamps: ReadonlyMap<string, string>;
 }
 
+/** The ctime (ns) inside a scan stamp (`mtime:ctime:size:mode:ino`), or null if it has none. */
+function ctimeOfStamp(stamp: string | undefined): bigint | null {
+  const field = stamp?.split(":")[1];
+  return field && /^\d+$/.test(field) ? BigInt(field) : null;
+}
+
 /** HFS+ and NTFS fold format characters away; a zero-width spelling must not slip past. */
 const FORMAT_CHARS = /\p{Cf}/gu;
 
@@ -438,7 +445,6 @@ export function createShadowGit(
   }
 
   const prepared = new Set<string>();
-  const stagedStamps = new Map<string, ReadonlyMap<string, string>>();
 
   /** Creates the shadow repo on first use and points core.worktree at the project. */
   async function ensure(repo: ShadowRepo): Promise<void> {
@@ -573,19 +579,22 @@ export function createShadowGit(
   async function stage(repo: ShadowRepo, result: ScanResult): Promise<string> {
     const index = indexOf(repo);
     const env = withIndex(index);
-    const prev = stagedStamps.get(repo.gitDir);
-    stagedStamps.delete(repo.gitDir);
     // Git on Windows maps st_ctime to creation time and compares mtime at 1s resolution, so
-    // update-index trusts stale entries after a same-size rewrite with a restored mtime. Evict
-    // paths whose Node lstat stamp changed (NTFS ChangeTime) so git must re-hash them.
-    if (process.platform === "win32" && !prev && existsSync(index)) {
-      await rm(index, { force: true });
-    }
+    // update-index trusts stale entries after a same-size rewrite with a restored mtime. Node's
+    // ctime is the NTFS ChangeTime, which moves on every write: any file whose ctime is not older
+    // than the index was written after it, so evict it and git must re-hash. This reads only the
+    // index's own mtime, so it also holds after a restart without re-hashing everything.
     const rehash: string[] = [];
-    if (prev) {
+    let indexWrittenNs: bigint | null = null;
+    try {
+      indexWrittenNs = (await statAsync(index, { bigint: true })).mtimeNs;
+    } catch {
+      // No index yet: update-index builds one from scratch.
+    }
+    if (indexWrittenNs !== null) {
       for (const path of result.add) {
-        const before = prev.get(path);
-        if (before !== undefined && before !== result.stamps.get(path)) rehash.push(path);
+        const ctimeNs = ctimeOfStamp(result.stamps.get(path));
+        if (ctimeNs !== null && ctimeNs >= indexWrittenNs) rehash.push(path);
       }
     }
     const toRemove = rehash.length > 0 ? [...result.remove, ...rehash] : result.remove;
@@ -602,13 +611,11 @@ export function createShadowGit(
       });
     }
     const tree = await run(repo, ["write-tree"], { env });
-    stagedStamps.set(repo.gitDir, result.stamps);
     return tree.text.trim();
   }
 
   /** The next scan must re-read every file: used after files were written by restore or apply. */
   async function dropIndex(repo: ShadowRepo): Promise<void> {
-    stagedStamps.delete(repo.gitDir);
     await rm(indexOf(repo), { force: true });
   }
 
@@ -1175,7 +1182,6 @@ export function createShadowGit(
   }
 
   async function remove(repo: ShadowRepo): Promise<void> {
-    stagedStamps.delete(repo.gitDir);
     await rm(repo.gitDir, { recursive: true, force: true });
   }
 
