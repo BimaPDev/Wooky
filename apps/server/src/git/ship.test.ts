@@ -8,6 +8,7 @@ import type { Thread } from "@wooky/contracts";
 import { ServiceError } from "../errors.ts";
 import { openEventStore } from "../store/event-store.ts";
 import { tempDir, waitForEvent } from "../testing.ts";
+import { killTree } from "../process/kill-tree.ts";
 import { gitChildEnv } from "./env.ts";
 import { createGhClient } from "./gh.ts";
 import { createShipService } from "./ship.ts";
@@ -255,6 +256,53 @@ if (args[0] === "push") {
       code: "unavailable",
       message: expect.stringContaining("timed out after 2s"),
     });
+    store.close();
+    await rm(hang, { force: true });
+  });
+
+  it("rejects a timed-out git run even when the tree kill never settles", async () => {
+    const root = await makeRepo();
+    await bareOrigin(root);
+    const hang = join(await mkdtemp(join(tmpdir(), "wooky-hang-kill-")), "hang.mjs");
+    await writeFile(
+      hang,
+      `import { spawnSync } from "node:child_process";
+const args = process.argv.slice(2);
+if (args[0] === "push") {
+  setInterval(() => {}, 10_000);
+} else {
+  const r = spawnSync("git", args, { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  process.exit(r.status ?? 0);
+}
+`,
+    );
+    const home = await tempDir("ship-kill-hang");
+    const store = openEventStore(home, () => "2026-01-01");
+    seedThread(store, root, { id: "t-kill" });
+    await writeFile(join(root, "k.txt"), "x\n");
+    const stuck: Array<ReturnType<typeof killTree>> = [];
+    const ship = createShipService({
+      store,
+      git: createGitService(),
+      gh: noGh,
+      gitBin: process.execPath,
+      gitPrefixArgs: [hang],
+      pushTimeoutMs: 300,
+      killWaitMs: 50,
+      // Really kill the child so nothing leaks, but never report that it finished.
+      killTree: (pid, signal, options) => {
+        stuck.push(killTree(pid, signal, options));
+        return new Promise<void>(() => {});
+      },
+    });
+    await ship.commit({ threadId: "t-kill", message: "prep" });
+    await expect(ship.push({ threadId: "t-kill", setUpstream: true })).rejects.toMatchObject({
+      code: "unavailable",
+      message: expect.stringContaining("timed out"),
+    });
+    await Promise.all(stuck);
     store.close();
     await rm(hang, { force: true });
   });
