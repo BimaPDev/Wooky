@@ -646,4 +646,49 @@ describe("runSelfCli commands", () => {
       expect(existsSync(wookyHome)).toBe(false);
     },
   );
+  it("uninstalls the Windows task, launcher and app, keeping WOOKY_HOME unless --purge", async () => {
+    const home = makeTempDir("wooky-self-uninstall-win-");
+    const localAppData = join(home, "AppData", "Local");
+    const wookyHome = join(home, ".wooky");
+    const appDir = join(localAppData, "Wooky", "app");
+    const runtimeDir = join(localAppData, "Wooky", "runtime");
+    const binDir = join(localAppData, "Wooky", "bin");
+    const launcher = join(binDir, "wooky.cmd");
+    const dbFile = join(wookyHome, "state.sqlite");
+    for (const dir of [appDir, runtimeDir, binDir, wookyHome]) mkdirSync(dir, { recursive: true });
+    writeFileSync(launcher, "@echo off\r\n", "utf8");
+    writeFileSync(dbFile, "data", "utf8");
+    // On a POSIX host the win32 path rules are emulated, so the real files below are only
+    // addressed (and checked) when this runs on Windows. The calls and messages are checked everywhere.
+    const live = onWindows;
+
+    const { runner, calls } = fakeRunner();
+    const io1 = captureIo();
+    const code1 = await runSelfCli(
+      ["uninstall"],
+      { LOCALAPPDATA: localAppData },
+      { platform: "win32", homeDir: home, runner, io: io1.io },
+    );
+    expect(code1).toBe(0);
+    expect(calls.map((call) => [call.file, call.args[0]])).toEqual([
+      ["schtasks.exe", "/End"],
+      ["schtasks.exe", "/Delete"],
+    ]);
+    expect(io1.out()).toContain("Kept data directory");
+    expect(io1.out()).toContain("Pass --purge to remove it.");
+    expect(!live || !existsSync(appDir)).toBe(true);
+    expect(!live || !existsSync(runtimeDir)).toBe(true);
+    expect(!live || !existsSync(launcher)).toBe(true);
+    expect(!live || existsSync(dbFile)).toBe(true);
+
+    const io2 = captureIo();
+    const code2 = await runSelfCli(
+      ["uninstall", "--purge"],
+      { LOCALAPPDATA: localAppData },
+      { platform: "win32", homeDir: home, runner, io: io2.io },
+    );
+    expect(code2).toBe(0);
+    expect(io2.out()).toContain("Uninstalled Wooky and removed");
+    expect(!live || !existsSync(wookyHome)).toBe(true);
+  });
 });
