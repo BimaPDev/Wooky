@@ -164,15 +164,18 @@ repo, and the store treats it that way.
   and never follow them. A hostile brain therefore cannot make Wooky read or overwrite
   `~/.ssh/...` through a link. A race that swaps a path after the check is not defended
   against beyond `O_NOFOLLOW`; the attacker would need to be running code on the machine already.
-- **Bounded.** A walk reads at most 5000 directory entries, and reading stops when its budget is
-  gone. A `list` shares one budget between its listing and its folder counts. A write uses two,
-  each its own: one for the memory-count check, one for the walk that refreshes overviews, so
-  neither starves the other and a normal brain (2000 memories) gets exact counts. That refresh
-  walks the whole brain once and derives every ancestor's count from that single walk, so it
-  costs one tree, not one per level. If the walk is cut short its counts would be wrong, so the
-  overviews are left exactly as they were and the write still succeeds (it is logged). Walks go
-  at most 6 levels deep. In a `list` or an overview that is not stored yet, a folder count that
-  was cut short is marked `capped` (and shown as `N+`); a written `_overview.md` never says `N+`.
+- **Bounded.** A listing reads at most 5000 directory entries, and reading stops when its budget is
+  gone. A `list` shares one budget between its listing and its folder counts. A walk of the whole
+  brain (the memory-count check on a write, the overview refresh, a reindex) gets
+  `3 * 2000 + 1000 = 7000` entries: room for the memory cap, an `_overview.md` per folder and the
+  folders themselves, so any valid brain under the cap is counted exactly, even one folder per
+  memory. A write uses two such budgets, each its own: one for the memory-count check, one for the
+  walk that refreshes overviews. That refresh walks the whole brain once and derives every
+  ancestor's count from that single walk, so it costs one tree, not one per level. If the walk is
+  cut short (a tree past that ceiling) its counts would be wrong, so the overviews are left exactly
+  as they were and the write still succeeds (it is logged). Walks go at most 6 levels deep. In a
+  `list` or an overview that is not stored yet, a folder count that was cut short is marked
+  `capped` (and shown as `N+`); a written `_overview.md` never says `N+`.
 - **Trust field.** Every result (`BrainEntry`, `BrainSearchHit`, `BrainTreeNode`) carries `trust`:
   `"user"` for global, `"repo"` for project. B3 uses it to fence repo content in prompts as data
   to consider, not instructions to follow. Frontmatter `summary` text is repo content too.
@@ -186,8 +189,13 @@ repo, and the store treats it that way.
   common symbols with high entropy; for an api key, letters alone are enough unless the value is a
   camelCase identifier such as `XApiKeyHeaderName`). Placeholders are not flagged: URL passwords
   `password`, `pass`, `secret`, `changeme`, `guest`, `root`, `example`, `test` or equal to the user
-  name, and passwords that do not look random on `localhost`, `127.0.0.1` or `::1`. Up to 16
-  spaces may surround the `=` or `:`, and a value on the line after `password:` (YAML) is found.
+  name (unless it looks random), template placeholders (`${VAR}`, `$VAR`, `<…>`, `{{…}}`,
+  `%(…)s`, `%VAR%`; a leading `%` or `$` alone is not one, so a percent-encoded password is
+  flagged), and passwords that do not look random on `localhost`, `127.0.0.1` or `::1` (not when
+  the authority holds another `@`: the host is what follows the last one). Up to 16 spaces may
+  surround the `=` or `:`. A value on a later line is found when it follows the key within two
+  blank lines, indented by up to 64 characters, with an optional `|` or `>` block marker (`-` or
+  `+` chomping) after the key; a value any further away is not found.
   Frontmatter over 8 KB serialized is refused with `bad_request` before it is scanned; below that,
   every key and every string value is scanned as the writer spelled it (JSON escaping would hide a
   quoted value) and as serialized. The body is scanned too, all before the frontmatter is

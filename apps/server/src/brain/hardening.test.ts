@@ -173,6 +173,18 @@ describe("the guard around the store", () => {
     }
   });
 
+  it("logs the stack of Node's own ERR_* errors, which are bugs and not filesystem failures", () => {
+    const { store, logs } = storeWith(() => {
+      throw Object.assign(new TypeError('The "path" argument must be of type string'), {
+        code: "ERR_INVALID_ARG_TYPE",
+      });
+    });
+    expect(codeOf(() => store.list(a("")))).toBe("internal");
+    const text = logs.join("\n");
+    expect(text).toContain("ERR_INVALID_ARG_TYPE");
+    expect(text).toMatch(/\n\s+at /);
+  });
+
   it("keeps a filesystem error to its code, with no stack", () => {
     const { store, logs } = storeWith(() => {
       throw Object.assign(new Error("denied: /secret/path"), { code: "EACCES" });
@@ -275,7 +287,7 @@ describe("one scan budget per operation", () => {
   });
 
   it("a write on a wide tree still succeeds, and the overview it could not finish is left alone", () => {
-    const { store, brainA, logs } = wideTree(40, 150, "txt");
+    const { store, brainA, logs } = wideTree(60, 150, "txt");
     const written = store.write(a("new/note.md"), note("fresh"));
     expect(written.created).toBe(true);
     expect(readFileSync(join(brainA, "new", "note.md"), "utf8")).toContain("fresh");
@@ -315,8 +327,32 @@ describe("one scan budget per operation", () => {
     expect(readFileSync(join(global, "a5/b4/c3/d3", "_overview.md"), "utf8")).toContain("`new.md`");
   }, 60_000);
 
+  it("keeps exact counts in a valid brain with one folder per memory (1,701 folders, over 5,000 entries)", () => {
+    const { store, home, logs } = setup();
+    const global = join(home, "brain", "global");
+    const overview = '---\nsummary: "x"\nkind: "note"\ntags: ["auto"]\n---\n\n# Overview\n';
+    const memory = '---\nsummary: "m"\nkind: "note"\n---\nx';
+    mkdirSync(global, { recursive: true });
+    writeFileSync(join(global, "_overview.md"), overview);
+    for (let f = 0; f < 1701; f += 1) {
+      const folder = join(global, `f${String(f).padStart(4, "0")}`);
+      mkdirSync(folder);
+      writeFileSync(join(folder, "_overview.md"), overview);
+      writeFileSync(join(folder, "m.md"), memory);
+    }
+    store.write(g("f0001/new.md"), note("new"));
+    expect(logs).toEqual([]);
+    const root = readFileSync(join(global, "_overview.md"), "utf8");
+    expect(root).toContain("`f0000/` — 1 memory");
+    expect(root).toContain("`f0001/` — 2 memories");
+    expect(root).toContain("`f0039/` — 1 memory");
+    expect(root).toContain("and 1661 more folders");
+    expect(root).not.toContain("+");
+    expect(readFileSync(join(global, "f0001", "_overview.md"), "utf8")).toContain("`new.md`");
+  }, 60_000);
+
   it("leaves an overview as it was when the walk behind its counts was cut short", () => {
-    const { store, brainA, logs } = wideTree(40, 150, "txt");
+    const { store, brainA, logs } = wideTree(60, 150, "txt");
     const before = readFileSync(join(brainA, "_overview.md"), "utf8");
     store.write(a("new/note.md"), note("fresh"));
     expect(readFileSync(join(brainA, "_overview.md"), "utf8")).toBe(before);
@@ -331,10 +367,10 @@ describe("one scan budget per operation", () => {
   });
 
   it("reports a truncated reindex", () => {
-    const { store } = wideTree(40, 150, "md");
+    const { store } = wideTree(60, 150, "md");
     const report = store.reindex(A);
     expect(report.truncated).toBe(true);
-    expect(report.added).toBeLessThanOrEqual(5000);
+    expect(report.added).toBeLessThanOrEqual(7000);
   });
 });
 

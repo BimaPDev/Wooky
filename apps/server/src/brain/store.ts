@@ -99,6 +99,15 @@ export interface BrainStore {
   close(): void;
 }
 
+/**
+ * Directory entries a whole-brain walk may read. A valid brain holds at most BRAIN_MAX_MEMORIES
+ * memories, an `_overview.md` for each folder (one folder per memory at worst) and those folders
+ * themselves: three entries per memory. The headroom is for empty folders and stray files. A
+ * hostile tree still costs a fixed amount.
+ */
+const WALK_ENTRIES = 3 * BRAIN_MAX_MEMORIES + 1000;
+const walkBudget = () => createScanBudget(WALK_ENTRIES);
+
 const AUTO_TAG = "auto";
 const MAX_OVERVIEW_MEMORIES = 80;
 const MAX_OVERVIEW_FOLDERS = 40;
@@ -125,11 +134,16 @@ function brief(error: unknown): string {
   return error instanceof Error ? error.name : "unknown error";
 }
 
-/** Failures the store knows how to describe from a code alone: Zod, filesystem and SQLite. */
+/**
+ * Failures the store knows how to describe from a code alone: Zod, filesystem (errno codes such as
+ * `ENOENT`) and SQLite (a numeric `errcode`). Node's own `ERR_INVALID_ARG_TYPE` and friends are
+ * not here: they report a programmer error, and one with no stack cannot be found.
+ */
+const ERRNO_CODE = /^E[A-Z0-9]+$/;
 function isExpectedFailure(error: unknown): boolean {
   if (error instanceof ZodError) return true;
   const { code, errcode } = (error ?? {}) as { code?: unknown; errcode?: unknown };
-  return typeof code === "string" || typeof errcode === "number";
+  return (typeof code === "string" && ERRNO_CODE.test(code)) || typeof errcode === "number";
 }
 
 export function createBrainStore(options: BrainStoreOptions): BrainStore {
@@ -290,7 +304,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
   function regenerateOverviews(root: BrainRoot, folder: readonly string[]): void {
     let counts: Map<string, number>;
     try {
-      const walked = root.scan([], createScanBudget());
+      const walked = root.scan([], walkBudget());
       if (walked.truncated) {
         log("brain: left the overviews as they were (too many entries to count the memories)");
         return;
@@ -440,7 +454,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
     let files: ReturnType<BrainRoot["scan"]>["files"] = [];
     let truncated = false;
     try {
-      ({ files, truncated } = root.scan([], createScanBudget()));
+      ({ files, truncated } = root.scan([], walkBudget()));
     } catch (error) {
       if (!(error instanceof ServiceError)) throw error;
       log(`brain: not indexing ${brainScopeKey(scope)} (${error.message})`);
@@ -543,8 +557,7 @@ export function createBrainStore(options: BrainStoreOptions): BrainStore {
       // Its own budget: the overview refresh below walks the tree again with a fresh one.
       if (
         existing === null &&
-        found.root.scan([], createScanBudget(), BRAIN_MAX_MEMORIES).files.length >=
-          BRAIN_MAX_MEMORIES
+        found.root.scan([], walkBudget(), BRAIN_MAX_MEMORIES).files.length >= BRAIN_MAX_MEMORIES
       ) {
         throw new ServiceError(
           "bad_request",
